@@ -1,0 +1,21 @@
+# Disposable database for automated tests: data lives in memory and is lost on stop.
+# Tests create and drop their own uniquely named databases here. Never put real data in it.
+# Default port 3320 is separate from the dev database (3319); the two must never share a port.
+# To run a second test server (for example two agents at once), use a different project name and
+# port: MYSQL_TEST_PORT=3321 docker compose -p <unique-name> -f docker-compose.test.yml up -d --wait db-test
+name: epiphany-test
+services:
+  db-test:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_TEST_ROOT_PASSWORD:-placeholder-local-test-root}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${MYSQL_TEST_PORT:-3320}:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 3s
+      timeout: 5s
+      retries: 30

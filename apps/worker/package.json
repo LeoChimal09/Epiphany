@@ -1,0 +1,10 @@
+{
+  "name": "@epiphany/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@epiphany/core": "workspace:*",
+    "discord.js": "14"
+  }
+}

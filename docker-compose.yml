@@ -1,0 +1,25 @@
+# Local development database only. Production MySQL runs on Railway (docs/decisions/0001-initial-architecture.md).
+# Defaults match .env.example (database, user, and password "epiphany", port 3319). The port is bound to
+# 127.0.0.1 only, so the default password is not reachable from the network. Never reuse it anywhere else.
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: epiphany
+      MYSQL_USER: epiphany
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-epiphany}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      TZ: UTC
+    ports:
+      - "127.0.0.1:3319:3306"
+    volumes:
+      - epiphany-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'mysqladmin ping -h 127.0.0.1 -u epiphany -p"$$MYSQL_PASSWORD" --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  epiphany-mysql-data:

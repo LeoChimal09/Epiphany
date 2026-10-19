@@ -1,0 +1,7 @@
+bun.lock
+.next
+node_modules
+coverage
+*.md
+docs
+.vscode/mcp.json

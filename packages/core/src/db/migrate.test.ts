@@ -1,0 +1,318 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Pool, RowDataPacket } from "mysql2/promise";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createDatabasePool } from "./client";
+import {
+  diffMigrations,
+  getMigrationStatus,
+  loadMigrationFiles,
+  MigrationError,
+  MIGRATIONS_TABLE,
+  runMigrations,
+  type MigrationFile,
+} from "./migrate";
+import { UPGRADE_SEEDS } from "./upgrade-seeds";
+import {
+  createTestDatabase,
+  dbTestsEnabled,
+  REQUIRE_DB_TESTS,
+  type TestDatabase,
+} from "./test-support";
+
+const realFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const TABLES = [
+  "action_history",
+  "ai_usage",
+  "categories",
+  "confirmations",
+  "events",
+  "notes",
+  "owners",
+  "preferences",
+  "sessions",
+  "tasks",
+  "work_blocks",
+];
+
+function file(tag: string, when: number, hash: string): MigrationFile {
+  return { tag, when, hash, statements: ["SELECT 1"] };
+}
+
+describe("diffMigrations (no database)", () => {
+  const a = file("0000_a", 1000, "ha");
+  const b = file("0001_b", 2000, "hb");
+
+  it("reports everything pending on an empty history", () => {
+    expect(diffMigrations([a, b], [])).toEqual({
+      applied: [],
+      pending: ["0000_a", "0001_b"],
+      problems: [],
+    });
+  });
+
+  it("reports nothing pending when history matches", () => {
+    const status = diffMigrations(
+      [a, b],
+      [
+        { when: 1000, hash: "ha" },
+        { when: 2000, hash: "hb" },
+      ],
+    );
+    expect(status).toEqual({ applied: ["0000_a", "0001_b"], pending: [], problems: [] });
+  });
+
+  it("flags an applied migration whose file changed", () => {
+    const status = diffMigrations([a], [{ when: 1000, hash: "different" }]);
+    expect(status.problems.join()).toMatch(/0000_a was modified/);
+  });
+
+  it("flags applied history that is missing from the folder", () => {
+    const status = diffMigrations(
+      [a],
+      [
+        { when: 1000, hash: "ha" },
+        { when: 9999, hash: "zz" },
+      ],
+    );
+    expect(status.problems.join()).toMatch(/not in the migrations folder/);
+  });
+
+  it("flags a pending migration that sorts before an applied one", () => {
+    const status = diffMigrations([a, b], [{ when: 2000, hash: "hb" }]);
+    expect(status.pending).toEqual(["0000_a"]);
+    expect(status.problems.join()).toMatch(/out of order/);
+  });
+});
+
+describe("loadMigrationFiles", () => {
+  it("reads the real migrations with non-empty statements", () => {
+    const files = loadMigrationFiles(realFolder);
+    expect(files.length).toBeGreaterThan(0);
+    for (const entry of files) {
+      expect(entry.statements.length).toBeGreaterThan(0);
+      expect(entry.statements.every((statement) => statement.length > 0)).toBe(true);
+    }
+  });
+});
+
+describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
+  let database: TestDatabase;
+  let pool: Pool;
+  const tempFolders: string[] = [];
+
+  beforeEach(async () => {
+    database = await createTestDatabase();
+    pool = createDatabasePool(database.url, 4);
+  });
+
+  afterEach(async () => {
+    await pool.end();
+    await database.drop();
+    expect(await database.exists()).toBe(false);
+    for (const folder of tempFolders.splice(0)) fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  async function tables(): Promise<string[]> {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY 1",
+    );
+    return rows.map((row) => String(row.name));
+  }
+
+  // Copies the real migrations and appends extra migrations for upgrade/failure scenarios.
+  function folderWith(extra: Array<{ tag: string; sql: string }>): string {
+    const folder = fs.mkdtempSync(
+      path.join(process.env.TMPDIR ?? os.tmpdir(), "epiphany-migrations-"),
+    );
+    tempFolders.push(folder);
+    fs.cpSync(realFolder, folder, { recursive: true });
+    const journalPath = path.join(folder, "meta", "_journal.json");
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+    let when = journal.entries.at(-1).when;
+    for (const [offset, migration] of extra.entries()) {
+      when += 1000;
+      journal.entries.push({
+        idx: journal.entries.length,
+        version: "5",
+        when,
+        tag: migration.tag,
+        breakpoints: true,
+      });
+      fs.writeFileSync(path.join(folder, `${migration.tag}.sql`), migration.sql);
+      void offset;
+    }
+    fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2));
+    return folder;
+  }
+
+  it("installs a clean database and applies nothing on a second run", async () => {
+    const first = await runMigrations(pool, realFolder);
+    expect(first.applied.length).toBe(loadMigrationFiles(realFolder).length);
+    expect(await tables()).toEqual([MIGRATIONS_TABLE, ...TABLES].sort());
+
+    const second = await runMigrations(pool, realFolder);
+    expect(second.applied).toEqual([]);
+    const status = await getMigrationStatus(pool, realFolder);
+    expect(status.pending).toEqual([]);
+    expect(status.problems).toEqual([]);
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM \`${MIGRATIONS_TABLE}\``,
+    );
+    expect(Number(rows[0]?.n)).toBe(first.applied.length);
+  });
+
+  it("serializes concurrent runners so each migration applies exactly once", async () => {
+    const otherPool = createDatabasePool(database.url, 2);
+    try {
+      const [a, b] = await Promise.all([
+        runMigrations(pool, realFolder),
+        runMigrations(otherPool, realFolder),
+      ]);
+      const total = a.applied.length + b.applied.length;
+      expect(total).toBe(loadMigrationFiles(realFolder).length);
+      expect((await getMigrationStatus(pool, realFolder)).pending).toEqual([]);
+    } finally {
+      await otherPool.end();
+    }
+  });
+
+  it("refuses to run when an applied migration file was modified", async () => {
+    await runMigrations(pool, realFolder);
+    await pool.query(
+      `UPDATE \`${MIGRATIONS_TABLE}\` SET hash = 'tampered' ORDER BY created_at DESC LIMIT 1`,
+    );
+    await expect(runMigrations(pool, realFolder)).rejects.toThrow(
+      /was modified after it was applied/,
+    );
+    expect((await getMigrationStatus(pool, realFolder)).problems.length).toBe(1);
+  });
+
+  // A copy of the real migrations containing only the first `count` journal entries.
+  function folderUpTo(count: number): string {
+    const folder = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), "epiphany-prefix-"));
+    tempFolders.push(folder);
+    fs.cpSync(realFolder, folder, { recursive: true });
+    const journalPath = path.join(folder, "meta", "_journal.json");
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+    journal.entries = journal.entries.slice(0, count);
+    fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2));
+    return folder;
+  }
+
+  it("upgrades from every previous real schema to the latest without losing seeded rows", async () => {
+    const all = loadMigrationFiles(realFolder);
+    expect(all.length).toBeGreaterThan(1);
+
+    for (let installed = 1; installed < all.length; installed++) {
+      const previous = all[installed - 1]!;
+      const seed = UPGRADE_SEEDS[previous.tag];
+      expect(seed, `add upgrade seed rows for ${previous.tag} in upgrade-seeds.ts`).toBeDefined();
+
+      const db = await createTestDatabase();
+      const upgradePool = createDatabasePool(db.url, 2);
+      try {
+        await runMigrations(upgradePool, folderUpTo(installed));
+        for (const statement of seed!) await upgradePool.query(statement);
+
+        // Snapshot every table that exists at the installed schema (all have an `id` column).
+        const [tableRows] = await upgradePool.query<RowDataPacket[]>(
+          "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name <> ? ORDER BY 1",
+          [MIGRATIONS_TABLE],
+        );
+        const existing = tableRows.map((row) => String(row.name));
+        const read = async () => {
+          const out: Record<string, unknown[]> = {};
+          for (const table of existing) {
+            const [rows] = await upgradePool.query<RowDataPacket[]>(
+              `SELECT * FROM \`${table}\` ORDER BY id`,
+            );
+            out[table] = rows.map((row) => JSON.parse(JSON.stringify(row)));
+          }
+          return out;
+        };
+        const before = await read();
+        expect(before.tasks).toHaveLength(2);
+        if (existing.includes("confirmations")) expect(before.confirmations).toHaveLength(1);
+
+        const result = await runMigrations(upgradePool, realFolder);
+        expect(result.applied).toEqual(all.slice(installed).map((file) => file.tag));
+        expect(await read()).toEqual(before);
+        expect((await getMigrationStatus(upgradePool, realFolder)).pending).toEqual([]);
+        expect((await runMigrations(upgradePool, realFolder)).applied).toEqual([]);
+      } finally {
+        await upgradePool.end();
+        await db.drop();
+        expect(await db.exists()).toBe(false);
+      }
+    }
+  });
+
+  it("also upgrades with a synthetic follow-up migration that backfills data", async () => {
+    await runMigrations(pool, realFolder);
+    await pool.query("INSERT INTO owners (id, display_name) VALUES ('owner-fixture', 'Fixture')");
+    await pool.query(
+      "INSERT INTO categories (id, owner_id, name, system_key) VALUES ('cat-fixture', 'owner-fixture', 'Inbox', 'inbox')",
+    );
+    await pool.query(
+      "INSERT INTO tasks (id, owner_id, category_id, title) VALUES ('task-fixture', 'owner-fixture', 'cat-fixture', 'Keep me')",
+    );
+
+    const upgraded = folderWith([
+      {
+        tag: "9000_add_task_priority",
+        sql: "ALTER TABLE `tasks` ADD `priority` int unsigned;--> statement-breakpoint\nUPDATE `tasks` SET `priority` = 3;",
+      },
+    ]);
+    expect((await getMigrationStatus(pool, upgraded)).pending).toEqual(["9000_add_task_priority"]);
+    const result = await runMigrations(pool, upgraded);
+    expect(result.applied).toEqual(["9000_add_task_priority"]);
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT title, priority FROM tasks WHERE id = 'task-fixture'",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ title: "Keep me", priority: 3 });
+    expect((await runMigrations(pool, upgraded)).applied).toEqual([]);
+  });
+
+  it("reports a partial failure without recording it, and recovers by fixing forward", async () => {
+    await runMigrations(pool, realFolder);
+    const broken = folderWith([
+      {
+        tag: "9000_partial",
+        sql: "ALTER TABLE `tasks` ADD `scratch` int;--> statement-breakpoint\nALTER TABLE `does_not_exist` ADD `x` int;",
+      },
+    ]);
+
+    const failure = await runMigrations(pool, broken).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(MigrationError);
+    expect(failure).toMatchObject({ tag: "9000_partial", statementIndex: 1, statementCount: 2 });
+    expect((failure as Error).message).toContain("NOT recorded");
+
+    // DDL committed implicitly: the first statement took effect, but nothing was recorded.
+    const [partial] = await pool.query<RowDataPacket[]>(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'tasks' AND column_name = 'scratch'",
+    );
+    expect(partial).toHaveLength(1);
+    expect((await getMigrationStatus(pool, broken)).pending).toEqual(["9000_partial"]);
+
+    // Documented recovery: undo the partial effect, correct the unrecorded migration, rerun.
+    await pool.query("ALTER TABLE tasks DROP COLUMN scratch");
+    fs.writeFileSync(
+      path.join(broken, "9000_partial.sql"),
+      "ALTER TABLE `tasks` ADD `scratch` int;",
+    );
+    expect((await runMigrations(pool, broken)).applied).toEqual(["9000_partial"]);
+    expect((await getMigrationStatus(pool, broken)).pending).toEqual([]);
+  });
+});
+
+describe("database test configuration", () => {
+  it("has a test database when required by the environment", () => {
+    if (REQUIRE_DB_TESTS) expect(dbTestsEnabled).toBe(true);
+  });
+});

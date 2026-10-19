@@ -1,0 +1,52 @@
+{
+  "name": "epiphany",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "next dev apps/web -H 127.0.0.1",
+    "start": "next start apps/web",
+    "bot:dev": "bun --watch apps/worker/src/index.ts",
+    "bot:start": "bun apps/worker/src/index.ts",
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose stop db",
+    "db:test:up": "docker compose -f docker-compose.test.yml up -d --wait db-test",
+    "db:test:down": "docker compose -f docker-compose.test.yml down -v",
+    "db:generate": "drizzle-kit generate --config packages/core/drizzle.config.ts",
+    "db:migrate": "bun packages/core/src/db/cli.ts migrate",
+    "db:status": "bun packages/core/src/db/cli.ts status",
+    "db:check": "bun scripts/check-migration-drift.ts",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
+    "check": "eslint . --max-warnings=0 && prettier --check . && tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
+    "test:run": "vitest run",
+    "build": "next build apps/web",
+    "security:staged": "bun scripts/check-staged-secrets.ts",
+    "precommit:check": "eslint . --max-warnings=0 && prettier --check . && tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json && bun scripts/check-migration-drift.ts && bun scripts/check-staged-secrets.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^10.12.0",
+    "eslint-config-next": "^16.4.0",
+    "next": "^16.4.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.4"
+  },
+  "engines": {
+    "bun": "1.3.14",
+    "node": ">=24"
+  }
+}

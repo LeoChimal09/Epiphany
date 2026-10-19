@@ -1,0 +1,166 @@
+{
+  "node": {
+    "4009cf212c5a03be549e9d4b5c6acb8ee09b9f8b02": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "addDashboardCategory"
+    },
+    "40428e61dd8df62f2c6e7363b2ed018170ccddc790": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "addDashboardEvent"
+    },
+    "40cdd7dc104f5ffc27f181d670c7e6dc1fedb9e30f": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "addDashboardNote"
+    },
+    "4068ce165af64cda3bbdd3705b4bc58028dd45c51d": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "addDashboardTask"
+    },
+    "408ab6cade28b2ed60086e80184725229ececd079f": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "addDashboardWorkBlock"
+    },
+    "60993e362e165d7f86b65d8dae9b7bf21113a49281": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "askEpi"
+    },
+    "40127339799c6f5f82eab567f7b1920cb9eb61ea38": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "cancelDashboardEvent"
+    },
+    "60da45420b3aeb5e9a609f3d93aa6f3ad16cca928c": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "editDashboardNote"
+    },
+    "60ecfef41ddbdc282034863012be4f5b8987f73f1c": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "editDashboardTask"
+    },
+    "406400e43c5d0156ac07bfaa53e7a94e469da8fdb3": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "finishDashboardTask"
+    },
+    "4085661a9330a1407f00a8c3cbb24b2a4d6062150f": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "loadDashboardHistory"
+    },
+    "402e2a620406a734583088bcb60e9565e4ea35c161": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "loadDashboardSchedule"
+    },
+    "40f554a5978d9a39d9f5bc1a015e47ad710dd1c5d3": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "loadMoreDashboardNotes"
+    },
+    "00eb5ce5c5c5738f5a36c18ac8ec50f3785ec6f6b2": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "refreshDashboard"
+    },
+    "40859d94465fcb95d4fd409d9ec05c26c0753c55ba": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "removeDashboardWorkBlock"
+    },
+    "408e0245471c796b58b838a8cfa97123a4aa1ce98b": {
+      "workers": {
+        "app/dashboard/page": {
+          "moduleId": 12118,
+          "async": false
+        }
+      },
+      "filename": "apps/web/app/dashboard/actions.ts",
+      "exportedName": "reopenDashboardTask"
+    }
+  },
+  "edge": {},
+  "encryptionKey": "au6NqtKYg7CXRTQoQuV55pepPZIDP63OxKcezfDtg7k="
+}

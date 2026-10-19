@@ -1,0 +1,21 @@
+{
+  "name": "@epiphany/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./db": "./src/db/index.ts",
+    "./db/migrate": "./src/db/migrate.ts",
+    "./services": "./src/services/index.ts",
+    "./planning": "./src/planning/index.ts",
+    "./assistant": "./src/assistant/index.ts",
+    "./auth": "./src/auth/sessions.ts",
+    "./testing": "./src/db/test-support.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "mysql2": "^3.24.6",
+    "zod": "^4.6.7"
+  }
+}

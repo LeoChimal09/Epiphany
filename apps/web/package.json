@@ -1,0 +1,15 @@
+{
+  "name": "@epiphany/web",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@epiphany/core": "workspace:*",
+    "@next/env": "^16.4.0",
+    "arctic": "^3.7.0",
+    "lucide-react": "^1.57.0",
+    "next": "^16.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1"
+  }
+}
