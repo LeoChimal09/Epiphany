@@ -1,3 +1,0 @@
-module.exports=[[28992,a=>{var b=a.i(55767);a.s(["default",0,function({children:a}){return(0,b.jsx)("html",{lang:"en",children:(0,b.jsx)("body",{children:a})})},"metadata",0,{title:"Epiphany",description:"Personal planning workspace."}])},50756,(a,b,c)=>{b.exports=a.r(18622)},55767,(a,b,c)=>{b.exports=a.r(50756).vendored["react-rsc"].ReactJsxRuntime}],18622,(a,b,c)=>{b.exports=a.x("next/dist/compiled/next-server/app-page-turbo.runtime.prod.js",()=>require("next/dist/compiled/next-server/app-page-turbo.runtime.prod.js"))},44665,function(a){a.n(a.i(28992))}];
-
-//# sourceMappingURL=%5Broot-of-the-server%5D__0lv54vvkov4tl._.js.map

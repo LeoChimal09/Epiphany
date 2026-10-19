@@ -1,1 +1,0 @@
-{"version":3,"sources":["../../../../../apps/web/instrumentation.ts"],"sourcesContent":["export async function register() {\n  if (process.env.NEXT_RUNTIME === \"nodejs\") {\n    await import(\"./instrumentation-node\");\n  }\n}\n"],"names":["register"],"mappings":"8KAAO,eAAeA,IAElB,MAAA,EAAA,CAAA,CAAA,MAEJ"}

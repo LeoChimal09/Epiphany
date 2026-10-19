@@ -1,3 +1,0 @@
-module.exports=[41495,a=>{"use strict";var b=a.i(32245);a.s(["default",0,function({reset:a}){return(0,b.jsxs)("main",{style:{maxWidth:600,margin:"64px auto",padding:24},children:[(0,b.jsx)("h1",{children:"Dashboard unavailable"}),(0,b.jsx)("p",{children:"Your saved records could not be loaded."}),(0,b.jsx)("button",{type:"button",onClick:a,children:"Try again"}),(0,b.jsx)("form",{action:"/api/auth/logout",method:"post",children:(0,b.jsx)("button",{type:"submit",children:"Sign out"})})]})}])}];
-
-//# sourceMappingURL=apps_web_app_dashboard_error_tsx_1vth9wf279ipu._.js.map
