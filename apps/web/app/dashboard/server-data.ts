@@ -1,5 +1,5 @@
 import "server-only";
-import { createServices } from "@epiphany/core/services";
+import { createServices, type OwnerProfile } from "@epiphany/core/services";
 import { addDays, localWallToUtc, type DateKey } from "@epiphany/core/planning";
 import type { CalendarEvent, Category, Note, Task, WorkBlock } from "@epiphany/core/db";
 import { verifySession } from "../../lib/auth/dal";
@@ -15,6 +15,7 @@ export function taskForDashboard(task: Task): DashboardTask {
     title: task.title,
     details: task.details,
     sourceText: task.sourceText,
+    reviewNote: task.reviewNote,
     status: task.status,
     dueAt: task.dueAt?.toISOString() ?? null,
     dueDateOnly: task.dueDateOnly,
@@ -96,13 +97,16 @@ export async function loadSchedule(
   };
 }
 
-export async function loadDashboardData(): Promise<DashboardData & { devBypass: boolean }> {
+export async function loadDashboardData(): Promise<
+  DashboardData & { devBypass: boolean; owner: OwnerProfile }
+> {
   const context = await dashboardContext();
-  const [open, completed, notes, categories] = await Promise.all([
+  const [open, completed, notes, categories, owner] = await Promise.all([
     context.services.tasks.list(context.principal, { status: "open", limit: 100 }),
     context.services.tasks.list(context.principal, { status: "completed", limit: 100 }),
     context.services.notes.list(context.principal, { limit: 100 }),
     context.services.categories.list(context.principal),
+    context.services.owner.profile(context.principal),
   ]);
   return {
     tasks: [...open, ...completed].map(taskForDashboard),
@@ -113,6 +117,7 @@ export async function loadDashboardData(): Promise<DashboardData & { devBypass: 
     tasksTruncated: open.length === 100 || completed.length === 100,
     notesTruncated: notes.length === 100,
     devBypass: context.devBypass,
+    owner,
   };
 }
 

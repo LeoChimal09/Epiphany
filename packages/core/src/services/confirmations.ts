@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../db/client";
 import { newId, NotFoundError, recordAction } from "../db/domain";
-import { confirmations, notes, preferences, type ConfirmationTarget } from "../db/schema";
+import {
+  confirmations,
+  notes,
+  observations,
+  preferences,
+  type ConfirmationTarget,
+} from "../db/schema";
 import { AccessDeniedError, ConfirmationError, ValidationError } from "./errors";
 import { decide, type ActionName } from "./permissions";
 import { assertPrincipal, type Principal } from "./principal";
@@ -129,7 +135,42 @@ const preferenceDelete: Executor<{ key: string }> = {
   scrub: (preview) => ({ summary: preview.summary ?? "Forgot preference (value removed)" }),
 };
 
+// Forgets everything learned about how the owner works. The target's version is the number of
+// observations, so a confirmation given before new ones were recorded no longer matches.
+const memoryClear: Executor<{ scope: "observations" }> = {
+  schema: z.object({ scope: z.literal("observations") }).strict(),
+  async targets(tx, ownerId) {
+    const [row] = await tx
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(observations)
+      .where(eq(observations.ownerId, ownerId));
+    return [{ entityType: "observations", entityId: ownerId, version: Number(row?.count ?? 0) }];
+  },
+  async preview(tx, ownerId) {
+    const [row] = await tx
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(observations)
+      .where(eq(observations.ownerId, ownerId));
+    return {
+      summary: `Forget what I've learned about how long things take (${Number(row?.count ?? 0)} reports)`,
+      consequences: ["All reports are permanently deleted.", "Estimates go back to what you set."],
+    };
+  },
+  async execute(tx, principal, _payload, confirmationId) {
+    await tx.delete(observations).where(eq(observations.ownerId, principal.ownerId));
+    await recordAction(tx, principal, {
+      action: "memory.clear",
+      entityType: "observations",
+      entityId: principal.ownerId,
+      after: { confirmationId },
+    });
+    return { cleared: "observations" };
+  },
+  scrub: () => ({ summary: "Forgot what I'd learned (reports removed)" }),
+};
+
 const EXECUTORS: Partial<Record<ActionName, Executor<never>>> = {
+  "memory.clear": memoryClear as unknown as Executor<never>,
   "note.delete": noteDelete as unknown as Executor<never>,
   "preference.delete": preferenceDelete as unknown as Executor<never>,
 };

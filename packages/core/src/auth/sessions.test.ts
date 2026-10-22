@@ -215,5 +215,64 @@ describe.skipIf(!dbTestsEnabled)("dashboard sessions and owner identity", () => 
         .where(eq(actionHistory.entityId, rows[0]!.id));
       expect(history.filter((h) => h.action === "owner.create")).toHaveLength(1);
     });
+
+    const HASH_A = "a".repeat(32);
+    const HASH_B = "b".repeat(32);
+    const ownerRow = async () =>
+      (await handle.db.select().from(owners).where(eq(owners.id, ownerId)))[0]!;
+
+    it("refreshes the Discord name and avatar on a later sign-in", async () => {
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, {
+        ...identity,
+        displayName: "Leo",
+        avatarHash: HASH_A,
+      });
+      expect(await ownerRow()).toMatchObject({ displayName: "Leo", avatarHash: HASH_A });
+
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, {
+        ...identity,
+        displayName: "Leonardo",
+        avatarHash: HASH_B,
+      });
+      expect(await ownerRow()).toMatchObject({ displayName: "Leonardo", avatarHash: HASH_B });
+    });
+
+    it("keeps the stored name when Discord sends none, and clears a removed avatar", async () => {
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, {
+        ...identity,
+        displayName: "Leo",
+        avatarHash: HASH_A,
+      });
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, {
+        ...identity,
+        displayName: null,
+        avatarHash: null,
+      });
+      expect(await ownerRow()).toMatchObject({ displayName: "Leo", avatarHash: null });
+    });
+
+    it("leaves the stored avatar alone when the caller did not look at it", async () => {
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, {
+        ...identity,
+        displayName: "Leo",
+        avatarHash: HASH_A,
+      });
+      await authenticateDiscordUser(handle.db, OWNER_DISCORD, identity);
+      expect(await ownerRow()).toMatchObject({ displayName: "Owner", avatarHash: HASH_A });
+    });
+
+    it("does not touch a non-owner account's record", async () => {
+      const other = await createOwner(handle.db, {
+        displayName: "Other",
+        discordUserId: "300000000000000003",
+      });
+      await authenticateDiscordUser(handle.db, "300000000000000003", {
+        ...identity,
+        displayName: "Hijack",
+        avatarHash: HASH_A,
+      });
+      const [row] = await handle.db.select().from(owners).where(eq(owners.id, other.id));
+      expect(row).toMatchObject({ displayName: "Other", avatarHash: null });
+    });
   });
 });

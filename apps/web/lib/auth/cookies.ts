@@ -4,7 +4,11 @@ import { timingSafeEqual } from "node:crypto";
 // sibling subdomain. They need HTTPS, so local http development uses plain names.
 export function cookieNames(secure: boolean) {
   const prefix = secure ? "__Host-" : "";
-  return { session: `${prefix}epiphany_session`, oauth: `${prefix}epiphany_oauth` };
+  return {
+    session: `${prefix}epiphany_session`,
+    oauth: `${prefix}epiphany_oauth`,
+    googleOauth: `${prefix}epiphany_google_oauth`,
+  };
 }
 
 export function readCookie(request: Request, name: string): string | undefined {

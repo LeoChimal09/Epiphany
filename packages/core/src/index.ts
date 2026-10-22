@@ -1,7 +1,9 @@
 export {
   ConfigError,
   DEFAULT_OPENAI_MODEL,
+  googleCalendarRequested,
   isLoopbackHost,
+  loadGoogleConfig,
   loadAiConfig,
   loadAuthConfig,
   loadDatabaseToolingConfig,
@@ -9,6 +11,7 @@ export {
   loadWorkerConfig,
   type AuthConfig,
   type AiConfig,
+  type GoogleConfig,
   type Env,
   type SharedConfig,
   type WebConfig,

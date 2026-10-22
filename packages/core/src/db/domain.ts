@@ -167,6 +167,7 @@ export interface NewTask {
   details?: string;
   sourceText?: string;
   sourceRef?: string;
+  reviewNote?: string;
   dueAt?: Date;
   dueDateOnly?: boolean;
   estimatedMinutes?: number;
@@ -184,6 +185,7 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
       details: input.details ?? null,
       sourceText: input.sourceText ?? null,
       sourceRef: input.sourceRef ?? null,
+      reviewNote: input.reviewNote ?? null,
       dueAt: input.dueAt ?? null,
       dueDateOnly: input.dueDateOnly ?? false,
       estimatedMinutes: input.estimatedMinutes ?? null,

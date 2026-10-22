@@ -29,6 +29,48 @@
       "when": 1792076563428,
       "tag": "0003_ai_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1792439810504,
+      "tag": "0004_owner_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1792441682772,
+      "tag": "0005_task_review_note",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1792444051813,
+      "tag": "0006_discord_overviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1792445550823,
+      "tag": "0007_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1792446193935,
+      "tag": "0008_google_calendar",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1792519047816,
+      "tag": "0009_voice_usage_observations",
+      "breakpoints": true
     }
   ]
 }

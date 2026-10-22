@@ -349,14 +349,26 @@
 .avatar {
   width: 28px;
   height: 28px;
+  overflow: hidden;
 }
 .avatarLarge {
   width: 40px;
   height: 40px;
+  overflow: hidden;
+}
+.avatarImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .accountName {
+  max-width: 160px;
+  overflow: hidden;
   font-size: 12px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .menu {
   position: absolute;
@@ -416,6 +428,69 @@
 .menuItem:hover {
   color: #fff;
   background: rgba(224, 71, 76, 0.14);
+}
+
+.notifications {
+  position: fixed;
+  inset: calc(var(--topbar) + 8px) 16px auto auto;
+  margin: 0;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - var(--topbar) - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--ink);
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.notificationBell {
+  display: flex;
+  align-items: center;
+}
+.notificationButton {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.notificationButton:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 3px;
+}
+.notificationBadge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  padding: 0 4px;
+  min-width: 17px;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 10px;
+  text-align: center;
+}
+.noteEditorBody {
+  min-height: 240px;
+  resize: vertical;
+}
+.notifications .task {
+  flex-wrap: wrap;
+}
+.notifications .taskContent {
+  flex: 1 1 220px;
+}
+.notifications h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 /* Layout */
@@ -847,6 +922,7 @@
 }
 .listToolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   justify-content: space-between;
   gap: 20px;
@@ -1023,6 +1099,31 @@
   font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.micButton {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+}
+.micButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.micRecording {
+  background: #d93f4c;
+  box-shadow: 0 0 0 4px rgba(217, 63, 76, 0.3);
+}
+.chatHintWarn {
+  color: #f5c26b;
+}
+.reviewTag {
+  color: #f5c26b;
 }
 .taskMeta {
   display: flex;
@@ -1478,6 +1579,93 @@
   display: none;
   gap: 12px;
 }
+.monthScroll {
+  overflow-x: auto;
+}
+.ideaBody section + section {
+  margin-top: 16px;
+}
+.ideaSummary {
+  margin-top: 12px;
+  padding: 6px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.ideaSummary:hover {
+  color: var(--ink);
+}
+.ideaSummary:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.ideaBody[open] > section {
+  margin-top: 12px;
+}
+.ideaBody h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ideaBody ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.ideaBody li {
+  overflow-wrap: anywhere;
+}
+.ideaBody strong {
+  font-weight: 600;
+}
+.monthGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 560px;
+  gap: 4px;
+}
+.monthGrid > strong {
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.monthDay {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 110px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+.monthDay:hover {
+  border-color: var(--muted);
+}
+.monthDate {
+  font-weight: 700;
+}
+.monthOutside {
+  color: var(--muted);
+}
+.monthEntry {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.weekNav {
+  flex-wrap: wrap;
+}
+.weekNav button[aria-pressed="true"],
+.listToolbar button[aria-pressed="true"] {
+  color: #fff;
+  background: #2563eb;
+}
 .weekDayCard {
   display: grid;
   gap: 10px;
@@ -1635,4 +1823,11 @@
     gap: 12px;
     padding: 14px;
   }
+}
+
+.menuLink {
+  text-decoration: none;
+}
+.menuLink:hover {
+  background: rgba(255, 255, 255, 0.08);
 }

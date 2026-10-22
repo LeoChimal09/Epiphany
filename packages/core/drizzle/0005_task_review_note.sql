@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `review_note` varchar(300);

@@ -59,7 +59,7 @@ bot connection (Goal 06) and voice (Goal 22) will face the same inspection.
 
 | Command                           | Purpose                                                          |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `bun run dev`                     | Dashboard at http://localhost:3000 (listens on 127.0.0.1 only); health at `/api/health`. |
+| `bun run dev`                     | Dashboard at http://localhost:3000 (binds to localhost loopback only); health at `/api/health`. |
 | `bun run bot:dev`                 | Worker with file watching; health at http://localhost:3001/health. |
 | `bun run bot:start`               | Worker without watching.                                         |
 | `bun run build` / `bun run start` | Production build and server for the dashboard.                   |

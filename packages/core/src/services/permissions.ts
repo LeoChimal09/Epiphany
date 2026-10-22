@@ -27,6 +27,7 @@ export const ACTIONS = {
   "preference.delete": { kind: "destructive" },
   "history.read": { kind: "read" },
   "category.read": { kind: "read" },
+  "owner.read": { kind: "read" },
   "task.create": { kind: "apply" },
   "task.complete": { kind: "apply" },
   "task.update": { kind: "apply" },
@@ -37,6 +38,18 @@ export const ACTIONS = {
   "event.cancel": { kind: "apply", confirmWhenExternal: true },
   "category.create": { kind: "apply" },
   "reminder.snooze": { kind: "apply" },
+  "reminder.create": { kind: "apply" },
+  "insight.read": { kind: "read" },
+  "insight.write": { kind: "apply" },
+  "reminder.read": { kind: "read" },
+  "calendar.read": { kind: "read" },
+  "calendar.connect": { kind: "escalate" }, // expands provider access: needs the owner's consent
+  "calendar.disconnect": { kind: "apply" },
+  "calendar.select": { kind: "apply" }, // chooses which calendars are read
+  "calendar.resolve_conflict": { kind: "schedule" }, // the owner's choice about a changed Google event
+  "overview.read": { kind: "read" },
+  "overview.write": { kind: "apply" }, // records which Discord message shows an overview
+  "workspace.setup": { kind: "apply" }, // adds Epiphany's own private channels; never edits others
   "work_block.create": { kind: "schedule" },
   "work_block.remove": { kind: "schedule" },
   "event.update_external": { kind: "external" },
@@ -48,6 +61,8 @@ export const ACTIONS = {
   "notification_limit.increase": { kind: "escalate" },
   "tracking.enable": { kind: "escalate" },
   "listening.enable": { kind: "escalate" },
+  // One live voice session the owner explicitly asked for; it ends when they say so or after idling.
+  "voice.session": { kind: "apply" },
   "provider_permission.expand": { kind: "escalate" },
 } as const satisfies Record<string, ActionSpec>;
 

@@ -1,8 +1,8 @@
 # Epiphany Build Goals
 
-This is the execution checklist for [the product plan](README.md). Goals 01, 02,
-03, and 05 are complete; Goal 04 remains open pending live Discord OAuth
-verification. Build one goal at a time, verify its completion criteria, and then
+This is the execution checklist for [the product plan](README.md). Goals 01-05,
+07, and 08 are complete; Goal 06 is the next open goal.
+Build one goal at a time, verify its completion criteria, and then
 check it off. Epi's shared planning system covers every area of life, not only
 school assignments.
 
@@ -71,7 +71,8 @@ school assignments.
 
 ### 04. Secure Shared Data Access
 
-- [ ] Complete goal 04.
+- [x] Complete goal 04. Owner confirmed functional sign-in on 2026-10-22;
+  service authorization and persisted-write checks are recorded below.
 - Deliver: authenticated dashboard access, owner authorization, shared data-service
   operations, input validation, and an auditable change path.
 - Require: the action permission matrix, version-bound confirmation enforcement,
@@ -102,7 +103,7 @@ school assignments.
 
 ### 07. Implement Free-Form Understanding And Safe Actions
 
-- [ ] Complete goal 07.
+- [x] Complete goal 07. Owner accepted on 2026-10-22; see progress record below.
 - Deliver: AI intent interpretation, validated internal read/write capabilities,
   natural clarification, conversational context, and confirmed action responses.
 - Require: the conversation evaluation harness, applicable held-out paraphrases,
@@ -113,7 +114,7 @@ school assignments.
 
 ### 08. Add Homework Intake And Automatic Sorting
 
-- [ ] Complete goal 08.
+- [x] Complete goal 08. Owner accepted on 2026-10-22; see progress record below.
 - Deliver: mixed-message extraction, pasted-homework review, default Inbox,
   category changes, duplicate detection, and linked source messages.
 - Done when: one out-of-order message produces separate assignment and idea
@@ -123,6 +124,8 @@ school assignments.
 ### 09. Synchronize Discord And Dashboard Views
 
 - [ ] Complete goal 09.
+- Owner confirmed information retention on 2026-10-22. This does not yet verify
+  the distinct Discord/dashboard synchronization acceptance checks below.
 - Deliver: updated Discord overview messages, detail threads where useful,
   dashboard refresh/update delivery, and activity history with practical undo.
 - Done when: a Discord completion appears on the dashboard and a dashboard edit
@@ -132,6 +135,9 @@ school assignments.
 ### 10. Add Personal Memory And Continuity
 
 - [ ] Complete goal 10.
+- Owner confirmed retained information and recall after refresh on 2026-10-22.
+  Remaining acceptance covers preference correction/forgetting and privacy/history
+  behavior, not whether saved information survives refresh.
 - Deliver: confirmed preferences, recent context, relevant database retrieval,
   memory provenance, and inspect/correct/forget controls.
 - Include: [historical assignment retrieval](README.md#historical-records-and-archived-assignments)
@@ -299,7 +305,25 @@ school assignments.
 
 ## Progress Record
 
-Current next goal: **04 - Secure Shared Data Access**.
+Current next goal: **06 - Connect Discord And Create The Workspace**.
+
+Official checked-off goals are **01 (architecture), 02 (skeleton), 03 (database), 04 (secure access),
+05 (basic dashboard), 07 (free-form understanding), and 08 (intake/sorting)**.
+The owner explicitly accepted 07/08 on 2026-10-22; earlier entries retain their
+verification status at the time. The owner also reported good recall after refresh
+for 09/10, but did not accept those goals as fully complete, so both remain unchecked.
+Google Calendar is not connected/live for the owner; local integration code and
+offline tests do not make Goal 11 operational or complete.
+The owner confirmed functional sign-in on 2026-10-22, closing Goal 04's live OAuth
+acceptance gate. Retention/recall for 09/10 is confirmed; remaining synchronization,
+memory-control and privacy gates still apply to those unchecked goals.
+
+- 2026-10-22, owner acceptance update: sign-in is functional, completing Goal 04
+  alongside its previously recorded service checks. The owner also confirmed that
+  Goals 09/10 retain information; no further refresh-persistence confirmation is
+  needed. This report does not establish cross-platform update delivery or all
+  inspect/correct/forget acceptance checks. Seven goals are checked off; Goal 06
+  is next. No implementation or deployment changed in this documentation update.
 
 - 2026-10-13, Goal 01: wrote
   [the architecture decision record](docs/decisions/0001-initial-architecture.md):
@@ -458,6 +482,344 @@ Current next goal: **04 - Secure Shared Data Access**.
   memory rather than persisted, and the live evaluation (`scripts/assistant-eval.ts`, opt-in with
   `AI_EVAL_LIVE=1`) and the Discord and dashboard entry points that call the assistant still need
   to be built or run.
+
+- 2026-10-19, production follow-ups (Goals 04 and 07 stay as recorded above): the deployed dashboard
+  shows the signed-in owner's Discord name and picture (migration `0004_owner_avatar`; read through
+  the new `owner.profile` service and the `owner.read` permission; the bypass never renames the
+  owner). Assistant replies are now conversational: the model is asked for two to four short
+  sentences, answers are capped at 700 characters at a sentence boundary, and action replies read
+  naturally ("Got it, I added ..."). Assistant failures are now logged (`interpret_failed`, with the
+  provider's HTTP status or the error class and code, never message text or keys); before this, a
+  provider or budget failure produced the "can't interpret" reply with no log line. The strict
+  structured-output schema no longer sends `default`/`minLength`/`maxLength`, which some providers
+  reject; lengths are still enforced locally. Checks run: lint, format, typecheck, `db:check`,
+  `build`, and the full test suite against the disposable MySQL (upgrade test now seeds the
+  0003 schema and tolerates added columns). Not verified: a live OpenAI call (no credits
+  available), the new migration on Railway, and the avatar against a real Discord sign-in.
+
+- 2026-10-19, Goal 06 (implemented in code; not checked off, no live Discord run): the worker bot
+  now links Discord messages to the owner by Discord ID (it previously passed the Discord ID where an
+  owner ID was needed, which would have failed every message), answers only the owner, treats a
+  channel as private only when Discord says `@everyone` cannot see it, and answers mentions elsewhere
+  as a shared audience with no personal data. Workspace setup is conversational (new
+  `setup_workspace` intent, `workspace.setup` permission, injected capability): it creates the private
+  `epiphany` category and seven channels with owner-and-bot-only permissions, only in servers shared
+  with the owner, reuses existing ones, repairs deleted ones, shares one run between simultaneous
+  requests, stops and reports on a missing permission, and DM-checks the owner after a server-side
+  setup. See [Discord](docs/discord.md). Checks run: lint, format, typecheck, and the full suite
+  (adds routing, plan application, adapter-with-fake-guild, and assistant setup tests plus four
+  evaluation cases). Remaining before checking off: create the Discord application, enable the
+  Message Content intent, invite the bot, and verify against a real server: channels created once,
+  rerun reuses them, an owner message reaches the service, a second account is ignored, and a blocked
+  DM is reported.
+
+- 2026-10-19, Goal 08 (implemented offline; not checked off, no live model run): the assistant has two
+  new intents. `capture` takes up to 12 independent items from one message or a pasted list
+  (assignment, idea, or note) and saves each as its own record: tasks keep the owner's original
+  message (`source_text`) and a source reference (`discord:<channel>/<message>` or
+  `dashboard:ask-epi`); items go to an existing category the model named, otherwise the Inbox, and
+  Epi never creates a category from model output. A missing or unclear date is stored as a
+  `review_note` (migration `0005_task_review_note`), shown on the dashboard task as "Needs review"
+  and cleared automatically when a deadline is set. Likely duplicates of open tasks or notes (and
+  repeats within one message) are skipped and reported rather than saved twice. `recategorize`
+  moves a task or note after a correction ("that's a school thing"), resolving "the first one"
+  against what was just created and asking when ambiguous. "Don't save this", "just chatting", and
+  similar phrases are enforced in code (`nosave.ts`), so a model mistake cannot create records from
+  them. Checks run: lint, format, typecheck, and the full suite against the disposable MySQL (new
+  tests for the out-of-order mixed message, flagged dates, categories, duplicates, per-item
+  failures, no-save, corrections, shared audiences, plus five held-out evaluation cases); mutation
+  checks that disabling the no-save guard, duplicate detection, or the source link failed tests.
+  Remaining before checking off: run the live evaluation with a real model (`AI_EVAL_LIVE=1`) and
+  confirm the pasted-homework behavior in a real conversation; the dashboard does not yet let the
+  owner clear a review flag without setting a date, and attachments are not read.
+  2026-10-19 follow-up from a real production test (a pasted Canvas list of 12 assignments saved only
+  the first, because the deployed build predated `capture`): pasted school-system text now has its
+  own prompt guidance (course codes, "Go to course", points, date headings, "Today"), a capture holds
+  up to 30 items, the message limit is 8000 characters (it was 2000), the default output cap is 4000
+  tokens (it was 1000, too small for a long list), and the reply lists the first 12 tasks and counts
+  the rest. A Canvas-style case was added to the held-out evaluation.
+  The assistant now says so when it cannot handle everything: a message over the 8000-character
+  limit (the dashboard counts and blocks it instead of silently cutting a paste), an answer cut off
+  at the output cap or an input over the token cap ("send it in smaller pieces"), a paste of more
+  than 30 items (it says how many it left out), and a reminder to skim the Inbox after any longer
+  paste, since messy text can be misread. Discord: Epi logs `discord_ready`, sends the owner a
+  one-time DM offering the workspace when it is in a server the owner is in, and a mention in a
+  public channel now says to DM it for setup (it previously gave the generic privacy refusal).
+  2026-10-19 correction after the bot sat in the owner's server without creating anything: setup was
+  only on request, which was easy to miss. Epi now sets up automatically, at startup and when added,
+  in a server the owner owns (adding it there is the approval; idempotent, and the owner is DMed what
+  it created or what permission is missing, a problem only once). In a server the owner merely
+  belongs to it still only offers.
+
+- 2026-10-19, Goal 09 (implemented offline; not checked off, no live Discord run): overview messages for
+  `today`, `schedule`, `priorities`, `notes-and-ideas`, and `activity-log` are rendered from the
+  records (`packages/core/src/overview/`, pure and deterministic, escaped so titles cannot ping,
+  under 2000 characters) and kept in step by the worker (`overview-sync.ts`): one message per view,
+  edited in place only when the content changed, recreated if deleted (records untouched), an
+  orphaned message adopted by its marker instead of duplicated, and per-view failures isolated, so
+  retries never duplicate. Bindings live in `discord_overviews` (migration `0006`, read and written
+  through `overviews` services). Discord changes sync immediately and dashboard changes within 30
+  seconds; the dashboard re-reads every 30 seconds while visible (it waits during an action and
+  drops stale results). "Undo" reverses the last completion or category move in a conversation
+  (`lastChange`, cleared by anything else said). Checks run: lint, format, typecheck, and the full
+  suite against the disposable MySQL (render, sync with a fake server, services, a real-record
+  test that a Discord completion and a dashboard edit both appear, undo, upgrade seeds through
+  0005). Remaining before checking off: verify in a real server that the messages post once,
+  update after a dashboard edit, and reappear after deletion; threads for detailed items are not
+  built; undo covers only the last completion or move, not creations or deletions.
+
+- 2026-10-20, Goal 11 (implemented offline; NOT checked off: no live Google run was possible): OAuth
+  connect/callback/disconnect (`/api/google/*`: authorization code + PKCE + `state`, offline access,
+  owner-only, same-origin POST disconnect; missing config fails closed with a message), AES-256-GCM
+  token storage (`TOKEN_ENCRYPTION_KEY`), migration `0008_google_calendar` (`calendar_accounts`,
+  `synced_calendars`, `calendar_event_refs`), a typed Google Calendar REST client over an injectable
+  `fetch` (pagination, `syncToken` with 410 full resync, `If-Match`, 429/rate-limit backoff, bounded
+  retries, uncertain writes never retried blindly), a sync engine (`packages/core/src/calendar/`:
+  idempotent import of all-day, timezone and recurring-instance events, cancellations, no sync loops;
+  work blocks pushed only to the dedicated "Epiphany" calendar with ETag conflict checks and
+  reconciliation of uncertain writes by private key before any retry), `calendar.*` permissions and
+  services, a Calendars page (`/dashboard/calendars`, from the account menu) with connect, status,
+  calendar selection, sync state, conflict choices and disconnect, and a worker runner started from
+  `worker.ts` (does nothing when Google is unconfigured). See [calendar](docs/calendar.md). Checks
+  run: lint, format, typecheck, `db:check`, `build`, and the full suite against the disposable MySQL
+  (token crypto and tamper tests; client tests on a fake `fetch`; 36 sync tests on an in-memory Google
+  covering idempotence, no duplicates, no loops, concurrent external edit => conflict not overwrite,
+  uncertain-write reconciliation, disconnect, invalid_grant, outages, and owner isolation; service
+  permission and web route tests; the upgrade test now seeds `0007`). Mutation checks on 11 safety
+  behaviors (If-Match, own-calendar-only writes, loop guard, conflict detection, uncertain-write
+  reconciliation, token wipe on disconnect, OAuth state, 410, invalid_grant, consent, token binding)
+  each made tests fail. **Remaining before checking off (needs a real Google
+  account):** create the OAuth client and add yourself as a test user; set the three variables on
+  Railway; connect once from the deployed dashboard; confirm your events appear, the "Epiphany"
+  calendar is created once, a test work block appears there and updates without duplicating, an edit
+  made in Google Calendar shows as a conflict, Disconnect removes access (and the app disappears from
+  myaccount.google.com/permissions), and that an access removed at Google shows "needs to be connected
+  again". Also unverified live: Google's actual behavior for the `calendar.app.created` scope on
+  `calendarList`, recreating an event with a previously deleted ID, and the unverified-app consent screen.
+  Limits: one Google account per owner; no Microsoft (Goal 23); only the next 180 days and the past 30
+  are read (rolling, re-read weekly); no push notifications (polls every 5 minutes); no
+  occurrence-versus-series edits of external events (they are read-only); the dashboard week view does
+  not yet badge individual blocks with their sync state (the Calendars page lists blocks that are not in sync).
+
+- 2026-10-20, Goals 07/08 follow-up (local implementation; goals remain unchecked):
+  standalone greetings, thanks, and simple approval/rejection replies bypass the model
+  and its budget gate, but still require an authenticated private owner conversation.
+  Multi-item captures now show every extracted item in a numbered preview, with dates,
+  categories, and review flags, before any save. Approval is model-free, owner-bound,
+  expires in ten minutes, rechecks current duplicates, and preserves the original task
+  source. Unrelated messages discard the preview. Missing deadlines are flagged in
+  code; same-title tasks with conflicting details are no longer silently deduplicated.
+  Interpretation receives existing category names. Discord sends long reviews in full
+  across multiple messages with mentions disabled. Partial imports explicitly distinguish
+  validated failures from unverified writes and warn before retrying; the dashboard does
+  not label unverified writes as unchanged. Verification: 183 focused tests passed across
+  12 files, including isolated MySQL imports, expiry/decline/owner checks, budget exhaustion,
+  source preservation, duplicate rechecks, partial failures, state validation, and server-
+  rendered chat UI. Typecheck, scoped lint, formatting, and whitespace checks passed.
+  The test runner now transforms JSX for component tests using its existing Oxc support;
+  no dependencies were added. Limits: no supplied reproduction paste or live-model
+  evaluation, no live Discord/Railway deployment, and no production build was run for this
+  follow-up. Configured AI is still required to enter private chat; the bypassed routine
+  paths consume no model tokens. Single-item requests retain immediate-save behavior.
+
+- 2026-10-20, Goals 10, 12-18, 19-24 (implemented offline; none checked off, nothing run live). What exists:
+  - **10 memory:** `remember`/`list_memory`/`forget` intents; explicit memories are kept, inferred ones are
+    proposed and unused until confirmed; provenance shown; forget goes through the confirmation service;
+    confirmed memories are given to the model; the year-old completed task stays searchable and inactive.
+    Retention: see docs/reminders.md and docs/release-gate.md (deletion ledger). Attachments are not kept.
+  - **12/13 planning:** availability now reads the owner's stored `planning.*` preferences (defaults never
+    offer overnight or meal time). Still missing: free time and preparation milestones on the dashboard views.
+  - **14 conversational planning:** `show_schedule` (grounded overview, free time, proposals), `plan_work`
+    (conflict-checked, offers the next free window), proposals scheduled only after a yes and re-checked,
+    completing a task clears its remaining planned blocks (kept in history).
+  - **15 reminders:** persistent jobs, dedupe keys, claim-before-send, interrupted jobs become `unknown` and
+    are not resent (at-most-once), bounded backoff, quiet hours, daily limit, grace/catch-up, merged summary
+    after outages, no AI call. See docs/reminders.md for the chosen defaults.
+  - **16/17 check-ins and routines:** morning briefing built at send time, event reminders and "still going?"
+    checks, replies ("finished it", snooze, not going) tied to the reminder, pause/resume, activity follow-ups,
+    early-finish choices, bedtime/workout/hourly routines, conversational settings (daily-limit increases ask
+    first). Buttons are not built.
+  - **18 personalization:** opt-in (explicit yes), only owner-reported durations and snoozes are recorded, a
+    single report concludes nothing (three needed), corrections override, pause and erase (confirmed) work.
+  - **19 release gate:** `bun run gate`, `bun run restore:drill`, export/restore/verify and the deletion
+    ledger (`packages/core/src/ops`), docs/release-gate.md, docs/operations.md. The manual gates need the
+    deployed system.
+  - **20/21/22/24 voice:** audio-message intake, spoken replies (ElevenLabs then OpenAI, own budget), live
+    voice session rules and a `@discordjs/voice` adapter, dashboard push-to-talk with stop-speaking. See
+    docs/voice.md. All tested against fakes; the live Discord voice path is entirely unverified.
+  - **23 Microsoft:** feasibility and alternatives recorded in docs/microsoft-calendar.md; the integration is
+    deliberately not built until the tenant answer is known.
+  Migrations `0007` to `0009` add reminders, Google Calendar, usage, and observations tables.
+
+- 2026-10-21, Goals 07/08 idea and intake follow-up (verified locally, not deployed):
+  idea capture supports constructive feedback in the same interpretation call. The
+  `develop_idea` intent appends deduplicated bullets to the same owner-scoped idea,
+  preserves its original body, and uses expected-version updates to refuse concurrent
+  overwrites. Active ideas are re-read through `notes.get`; ambiguous references ask
+  which idea, and advice/no-save messages do not edit notes. The user's six-assignment
+  course-card paste is now parsed without a model call when the entire format matches;
+  incomplete or ambiguous layouts still use interpretation, never a partial parse.
+  Dates use the owner's local today, with explicit AM/PM conversion. The exact supplied
+  paste saves all six assignments after preview/approval, including course details,
+  points, source text, and the source reference, with zero provider calls even at the
+  AI budget limit. A consistent flat-list count blocks saving a one-item extraction of
+  a ten-entry list; independent multi-goal captures are covered by preview/save tests.
+  Expanded the opt-in model evaluation with the supplied paste, mixed-life goals,
+  initial idea feedback, and follow-up bullet development. Verification: 213 tests
+  across 13 focused files passed with required disposable MySQL; typecheck, scoped
+  lint, formatting, and whitespace checks passed. No dependency or schema changes.
+  Limits: no live-model evaluation or deployed Discord/Google/voice checks were run.
+  GitHub main/dev and latest recorded deployments still reference 45dfd67; channel
+  setup and these follow-ups remain local. No commit, push, or deployment performed.
+
+- 2026-10-21, Goals 07/08 manual intake follow-up: user screenshots show a six-item
+  preview, approval, a six-item save response, and corresponding dashboard tasks
+  with the expected deadlines. The first title incorrectly retained the greeting.
+  `assistant/intake.ts` now excludes a bounded introductory phrase such as
+  "Hey epi heres my assignments," before validating the complete course-card list.
+  Existing saved titles are not changed. Verification: 43 parser/no-save tests,
+  typecheck, scoped lint, formatting, and whitespace checks passed. Reload
+  persistence, cancellation, duplicate handling, and idea development still need
+  manual acceptance; no goal is newly marked complete.
+
+- 2026-10-21, dashboard growth and calendar clarification: the user confirmed that
+  all six imported tasks survived a page reload. Ask Epi now shows only five upcoming
+  tasks, with navigation to all tasks and the current week. Task lists page loaded
+  records in groups of 20, reset on view/search/category changes, and clamp when
+  records disappear. The existing 100-per-status initial fetch remains bounded;
+  Task history retains incremental access to older records. Calendar help now
+  distinguishes due markers from study blocks rather than claiming sync is always
+  disconnected. The exact course-card fixture places deadlines on October 21, 22,
+  25, and 26 without inventing work sessions. Verification: 66 focused parser,
+  dashboard-rendering, model, and schedule tests passed; typecheck and scoped lint
+  passed. No external calendar connection, real data edits, or deployment performed.
+
+- 2026-10-21, unified Calendar navigation: replaced separate Today/Week sidebar entries
+  with one Calendar entry and Day/Week/Month controls. Previous/next navigation and
+  Today work within the selected view; month cells open day details. Month ranges
+  include complete Monday-first weeks, including adjacent-month spillover, and load
+  every displayed week through the existing authorized schedule action. Cross-week
+  records are deduplicated; a failed week is reported rather than silently omitted;
+  outdated requests cannot replace the selected range. Month cells cap previews at
+  three entries and show a remaining count. Task deadline truncation is visible.
+  Verification: 46 focused calendar/dashboard/model tests passed, including leap-year
+  and year-boundary month ranges, all-week loading, rendering, deduplication and
+  failures; typecheck and scoped lint passed. No schema changes or deployment.
+
+- 2026-10-22, idea organization follow-up: idea development retains flexible labels
+  (Concern, Problem, Goal, or custom text) and groups appended bullets under one
+  owner-local date heading per day. Legacy content is preserved under its stored
+  creation date when first developed; earlier points are not retroactively labeled.
+  The dashboard renders idea date headings, real bullet lists and emphasized labels;
+  plain notes and the plain-text editor remain unchanged. A new model prompt and
+  held-out evaluation case treat a contributed concern as idea development rather
+  than losing it as casual chat; opinion-only and no-save guards remain in force.
+  Date grouping and duplicate handling add no model calls or schema changes.
+  Verification: seven MySQL-backed idea tests and 21 focused journal, rendering,
+  provider and evaluation tests passed; typecheck and scoped lint passed. MySQL
+  creation timestamps and the injected conversation clock are tested separately.
+  Live model interpretation quality remains unverified; no deployment or edits
+  to existing personal ideas were performed.
+
+- 2026-10-22, compact idea cards: idea bodies now use a native, keyboard-accessible
+  details/summary accordion, collapsed by default. Titles, creation timestamps and
+  Edit controls remain visible; expanding Idea details reveals the preserved dated
+  sections and labeled bullets. No saved content is changed. Verification: five
+  focused rendering tests, typecheck, scoped lint, formatting and whitespace checks
+  passed. Local only; no deployment performed.
+
+- 2026-10-22, idea resumption after refresh: fixed the OpenAI request serializer
+  omitting the freshly loaded active idea (and existing category/list-count
+  metadata). Added a read-only resume_idea intent for returning to a saved project
+  without requiring invented new points. The action resolves owner-scoped ideas,
+  clarifies ambiguity, returns a bounded saved-body recap and establishes active
+  context for subsequent requests without changing the note or its version.
+  Browser refresh still resets the full transient chat; resumption restores
+  persisted idea context, not the previous transcript. Verification: 22 parser,
+  provider and evaluation tests and nine MySQL-backed idea tests passed; typecheck
+  passed. The screenshot's exact provider failure cannot be determined without
+  its sanitized interpret_failed log; no live provider call or deployment performed.
+
+- 2026-10-22, conversational provider follow-up: OpenAI now returns ordinary text
+  with at most one optional function proposal, rather than a mandatory structured
+  JSON envelope. Each supported action exposes only its own arguments; capture
+  items are sparse, and idea feedback accompanies the same completion. Existing
+  intent validation, owner-bound shared services, no-save rules, confirmations,
+  scripted providers, and read-only idea resumption remain in place. Invalid
+  optional actions preserve useful discussion with an explicit unsaved warning;
+  invalid-only, refusal and truncation paths fail without claiming an outage or
+  executing anything. Available usage costs are retained on rejected output, and
+  input estimates include function schemas. No automatic retry, repair, or second
+  model call was added. Evaluation rejects malformed actions and accounts for
+  output failures rather than falsely passing their fallback text.
+  Verification: 197 offline tests across 13 focused assistant files passed,
+  including all 29 action tools, conversation failures, authorization/no-save
+  guards and service refusal; workspace/dashboard typecheck, scoped ESLint,
+  scoped Prettier and whitespace checks passed. ESLint emitted its existing
+  React auto-detection notice. No MySQL/persistence test, live-model evaluation,
+  API request, credential read, commit, or deployment was performed. Provider
+  quality and measured token savings remain unverified; no goal was checked off.
+
+- 2026-10-22, deadline notification follow-up: added a dedicated dashboard area
+  derived from authorized loaded tasks, showing timed deadlines within one hour,
+  due now and overdue, plus calendar-based date-only notices. Five-item paging,
+  task navigation and the disclosed initial 100-open-task limit retain access to
+  full task history. Mark done uses the existing persisted completion action;
+  no response never completes work. Timed countdowns now use actual elapsed
+  days/hours/minutes (including an earlier deadline today or last night), and
+  all task lists use the same hydration-safe dashboard clock.
+  Reused the persistent reminder engine and worker; added a one-hour default
+  alongside 24/2 hours without overriding confirmed owner preferences or changing
+  dedupe, quiet hours, pause, retry/catch-up or daily-limit policies. Reminder
+  text asks for explicit completion, and timed pauses use the injected worker clock.
+  Verification: the final 131 targeted tests across ten files passed with a
+  dedicated disposable MySQL Compose fixture, including persisted completion/
+  reload/history, owner isolation, 61/60-minute boundaries, restart dedupe,
+  silence, delivery safeguards, dashboard/calendar regressions, and three offline
+  Discord-runner tests with external fetch blocked. Typecheck, scoped ESLint,
+  scoped Prettier and whitespace checks passed. The exact fixture databases,
+  container and network were removed and cleanup verified.
+  Dashboard notifications work only while the page is open;
+  background Discord needs the worker and enabled DMs. No new overdue-DM loop
+  or Discord buttons; natural replies use existing assistant context/interpretation.
+  No personal-data changes, live credentials/model/Discord calls, commit or deployment.
+  All incomplete goal checkboxes and the next-goal pointer remain unchanged.
+
+- 2026-10-22, owner acceptance and stale-idea follow-up: the owner explicitly
+  confirmed Goals 07/08 complete, so their checkboxes are now checked. Their report
+  that recall works well after refresh is partial evidence for 09/10, not full
+  acceptance; those remain unchecked. Google Calendar remains unconnected and
+  unverified live for this owner, regardless of the local Goal 11 implementation.
+  Duplicate idea screenshots exposed an unguarded `create_note` path: a repeated
+  same-title idea proposal could save a second card even on an unrelated actionable
+  follow-up. The shared assistant now uses existing title/body matching and
+  owner-scoped retrieval (including the freshly fetched active idea) to clarify
+  before saving a matching-title idea. Changed content is called out explicitly,
+  never silently discarded or auto-appended. Ordinary notes and distinct ideas
+  keep their existing behavior; `develop_idea` still appends validated new points.
+  Provider guidance prioritizes the current message and separates project ideas,
+  reference notes, and actionable maintenance/reminder requests. Missing reminder
+  timing calls for a question, not an invented deadline. No new reminder API or
+  scheduling architecture was added. Existing duplicate cards are not deleted.
+  Verification: 234 tests across nine focused assistant files passed with a
+  dedicated disposable MySQL server. Cases cover scripted stale `create_note`
+  follow-ups, optional-tool dispatch, truthful clarification without invented
+  timing, fresh active-idea retrieval outside the recent-note pool, changed
+  content, legitimate development, distinct ideas, ordinary notes, owner isolation,
+  and a reminder-after-idea evaluation with history. Workspace/dashboard
+  typecheck, scoped ESLint, scoped Prettier, and whitespace checks passed
+  (ESLint emitted its existing React auto-detection notice).
+  Fixture databases were verified absent, and the dedicated test container and
+  network were removed with cleanup verified.
+  Tests simulate provider output; no live output was inspected or invented as
+  evidence of what the deployed model actually returned. No live model/Discord/
+  calendar calls, personal-data or credential changes, commit, or deployment.
+
+- 2026-10-22, unified task browsing: removed the separate Priorities navigation
+  entry and added All tasks / With due date or duration / Just tasks filters to
+  Tasks. Due-date and duration metadata remain visible; tasks with neither show
+  a Just task label. Filter changes reset paging; search and category filtering
+  remain compatible. No persisted task records or scheduling rules are changed.
 
 When completing a goal, add a dated note with the implementation location,
 checks run, results, and any remaining limits. Change the next-goal pointer only

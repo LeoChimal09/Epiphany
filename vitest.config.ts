@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "node",
     // Database integration tests create databases and run migrations, which can exceed 5 seconds

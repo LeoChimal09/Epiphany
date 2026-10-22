@@ -3,6 +3,7 @@
 import { ValidationError, VersionConflictError } from "@epiphany/core/services";
 import {
   emptyConversation,
+  MAX_MESSAGE_LENGTH,
   parseConversationState,
   type AssistantReply,
   type ConversationState,
@@ -54,8 +55,11 @@ export async function askEpi(message: string, state: unknown): Promise<AskEpiRes
   if (typeof message !== "string" || !message.trim()) {
     return { ok: false, error: "Write a message first." };
   }
-  if (message.length > 2000) {
-    return { ok: false, error: "That message is too long (2000 characters at most)." };
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return {
+      ok: false,
+      error: `That message is too long (${MAX_MESSAGE_LENGTH} characters at most).`,
+    };
   }
   const conversation =
     state === null || state === undefined ? emptyConversation() : parseConversationState(state);

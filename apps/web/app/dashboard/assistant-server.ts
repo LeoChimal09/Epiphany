@@ -73,7 +73,9 @@ export async function askAssistant(
     clock: deps.clock,
   });
 
-  const result = await assistant.handle(principal, message, state);
+  const result = await assistant.handle(principal, message, state, {
+    sourceRef: "dashboard:ask-epi",
+  });
   const status = await budget.check();
   return {
     ...result,

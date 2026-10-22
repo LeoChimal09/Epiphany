@@ -401,6 +401,7 @@ interface ScheduleViewProps {
   pending: boolean;
   onComplete: (id: string) => void;
   onRemove: (item: TimelineItem) => void;
+  date?: DateKey;
 }
 
 export function TodayView({
@@ -412,8 +413,9 @@ export function TodayView({
   pending,
   onComplete,
   onRemove,
+  date = today,
 }: ScheduleViewProps) {
-  const { days, bounds } = useDays(schedule, tasks, timezone, [today]);
+  const { days, bounds } = useDays(schedule, tasks, timezone, [date]);
   const day = days[0]!;
   return (
     <div className={styles.todayLayout}>
@@ -429,7 +431,7 @@ export function TodayView({
           onRemove={onRemove}
         />
       </div>
-      <aside className={styles.todayAside} aria-label={`${formatDayLabel(today, "long")} details`}>
+      <aside className={styles.todayAside} aria-label={`${formatDayLabel(date, "long")} details`}>
         <AgendaList
           day={day}
           timezone={timezone}

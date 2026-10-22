@@ -13,14 +13,17 @@ import {
   getWorkBlock,
   InvalidChangeError,
   newId,
+  NotFoundError,
   removeWorkBlock,
   VersionConflictError,
 } from "../db/domain";
 import { listCategories, reopenTask, updateNote, updateTask } from "../db/edits";
 import {
   actionHistory,
+  discordOverviews,
   events,
   notes,
+  owners,
   preferences,
   tasks,
   workBlocks,
@@ -29,6 +32,7 @@ import {
   type Category,
   type Note,
   type Preference,
+  type Reminder,
   type Task,
   type WorkBlock,
 } from "../db/schema";
@@ -48,8 +52,20 @@ import {
   updateTaskInput,
 } from "./schemas";
 import { authorize, type ActionName, type DecisionContext } from "./permissions";
-import { ValidationError } from "./errors";
+import { AccessDeniedError, ValidationError } from "./errors";
+import { discordAvatarUrl, type OwnerProfile } from "./profile";
+import { recentReminders, scheduleReminder, snoozeReminder } from "../reminders/store";
+import { createHash } from "node:crypto";
+import { listObservations, recordObservation } from "../insights/store";
+import type { Observation } from "../insights/insights";
+import {
+  oneOffReminderInput,
+  overviewBindingInput,
+  overviewKeyInput,
+  type OverviewBinding,
+} from "./schemas";
 import { assertPrincipal } from "./principal";
+import { createCalendarService, type CalendarServiceOptions } from "./calendar";
 import { z } from "zod";
 
 export {
@@ -59,6 +75,7 @@ export {
   ValidationError,
 } from "./errors";
 export { ACTIONS, authorize, decide, type ActionName, type Decision } from "./permissions";
+export { cleanAvatarHash, cleanDisplayName, discordAvatarUrl, type OwnerProfile } from "./profile";
 export {
   assertPrincipal,
   isPrincipal,
@@ -70,9 +87,13 @@ export {
 } from "./principal";
 export { CONFIRMATION_TTL_MS, type Proposal } from "./confirmations";
 export { VersionConflictError } from "../db/domain";
+export { CalendarError } from "../calendar/store";
+export type { CalendarServiceOptions } from "./calendar";
 
 export interface ServiceOptions {
   clock?: () => Date;
+  // Present when Google Calendar is configured (token key and OAuth client).
+  calendar?: CalendarServiceOptions;
 }
 
 // The single path for reading and changing personal records. Every method: verifies the caller
@@ -277,6 +298,16 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     },
 
     notes: {
+      async get(principal: unknown, noteId: unknown): Promise<Note> {
+        const { principal: p } = gate(principal, "note.read");
+        const id = parseInput(idInput, noteId);
+        const [row] = await db
+          .select()
+          .from(notes)
+          .where(and(eq(notes.id, id), eq(notes.ownerId, p.ownerId), isNull(notes.archivedAt)));
+        if (!row) throw new NotFoundError("Note");
+        return row;
+      },
       async list(principal: unknown, input?: unknown): Promise<Note[]> {
         const { principal: p } = gate(principal, "note.read");
         const query = parseInput(listNotesInput, input);
@@ -299,6 +330,26 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         const { actor } = gate(principal, "note.update");
         const { expectedVersion, ...patch } = parseInput(updateNoteInput, input);
         return updateNote(db, actor, parseInput(idInput, noteId), patch, expectedVersion);
+      },
+    },
+
+    owner: {
+      // Who is signed in: the name and avatar Discord reported at the last sign-in.
+      async profile(principal: unknown): Promise<OwnerProfile> {
+        const { principal: p } = gate(principal, "owner.read");
+        const [row] = await db
+          .select({
+            displayName: owners.displayName,
+            discordUserId: owners.discordUserId,
+            avatarHash: owners.avatarHash,
+          })
+          .from(owners)
+          .where(eq(owners.id, p.ownerId));
+        if (!row) throw new AccessDeniedError("access", "unknown owner");
+        return {
+          displayName: row.displayName,
+          avatarUrl: discordAvatarUrl(row.discordUserId, row.avatarHash),
+        };
       },
     },
 
@@ -394,6 +445,125 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         );
       },
     },
+
+    // What the owner chose to report about how they work (durations, snoozes). The assistant only
+    // records these when the owner has turned learning on.
+    insights: {
+      async record(
+        principal: unknown,
+        input: { kind: "duration" | "snooze"; key: string; value: number },
+      ): Promise<void> {
+        const { principal: p } = gate(principal, "insight.write");
+        const value = parseInput(
+          z
+            .object({
+              kind: z.enum(["duration", "snooze"]),
+              key: z.string().trim().min(1).max(191),
+              value: z.number().int().min(0).max(100_000),
+            })
+            .strict(),
+          input,
+        );
+        await recordObservation(db, p.ownerId, value);
+      },
+      async list(principal: unknown, limit: unknown = 500): Promise<Observation[]> {
+        const { principal: p } = gate(principal, "insight.read");
+        return listObservations(
+          db,
+          p.ownerId,
+          parseInput(z.number().int().min(1).max(2000), limit),
+        );
+      },
+    },
+
+    reminders: {
+      // Upcoming and recent reminder jobs, newest first, including ones that failed or were skipped.
+      async recent(principal: unknown, limit: unknown = 20): Promise<Reminder[]> {
+        const { principal: p } = gate(principal, "reminder.read");
+        return recentReminders(db, p.ownerId, parseInput(z.number().int().min(1).max(100), limit));
+      },
+      // A one-off reminder the owner asked for, such as a check-in after an activity. Asking twice
+      // for the same text at the same minute creates one reminder.
+      async create(principal: unknown, input: unknown): Promise<boolean> {
+        const { principal: p } = gate(principal, "reminder.create");
+        const value = parseInput(oneOffReminderInput, input);
+        return scheduleReminder(db, p.ownerId, {
+          kind: value.kind,
+          dedupeKey: `oneoff:${Math.floor(value.at.getTime() / 60_000)}:${createHash("sha256")
+            .update(value.message)
+            .digest("hex")
+            .slice(0, 16)}`,
+          message: value.message,
+          dueAt: value.at,
+        });
+      },
+      // Moves a reminder that has not been sent to a later time.
+      async snooze(principal: unknown, id: unknown, minutes: unknown): Promise<boolean> {
+        const { principal: p } = gate(principal, "reminder.snooze");
+        const reminderId = parseInput(idInput, id);
+        const wait = parseInput(
+          z
+            .number()
+            .int()
+            .min(1)
+            .max(7 * 24 * 60),
+          minutes,
+        );
+        return snoozeReminder(
+          db,
+          p.ownerId,
+          reminderId,
+          new Date(clock().getTime() + wait * 60_000),
+        );
+      },
+    },
+
+    // Which Discord message shows each overview, kept so it is edited in place and never duplicated.
+    overviews: {
+      async get(
+        principal: unknown,
+        guildId: unknown,
+        viewKey: unknown,
+      ): Promise<OverviewBinding | null> {
+        const { principal: p } = gate(principal, "overview.read");
+        const key = parseInput(overviewKeyInput, { guildId, viewKey });
+        const [row] = await db
+          .select()
+          .from(discordOverviews)
+          .where(
+            and(
+              eq(discordOverviews.ownerId, p.ownerId),
+              eq(discordOverviews.guildId, key.guildId),
+              eq(discordOverviews.viewKey, key.viewKey),
+            ),
+          );
+        return row
+          ? {
+              guildId: row.guildId,
+              viewKey: row.viewKey,
+              channelId: row.channelId,
+              messageId: row.messageId,
+              contentHash: row.contentHash,
+            }
+          : null;
+      },
+      async save(principal: unknown, binding: unknown): Promise<void> {
+        const { principal: p } = gate(principal, "overview.write");
+        const value = parseInput(overviewBindingInput, binding);
+        await db
+          .insert(discordOverviews)
+          .values({ ownerId: p.ownerId, ...value })
+          .onDuplicateKeyUpdate({
+            set: {
+              channelId: value.channelId,
+              messageId: value.messageId,
+              contentHash: value.contentHash,
+            },
+          });
+      },
+    },
+
+    calendar: createCalendarService(db, clock, options.calendar),
 
     history: {
       async list(principal: unknown, limit: unknown = 50): Promise<ActionHistoryEntry[]> {

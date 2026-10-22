@@ -26,13 +26,20 @@ const realFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.me
 const TABLES = [
   "action_history",
   "ai_usage",
+  "calendar_accounts",
+  "calendar_event_refs",
   "categories",
   "confirmations",
+  "discord_overviews",
   "events",
   "notes",
+  "observations",
   "owners",
   "preferences",
+  "provider_usage",
+  "reminders",
   "sessions",
+  "synced_calendars",
   "tasks",
   "work_blocks",
 ];
@@ -192,6 +199,34 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
   });
 
   // A copy of the real migrations containing only the first `count` journal entries.
+  // Columns that later migrations add to existing tables. Seeded rows must read them as NULL after
+  // the upgrade; every other value must be untouched.
+  const ADDED_COLUMNS: Record<string, string[]> = {
+    owners: ["avatar_hash"],
+    tasks: ["review_note"],
+  };
+
+  function withoutAddedColumns(
+    after: Record<string, unknown[]>,
+    before: Record<string, unknown[]>,
+  ): Record<string, unknown[]> {
+    const out: Record<string, unknown[]> = {};
+    for (const [table, rows] of Object.entries(after)) {
+      const added = (ADDED_COLUMNS[table] ?? []).filter(
+        (column) => !(before[table]?.[0] && column in (before[table][0] as object)),
+      );
+      out[table] = rows.map((row) => {
+        const copy = { ...(row as Record<string, unknown>) };
+        for (const column of added) {
+          expect(copy[column], `${table}.${column} should be NULL for an upgraded row`).toBeNull();
+          delete copy[column];
+        }
+        return copy;
+      });
+    }
+    return out;
+  }
+
   function folderUpTo(count: number): string {
     const folder = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), "epiphany-prefix-"));
     tempFolders.push(folder);
@@ -218,7 +253,8 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
         await runMigrations(upgradePool, folderUpTo(installed));
         for (const statement of seed!) await upgradePool.query(statement);
 
-        // Snapshot every table that exists at the installed schema (all have an `id` column).
+        // Snapshot every table that exists at the installed schema (ordered by its leading columns,
+        // which are the id or, for ai_usage, the composite key).
         const [tableRows] = await upgradePool.query<RowDataPacket[]>(
           "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name <> ? ORDER BY 1",
           [MIGRATIONS_TABLE],
@@ -228,7 +264,7 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
           const out: Record<string, unknown[]> = {};
           for (const table of existing) {
             const [rows] = await upgradePool.query<RowDataPacket[]>(
-              `SELECT * FROM \`${table}\` ORDER BY id`,
+              `SELECT * FROM \`${table}\` ORDER BY 1, 2`,
             );
             out[table] = rows.map((row) => JSON.parse(JSON.stringify(row)));
           }
@@ -240,7 +276,7 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
 
         const result = await runMigrations(upgradePool, realFolder);
         expect(result.applied).toEqual(all.slice(installed).map((file) => file.tag));
-        expect(await read()).toEqual(before);
+        expect(withoutAddedColumns(await read(), before)).toEqual(before);
         expect((await getMigrationStatus(upgradePool, realFolder)).pending).toEqual([]);
         expect((await runMigrations(upgradePool, realFolder)).applied).toEqual([]);
       } finally {
@@ -249,7 +285,8 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
         expect(await db.exists()).toBe(false);
       }
     }
-  });
+    // One fresh database per previous schema: this grows with every migration.
+  }, 120_000);
 
   it("also upgrades with a synthetic follow-up migration that backfills data", async () => {
     await runMigrations(pool, realFolder);

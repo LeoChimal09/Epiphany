@@ -88,7 +88,12 @@ export function resolveReference<T extends Candidate>(
   }
 
   const wanted = tokens(reference);
-  if (wanted.length === 0) return { kind: "none" };
+  if (wanted.length === 0) {
+    // "Finished it" right after a reminder or a one-item list: "it" can only mean that one item.
+    const only = options.listed?.length === 1 ? options.listed[0] : undefined;
+    const live = only ? items.find((item) => item.id === only.id) : undefined;
+    return live ? { kind: "one", item: live } : { kind: "none" };
+  }
 
   const scored = items
     .map((item) => {
@@ -106,4 +111,37 @@ export function resolveReference<T extends Candidate>(
   const best = Math.max(...scored.map((entry) => entry.score));
   const top = scored.filter((entry) => entry.score === best).map((entry) => entry.item);
   return top.length === 1 ? { kind: "one", item: top[0]! } : { kind: "many", items: top };
+}
+
+// Two titles describe the same thing when nearly every meaningful word of each appears in the other
+// ("Chem lab report" and "Chemistry lab report"), but not when one merely contains the other
+// ("Essay" and "Essay draft").
+export function similarTitles(first: string, second: string): boolean {
+  const a = tokens(first);
+  const b = tokens(second);
+  if (a.length === 0 || b.length === 0) return false;
+  const share = (from: string[], within: string[]) =>
+    from.filter((token) => within.some((other) => tokenMatches(token, other))).length / from.length;
+  return share(a, b) >= 0.8 && share(b, a) >= 0.8;
+}
+
+// An existing record the candidate probably repeats: a similar title, and the same deadline unless
+// one side has none yet (then it is most likely the same item mentioned again).
+export function findDuplicate<
+  T extends { title: string; due: string | null; details?: string | null },
+>(
+  candidate: { title: string; due: string | null; details?: string | null },
+  existing: readonly T[],
+): T | undefined {
+  const details = (value: string | null | undefined) =>
+    value?.trim().toLowerCase().replace(/\s+/g, " ");
+  const candidateDetails = details(candidate.details);
+  return existing.find(
+    (item) =>
+      similarTitles(candidate.title, item.title) &&
+      (candidate.due === null || item.due === null || candidate.due === item.due) &&
+      // Matching titles can be separate assignments in different courses. Conflicting details
+      // are not enough evidence to silently drop one as a duplicate.
+      (!candidateDetails || !details(item.details) || candidateDetails === details(item.details)),
+  );
 }
