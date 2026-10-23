@@ -84,6 +84,19 @@ describe("free windows", () => {
     expect(windowsFor({ events: [event] })).toEqual([`${DAY} 13:00-17:00`]);
   });
 
+  it("applies saved default travel but preserves explicit per-event overrides", () => {
+    const prefs = { ...preferences, travelBeforeMinutes: 30, travelAfterMinutes: 30 };
+    expect(windowsFor({ events: [classEvent] }, prefs)).toEqual([`${DAY} 13:00-17:00`]);
+    expect(
+      windowsFor(
+        {
+          events: [{ ...classEvent, travelBeforeMinutes: 0, travelAfterMinutes: 0 }],
+        },
+        prefs,
+      ),
+    ).toEqual([`${DAY} 09:00-09:45`, `${DAY} 13:00-17:00`]);
+  });
+
   it("ignores canceled events and removed or completed work blocks", () => {
     const block = (status: PlannedBlock["status"]): PlannedBlock => ({
       id: status,
@@ -214,6 +227,68 @@ describe("daylight saving and day boundaries", () => {
     expect(windowsFor({ events: [late] }, prefs, { from: "2026-10-13", to: "2026-10-14" })).toEqual(
       ["2026-10-13 00:00-23:00", "2026-10-14 01:00-00:00"],
     );
+  });
+});
+
+describe("overnight protected time", () => {
+  const prefs: PlanningPreferences = {
+    timezone: CHICAGO,
+    preferredHours: {
+      wed: [{ start: "00:00", end: "24:00" }],
+      thu: [{ start: "00:00", end: "24:00" }],
+    },
+    protectedTime: [
+      { label: "Recovery", weekdays: ["wed"], window: { start: "22:00", end: "08:00" } },
+    ],
+    bufferMinutes: 0,
+    minBlockMinutes: 1,
+  };
+
+  it("protects the starting evening and following morning, not the starting morning", () => {
+    expect(windowsFor({}, prefs, { from: DAY, to: "2026-10-15" })).toEqual([
+      `${DAY} 00:00-22:00`,
+      "2026-10-15 08:00-00:00",
+    ]);
+  });
+
+  it("includes protection that started before the requested range", () => {
+    expect(windowsFor({}, prefs, { from: "2026-10-15", to: "2026-10-15" })).toEqual([
+      "2026-10-15 08:00-00:00",
+    ]);
+    expect(
+      findConflicts(
+        { startsAt: at("2026-10-15", "07:00"), endsAt: at("2026-10-15", "08:00") },
+        { events: [], workBlocks: [], preferences: prefs },
+      ),
+    ).toContainEqual({ kind: "protected", label: "Recovery", refId: undefined });
+    expect(
+      findConflicts(
+        { startsAt: at(DAY, "07:00"), endsAt: at(DAY, "08:00") },
+        { events: [], workBlocks: [], preferences: prefs },
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["2026-03-07", "2026-03-08", 9],
+    ["2026-10-31", "2026-11-01", 11],
+  ])("keeps overnight protection at local wall times across DST on %s", (start, end, hours) => {
+    const { blockers } = computeAvailability({
+      range: { from: end, to: end },
+      events: [],
+      workBlocks: [],
+      preferences: {
+        ...prefs,
+        preferredHours: { sun: [{ start: "00:00", end: "24:00" }] },
+        protectedTime: [
+          { label: "Recovery", weekdays: ["sat"], window: { start: "22:00", end: "08:00" } },
+        ],
+      },
+    });
+    const blocker = blockers.find((item) => item.kind === "protected")!;
+    expect(new Date(blocker.start)).toEqual(at(start, "22:00"));
+    expect(new Date(blocker.end)).toEqual(at(end, "08:00"));
+    expect((blocker.end - blocker.start) / 3_600_000).toBe(hours);
   });
 });
 

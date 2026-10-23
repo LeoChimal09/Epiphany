@@ -1,12 +1,18 @@
 import "server-only";
 import { createServices, type OwnerProfile } from "@epiphany/core/services";
-import { addDays, localWallToUtc, type DateKey } from "@epiphany/core/planning";
+import {
+  addDays,
+  localWallToUtc,
+  parsePlanningPreferences,
+  type DateKey,
+} from "@epiphany/core/planning";
 import type { CalendarEvent, Category, Note, Task, WorkBlock } from "@epiphany/core/db";
 import { verifySession } from "../../lib/auth/dal";
 import { getAuthDeps } from "../../lib/auth/deps";
 import type { DashboardData, DashboardNote, DashboardTask } from "./model";
 import type { ScheduleBlock, ScheduleData, ScheduleEvent } from "./schedule";
 import { todayKey, weekStartOf } from "./schedule";
+import { calendarSyncWarning } from "./planning-model";
 
 export function taskForDashboard(task: Task): DashboardTask {
   return {
@@ -85,15 +91,23 @@ export async function loadSchedule(
 ): Promise<ScheduleData> {
   const from = localWallToUtc(weekStart, 0, context.timezone);
   const to = localWallToUtc(addDays(weekStart, 7), 0, context.timezone);
-  const [events, blocks] = await Promise.all([
-    context.services.events.list(context.principal, { from, to, limit: SCHEDULE_LIMIT }),
+  const [events, blocks, preferences, calendar] = await Promise.all([
+    context.services.events.list(context.principal, {
+      from: localWallToUtc(addDays(weekStart, -1), 0, context.timezone),
+      to: localWallToUtc(addDays(weekStart, 8), 0, context.timezone),
+      limit: SCHEDULE_LIMIT,
+    }),
     context.services.workBlocks.list(context.principal, { from, to, limit: SCHEDULE_LIMIT }),
+    context.services.preferences.list(context.principal),
+    context.services.calendar.overview(context.principal),
   ]);
   return {
     weekStart,
     events: events.map(eventForSchedule),
     blocks: blocks.map(blockForSchedule),
     truncated: events.length === SCHEDULE_LIMIT || blocks.length === SCHEDULE_LIMIT,
+    planningPreferences: parsePlanningPreferences(preferences, context.timezone),
+    syncWarning: calendarSyncWarning(calendar),
   };
 }
 

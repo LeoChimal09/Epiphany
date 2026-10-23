@@ -12,6 +12,7 @@ const fields = {
   create_note: ["title", "details", "note_kind"],
   develop_idea: ["reference", "target_id", "details"],
   resume_idea: ["reference", "target_id"],
+  website_link: [],
   capture: ["items"],
   recategorize: ["reference", "target_id", "category"],
   complete_task: ["reference", "target_id"],

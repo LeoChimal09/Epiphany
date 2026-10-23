@@ -1,6 +1,8 @@
 import type { DateKey } from "./time";
 import type { FreeWindow } from "./availability";
 
+export const DEFAULT_TASK_MINUTES = 30;
+
 export interface PlanningTask {
   id: string;
   title: string;
@@ -50,7 +52,7 @@ export function recommendWorkBlocks(
 
   for (const task of orderedTasks) {
     if (recommendations.length >= limit) break;
-    const required = task.estimatedMinutes ?? 30;
+    const required = task.estimatedMinutes ?? DEFAULT_TASK_MINUTES;
     const window = orderedWindows.find(
       (candidate) => !used.has(candidate.start.toISOString()) && candidate.minutes >= required,
     );

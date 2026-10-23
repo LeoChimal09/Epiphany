@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 const NOTICES: Record<string, { text: string; error: boolean }> = {
   connected: {
-    text: "Google Calendar connected. Your calendars appear after the first sync (within a few minutes).",
+    text: "Google Calendar connected. The background worker must be running for your calendars to appear after the first sync. Refresh this page after a minute or two.",
     error: false,
   },
   disconnected: {
@@ -123,6 +123,12 @@ function Panel({ overview, timezone }: { overview: CalendarOverview; timezone: s
             ? "Read and write: work blocks go to the Epiphany calendar only."
             : "Read-only: nothing is written to Google."}
         </p>
+        {account.canWrite ? (
+          <p className={styles.muted}>
+            Task deadlines shown as &quot;Due:&quot; in the dashboard are not exported. Schedule a
+            work block to put time for a task on Google Calendar.
+          </p>
+        ) : null}
         {account.status === "needs_reauth" ? (
           <>
             <p className={styles.alert} role="alert">
@@ -142,7 +148,17 @@ function Panel({ overview, timezone }: { overview: CalendarOverview; timezone: s
         <section className={styles.card}>
           <h2>Calendars Epiphany reads</h2>
           {external.length === 0 ? (
-            <p className={styles.muted}>Waiting for the first sync to list your calendars.</p>
+            <div className={styles.muted}>
+              <p>Waiting for the first sync to list your calendars.</p>
+              <p>
+                Sync runs in the background worker, not the website server. For local testing, run{" "}
+                <code>bun run bot:start</code> from the project root in a separate terminal (this
+                also starts Discord and reminders). On Railway, keep the worker service running.
+                Both services need the same database and Google credentials, including
+                TOKEN_ENCRYPTION_KEY.
+              </p>
+              <p>Refresh this page after a minute or two to check the sync status.</p>
+            </div>
           ) : (
             <form action={saveCalendarSelection}>
               <ul className={styles.list}>

@@ -7,6 +7,16 @@ export function routineIntent(message: string): Intent | null {
     .toLowerCase()
     .replace(/[.!?]+$/, "")
     .trim();
+  if (
+    /^(?:(?:hey|hi)[ ,]+epi[ ,]+)?(?:(?:please|epi)[ ,]+)?(?:(?:can|could|would) you )?(?:give|send|show) me (?:the |your |our )?(?:website|dashboard|site)(?: link| url)?(?: please)?$/.test(
+      text,
+    ) ||
+    /^(?:what(?:'s| is)|where(?:'s| is)) (?:the |your |our )?(?:website|dashboard|site)(?: link| url)?$/.test(
+      text,
+    )
+  ) {
+    return { kind: "website_link" };
+  }
   if (/^(?:yes|yep|yeah|confirm|go ahead|do it|save (?:them|these|all))$/.test(text)) {
     return { kind: "confirm" };
   }

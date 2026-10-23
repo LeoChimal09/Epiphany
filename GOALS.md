@@ -1,7 +1,8 @@
 # Epiphany Build Goals
 
 This is the execution checklist for [the product plan](README.md). Goals 01-05,
-07, and 08 are complete; Goal 06 is the next open goal.
+07, and 08 are complete; Goal 06 is the earliest open goal.
+The current focus is Goal 12 by owner request; Goal 11 live checks are deferred.
 Build one goal at a time, verify its completion criteria, and then
 check it off. Epi's shared planning system covers every area of life, not only
 school assignments.
@@ -156,6 +157,8 @@ school assignments.
 ### 11. Connect Google Calendar Safely
 
 - [ ] Complete goal 11.
+- Owner confirmed OAuth connection on 2026-10-22 and asked to defer further calendar
+  checks. Live import, work-block sync, conflict, and disconnect acceptance remain pending.
 - Deliver: OAuth consent, secure token storage, calendar selection, external
   event references, sync status, and a dedicated Epiphany calendar for writes.
 - Require: version-aware conflict checks, visible stale/pending sync state, and
@@ -167,6 +170,11 @@ school assignments.
 ### 12. Compute Availability And Scheduling Constraints
 
 - [ ] Complete goal 12.
+- Active next goal by owner request on 2026-10-22. First slice corrects overnight
+  weekday-specific protected time so it blocks the following morning, including
+  when that morning is the first requested date and across daylight-saving changes.
+- Local scheduling controls and calendar availability are now implemented (2026-10-22):
+  see the verification record below. Owner workflow acceptance remains pending.
 - Deliver: timezone-aware availability using events, sleep, meals, travel,
   buffers, preferred hours, and protected time; recurrence and conflict handling.
 - Check: occurrence versus series scope, all-day events, daylight-saving changes,
@@ -178,6 +186,9 @@ school assignments.
 ### 13. Build Today, Week, And Priorities Views
 
 - [ ] Complete goal 13.
+- Day/week/month, unified Tasks filters, countdowns, history, and past/today markers
+  already exist. Availability and preparation milestones were added locally on
+  2026-10-22; live desktop/mobile acceptance remains pending.
 - Deliver: daily timeline, weekly visual calendar, deadline countdowns, preparation
   milestones, effort estimates, and visually distinct events/work blocks.
 - Done when: fixture data renders accurately on mobile and desktop, conflicts
@@ -820,6 +831,39 @@ memory-control and privacy gates still apply to those unchecked goals.
   Tasks. Due-date and duration metadata remain visible; tasks with neither show
   a Just task label. Filter changes reset paging; search and category filtering
   remain compatible. No persisted task records or scheduling rules are changed.
+
+- 2026-10-22, Goals 12/13 (implemented locally; owner desktop/mobile acceptance pending):
+  added `/dashboard/planning` in the account menu with separate, collapsed save controls
+  for preferred hours, sleep, meals, recurring protected time, event buffers, optional
+  default travel, and minimum block length. Validated settings are saved as confirmed
+  preferences through owner-scoped services, with existing-version conflict checks.
+  Dashboard schedule snapshots now include these preferences and Google sync warnings.
+  A collapsed Availability and preparation panel uses the shared, model-free engine
+  to show upcoming usable windows and bounded, per-task preparation milestones before
+  exact deadlines. It distinguishes overdue work, missing estimates, conflicting blocks,
+  covered effort and insufficient time. Suggestions are not bookings or a joint plan;
+  only loaded deadlines and blocks in the displayed range are considered.
+  Added padding around event reads for travel/buffers crossing the loaded week boundary,
+  and shared travel defaults with Epi's conversational planning.
+  Verification: 191 dashboard/planning tests passed; 2 unrelated database-backed tests
+  skipped in the unit run. Five selected MySQL cases passed for persisted settings,
+  owner isolation, conversational free time, confirmed scheduling, and shared-channel
+  restrictions. Typechecks, scoped ESLint and production build passed. Fixture schemas
+  were verified absent. Google live checks remain deferred; no external service calls,
+  owner preference changes, deployment, or commit were performed.
+
+- 2026-10-22, dashboard selection and explicit confirmation:
+  task checkboxes now select records without mutation; page selection and an explicit
+  Mark selected done action open a dialog naming the affected tasks. Single-task,
+  calendar and notification completion use the same confirmation UI. Completed
+  tasks remain in history; partial bulk failures are reported explicitly.
+  Notes/ideas have a Delete action using existing version-bound, expiring proposals;
+  cancellation preserves the item and editing after preview invalidates confirmation.
+  Deletion is permanent, with an explicit warning, not a recoverable trash feature.
+  Verification: dashboard unit/render/action tests, five isolated MySQL action cases
+  (selected-only completion, history, cancellation, stale previews, owner isolation),
+  typechecks, ESLint, formatting and production build passed. No owner records were
+  deleted or completed, and no deployment or commit was performed.
 
 When completing a goal, add a dated note with the implementation location,
 checks run, results, and any remaining limits. Change the next-goal pointer only

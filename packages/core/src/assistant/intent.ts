@@ -22,6 +22,7 @@ export interface CaptureItem {
 export const MAX_CAPTURE_ITEMS = 30;
 
 export type Intent =
+  | { kind: "website_link" }
   | { kind: "respond"; text: string }
   | { kind: "clarify"; question: string }
   | {
@@ -108,6 +109,7 @@ export type Intent =
   | { kind: "decline" };
 
 export const INTENT_KINDS = [
+  "website_link",
   "respond",
   "clarify",
   "list_tasks",
@@ -241,6 +243,8 @@ export function toIntent(raw: unknown): Intent {
   if (!parsed.success) throw new IntentError("model output did not match the intent schema");
   const wire = parsed.data;
   switch (wire.kind) {
+    case "website_link":
+      return { kind: "website_link" };
     case "respond":
       return { kind: "respond", text: need(wire.text, "text") };
     case "clarify":

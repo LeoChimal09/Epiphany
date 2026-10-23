@@ -12,6 +12,7 @@ import {
 import { addDays, dateKeyOf, localWallToUtc, parseTimeOfDay, type DateKey } from "../planning/time";
 import {
   computeAvailability,
+  DEFAULT_TASK_MINUTES,
   findConflicts,
   recommendWorkBlocks,
   parsePlanningPreferences,
@@ -144,6 +145,7 @@ export interface MessageContext {
 }
 
 export interface AssistantOptions {
+  appUrl?: string;
   services: Services;
   provider: TextProvider;
   budget: Budget;
@@ -310,6 +312,7 @@ export function fitReply(text: string, limit: number = MAX_REPLY_CHARS): string 
 
 export function createAssistant(options: AssistantOptions) {
   const { services, provider, budget, timezone, workspace, voice } = options;
+  const websiteUrl = options.appUrl ? new URL("/dashboard", options.appUrl).href : null;
   const clock = options.clock ?? (() => new Date());
 
   function finish(
@@ -524,9 +527,14 @@ export function createAssistant(options: AssistantOptions) {
             ? { ...state }
             : clearPending(state);
         if (
-          !["develop_idea", "resume_idea", "create_note", "respond", "clarify"].includes(
-            intent.kind,
-          )
+          ![
+            "develop_idea",
+            "resume_idea",
+            "create_note",
+            "website_link",
+            "respond",
+            "clarify",
+          ].includes(intent.kind)
         ) {
           base.activeIdea = null;
         }
@@ -584,8 +592,8 @@ export function createAssistant(options: AssistantOptions) {
     const [prefRows, eventRows, blockRows] = await Promise.all([
       services.preferences.list(principal),
       services.events.list(principal, {
-        from: localWallToUtc(from, 0, timezone),
-        to: localWallToUtc(addDays(to, 1), 0, timezone),
+        from: localWallToUtc(addDays(from, -1), 0, timezone),
+        to: localWallToUtc(addDays(to, 2), 0, timezone),
         limit: 200,
       }),
       services.workBlocks.list(principal, {
@@ -853,7 +861,7 @@ export function createAssistant(options: AssistantOptions) {
       );
     }
     const task = openTasks.find((entry) => entry.id === found.item.id)!;
-    const minutes = intent.minutes ?? task.estimatedMinutes ?? 60;
+    const minutes = intent.minutes ?? task.estimatedMinutes ?? DEFAULT_TASK_MINUTES;
     const startsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.time), timezone);
     const endsAt = new Date(startsAt.getTime() + minutes * 60_000);
     const day = dateKeyOf(startsAt, timezone);
@@ -1392,6 +1400,14 @@ export function createAssistant(options: AssistantOptions) {
     };
 
     switch (intent.kind) {
+      case "website_link":
+        return reply({
+          text: websiteUrl
+            ? `Here's your Epiphany dashboard: ${websiteUrl}`
+            : "The website address isn't configured here yet. Set APP_URL to your Epiphany website address.",
+          outcome: websiteUrl ? "answered" : "unavailable",
+          changed: false,
+        });
       case "respond":
         return reply({ text: fitReply(intent.text), outcome: "answered", changed: false });
 

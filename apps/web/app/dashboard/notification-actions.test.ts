@@ -5,7 +5,13 @@ import { createOwner } from "@epiphany/core/db";
 import { createHarness, type Harness } from "../../lib/test-harness";
 import { getAuthDeps } from "../../lib/auth/deps";
 import { verifySession } from "../../lib/auth/dal";
-import { finishDashboardTask } from "./actions";
+import {
+  finishDashboardTask,
+  finishDashboardTasks,
+  proposeDashboardNoteDeletion,
+  confirmDashboardNoteDeletion,
+  cancelDashboardNoteDeletion,
+} from "./actions";
 import { loadDashboardData } from "./server-data";
 import { deadlineNotifications } from "./model";
 
@@ -13,6 +19,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("../../lib/auth/dal", () => ({ verifySession: vi.fn() }));
 vi.mock("../../lib/auth/deps", () => ({ getAuthDeps: vi.fn() }));
 vi.mock("./assistant-server", () => ({ askAssistant: vi.fn(), assistantAvailability: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 describe.skipIf(!dbTestsEnabled)("notification completion through the dashboard action", () => {
   let h: Harness;
@@ -77,5 +84,68 @@ describe.skipIf(!dbTestsEnabled)("notification completion through the dashboard 
     expect((await loadDashboardData()).tasks).toEqual([]);
     expect((await finishDashboardTask(record.id)).ok).toBe(false);
     expect((await services.tasks.get(principal, record.id)).status).toBe("open");
+  });
+
+  it("persists bulk completion of only the selected tasks and retains history", async () => {
+    const first = await services.tasks.create(owner, { title: "First fixture" });
+    const second = await services.tasks.create(owner, { title: "Second fixture" });
+    const unselected = await services.tasks.create(owner, { title: "Unselected fixture" });
+    const result = await finishDashboardTasks([first.id, second.id]);
+    expect(result).toMatchObject({ ok: true, partialFailure: false });
+    expect((await services.tasks.get(owner, first.id)).status).toBe("completed");
+    expect((await services.tasks.get(owner, second.id)).status).toBe("completed");
+    expect((await services.tasks.get(owner, unselected.id)).status).toBe("open");
+    expect((await loadDashboardData()).tasks).toHaveLength(3);
+  });
+
+  it("requires explicit, current confirmation before deleting an idea; cancel preserves it", async () => {
+    const note = await services.notes.create(owner, {
+      title: "Fixture idea",
+      body: "Keep until confirmed",
+      kind: "idea",
+    });
+    const canceled = await proposeDashboardNoteDeletion(note.id);
+    expect(canceled.ok).toBe(true);
+    if (!canceled.ok) throw new Error("Expected deletion proposal");
+    expect((await services.notes.get(owner, note.id)).body).toBe("Keep until confirmed");
+    await cancelDashboardNoteDeletion(canceled.proposal.confirmationId);
+    expect((await confirmDashboardNoteDeletion(canceled.proposal)).ok).toBe(false);
+    expect((await services.notes.get(owner, note.id)).id).toBe(note.id);
+    const changed = await proposeDashboardNoteDeletion(note.id);
+    if (!changed.ok) throw new Error("Expected deletion proposal");
+    await services.notes.update(owner, note.id, {
+      body: "Edited after preview",
+      expectedVersion: note.version,
+    });
+    expect((await confirmDashboardNoteDeletion(changed.proposal)).ok).toBe(false);
+    expect((await services.notes.get(owner, note.id)).body).toBe("Edited after preview");
+    const approved = await proposeDashboardNoteDeletion(note.id);
+    if (!approved.ok) throw new Error("Expected deletion proposal");
+    expect((await confirmDashboardNoteDeletion(approved.proposal)).ok).toBe(true);
+    expect((await loadDashboardData()).notes).toEqual([]);
+    await expect(services.notes.get(owner, note.id)).rejects.toThrow();
+  });
+
+  it("rejects another owner's deletion request without exposing its preview", async () => {
+    const other = await createOwner(h.handle.db, { displayName: "Other fixture owner" });
+    const principal = await issueOwnerPrincipal(h.handle.db, other.id, {
+      source: "dashboard",
+      audience: "private",
+      initiator: "owner",
+    });
+    const note = await services.notes.create(principal, {
+      title: "Private fixture",
+      body: "Private fixture body",
+      kind: "idea",
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await proposeDashboardNoteDeletion(note.id);
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("Private fixture");
+      expect((await services.notes.get(principal, note.id)).id).toBe(note.id);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -26,6 +26,7 @@ export {
 } from "./recurrence";
 export {
   recommendWorkBlocks,
+  DEFAULT_TASK_MINUTES,
   type PlanningTask,
   type WorkBlockRecommendation,
 } from "./recommendations";
@@ -41,4 +42,10 @@ export {
   type DateKey,
   type Weekday,
 } from "./time";
-export { defaultPlanningPreferences, parsePlanningPreferences } from "./preferences";
+export {
+  defaultPlanningPreferences,
+  parsePlanningPreferences,
+  validatePlanningSetting,
+  type PlanningSettingKey,
+} from "./preferences";
+export { mergeSpans } from "./spans";

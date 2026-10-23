@@ -100,6 +100,14 @@ export function AccountMenu({
             </p>
           ) : null}
           <a
+            href="/dashboard/planning"
+            role="menuitem"
+            className={`${styles.menuItem} ${styles.menuLink}`}
+          >
+            <CalendarDays size={15} aria-hidden="true" />
+            Scheduling preferences
+          </a>
+          <a
             href="/dashboard/calendars"
             role="menuitem"
             className={`${styles.menuItem} ${styles.menuLink}`}

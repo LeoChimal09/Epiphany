@@ -177,6 +177,11 @@ function TimeGrid({
             className={`${styles.gridHeadCell} ${day.date === today ? styles.gridToday : ""}`}
           >
             <span className={styles.gridDayName}>{formatDayLabel(day.date)}</span>
+            {day.date <= today ? (
+              <span className={styles.calendarDayStatus}>
+                {day.date < today ? "Past" : "Today"}
+              </span>
+            ) : null}
             <DayChips day={day} pending={pending} onRemove={onRemove} />
           </div>
         ))}
@@ -354,13 +359,15 @@ function AgendaList({
           <ul className={styles.agendaList}>
             {day.deadlines.map((task) => (
               <li key={task.id}>
-                <input
-                  className={styles.taskCheckbox}
-                  type="checkbox"
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
                   disabled={pending}
                   aria-label={`Complete ${task.title}`}
-                  onChange={() => onComplete(task.id)}
-                />
+                  onClick={() => onComplete(task.id)}
+                >
+                  Mark done
+                </button>
                 <span>
                   {task.title}
                   <span className={styles.agendaMeta}>

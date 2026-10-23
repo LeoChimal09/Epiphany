@@ -6,6 +6,7 @@ import {
   localWallToUtc,
   weekdayOf,
   type DateKey,
+  type PlanningPreferences,
 } from "@epiphany/core/planning";
 import type { DashboardTask } from "./model";
 
@@ -34,6 +35,8 @@ export interface ScheduleData {
   blocks: ScheduleBlock[];
   // True when the per-request record limit was reached, so some items may be missing.
   truncated: boolean;
+  planningPreferences?: PlanningPreferences;
+  syncWarning?: string | null;
 }
 
 export interface TimelineItem {

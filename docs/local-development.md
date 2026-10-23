@@ -81,10 +81,16 @@ SIGTERM; it closes its health server and exits.
 | `bun run test:run`          | Vitest once. Database tests need `bun run db:test:up` and `TEST_MYSQL_ADMIN_URL`; otherwise they are skipped. |
 | `bun run db:check`          | Fail if schema and migrations disagree.                              |
 | `bun run security:staged`   | Scan staged git changes for likely secrets; prints no values.        |
-| `bun run precommit:check`   | `check` plus the staged-secret scan. It never commits.               |
+| `bun run precommit:check`   | `check` plus migration drift and the staged-secret scan. It never commits. |
 
 `bun run format` rewrites files with Prettier. No git hooks are installed; run
 `precommit:check` yourself when you choose to commit.
+Lint and formatting ignore generated Next.js output (`.next`, `.next-*`, and
+`build-ci`), including isolated production/release-gate builds. The release gate
+uses the same lint script as the precommit checks.
+When `TEST_MYSQL_ADMIN_URL` is configured, Vitest runs at most two files in parallel
+to avoid overwhelming the shared disposable MySQL server with concurrent migrations.
+Unit-only runs keep Vitest's normal worker defaults.
 
 The staged-secret scan recognizes Discord, OpenAI, Google, and Microsoft credential
 shapes, private keys, secret-named assignments, MySQL URLs with real passwords, and

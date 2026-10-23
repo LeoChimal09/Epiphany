@@ -3,6 +3,7 @@ import { INTENT_KINDS, IntentError } from "./intent";
 import { ACTION_TOOLS, toolToIntent } from "./tools";
 
 const examples = {
+  website_link: {},
   list_tasks: { status: "completed", search: "library" },
   create_task: { title: "Return drill", due_date: "2026-10-23", due_time: "17:00" },
   create_note: { details: "A neighborhood tool library", note_kind: "idea" },

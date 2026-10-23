@@ -10,6 +10,10 @@ import {
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
+  finishDashboardTasks,
+  proposeDashboardNoteDeletion,
+  confirmDashboardNoteDeletion,
+  cancelDashboardNoteDeletion,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -35,6 +39,9 @@ const mocks = vi.hoisted(() => ({
   eventCancel: vi.fn(),
   blockCreate: vi.fn(),
   blockRemove: vi.fn(),
+  propose: vi.fn(),
+  confirm: vi.fn(),
+  cancel: vi.fn(),
 }));
 
 vi.mock("./server-data", () => ({
@@ -55,7 +62,7 @@ const form = (values: Record<string, string>) => {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.context.mockResolvedValue({
     principal,
     timezone: "America/Chicago",
@@ -71,11 +78,91 @@ beforeEach(() => {
       categories: { create: mocks.categoryCreate },
       events: { create: mocks.eventCreate, cancel: mocks.eventCancel },
       workBlocks: { create: mocks.blockCreate, remove: mocks.blockRemove },
+      confirmations: { propose: mocks.propose, confirm: mocks.confirm, cancel: mocks.cancel },
     },
   });
 });
 
 describe("dashboard mutations", () => {
+  it("completes only unique selected tasks and returns reloaded state", async () => {
+    mocks.taskComplete.mockResolvedValue({ changed: true, task });
+    mocks.load.mockResolvedValue({
+      tasks: [{ ...task, status: "completed" }],
+      notes: [],
+      categories: [],
+    });
+    const result = await finishDashboardTasks(["a", "b", "a"]);
+    expect(mocks.taskComplete.mock.calls).toEqual([
+      [principal, "a"],
+      [principal, "b"],
+    ]);
+    expect(result).toMatchObject({
+      ok: true,
+      partialFailure: false,
+      message: "2 tasks marked done.",
+    });
+    expect(mocks.load).toHaveBeenCalledOnce();
+  });
+  it("reports partial completion explicitly instead of silently claiming all succeeded", async () => {
+    mocks.taskComplete
+      .mockResolvedValueOnce({ changed: true, task })
+      .mockRejectedValueOnce(new ValidationError(["task changed"]));
+    mocks.load.mockResolvedValue({ tasks: [], notes: [], categories: [] });
+    expect(await finishDashboardTasks(["a", "b"])).toMatchObject({
+      ok: true,
+      partialFailure: true,
+      message: expect.stringContaining("1 could not be completed"),
+    });
+  });
+  it("returns failure when no selected tasks can be completed", async () => {
+    mocks.taskComplete.mockRejectedValue(new ValidationError(["task changed"]));
+    const result = await finishDashboardTasks(["a", "b"]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("No selected tasks"),
+    });
+  });
+  it("rejects empty and oversized bulk selections before writes", async () => {
+    expect(await finishDashboardTasks([])).toMatchObject({ ok: false });
+    expect(
+      await finishDashboardTasks(Array.from({ length: 101 }, (_, i) => String(i))),
+    ).toMatchObject({ ok: false });
+    expect(mocks.taskComplete).not.toHaveBeenCalled();
+  });
+  it("prepares version-bound idea deletion without executing it", async () => {
+    mocks.propose.mockResolvedValue({
+      confirmationId: "proposal",
+      payloadHash: "hash",
+      preview: { summary: "Delete idea" },
+    });
+    expect(await proposeDashboardNoteDeletion("idea")).toEqual({
+      ok: true,
+      proposal: { confirmationId: "proposal", payloadHash: "hash", summary: "Delete idea" },
+    });
+    expect(mocks.propose).toHaveBeenCalledWith(principal, {
+      action: "note.delete",
+      payload: { noteId: "idea" },
+    });
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+  it("executes deletion only with the existing confirmation service and refreshes notes", async () => {
+    mocks.confirm.mockResolvedValue({ result: { deleted: "note", id: "idea" } });
+    mocks.load.mockResolvedValue({ notes: [] });
+    const proposal = { confirmationId: "proposal", payloadHash: "hash", summary: "Delete idea" };
+    expect(await confirmDashboardNoteDeletion(proposal)).toMatchObject({
+      ok: true,
+      data: { notes: [] },
+    });
+    expect(mocks.confirm).toHaveBeenCalledWith(principal, {
+      confirmationId: "proposal",
+      payloadHash: "hash",
+    });
+  });
+  it("cancels the proposal without deleting anything", async () => {
+    await cancelDashboardNoteDeletion("proposal");
+    expect(mocks.cancel).toHaveBeenCalledWith(principal, "proposal");
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
   it("authenticates and passes the owner to shared services, returning the saved task", async () => {
     mocks.taskCreate.mockResolvedValue(task);
     const result = await addDashboardTask(

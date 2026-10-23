@@ -370,6 +370,11 @@ new behavioral observations.
 
 ## React Dashboard
 
+Ask Epi for the website or dashboard link to receive the configured `APP_URL`
+with `/dashboard`. Common link requests bypass AI calls; other phrasings can use
+the website-link tool. Set `APP_URL` on the Discord worker as well as the website;
+Epi reports missing configuration instead of guessing an address.
+
 - Ask Epi shows at most five upcoming tasks, with links to all tasks and the current week.
 - A header bell with a count opens a dismissible notification popover, keeping alerts
   out of the main page until requested. Idea descriptions use a full-width, vertically
@@ -382,8 +387,36 @@ new behavioral observations.
   owner preference overrides them. See [reminders and limits](docs/reminders.md).
 - Task lists show 20 loaded records per page. The initial snapshot includes up to 100
   tasks per status; Task history can load older records. Search filters loaded records.
+- Task checkboxes select records only. Select one or more (or the current page), then
+  choose Mark selected done and confirm the named tasks. Single-task Mark done and
+  calendar/notification completion also require confirmation. Cancel does not complete
+  anything; completed tasks remain in history.
+- Notes and ideas have a Delete action with an explicit permanent-deletion warning.
+  It uses the existing owner- and version-bound confirmation service (10-minute expiry);
+  canceled or stale confirmations cannot delete the item. This is not a recoverable trash bin.
 - Calendar combines Day, Week, and Month views in one navigation tab, with previous/next
   controls and a Today shortcut. Selecting a month cell opens that day's details.
+- Account menu > Scheduling preferences provides separately saved, collapsed controls for
+  preferred hours (multiple windows per weekday), sleep, meals, recurring protected time,
+  event buffers, optional default travel before/after timed events, and minimum work blocks.
+  Times use the configured owner timezone; a day with no preferred windows is unavailable.
+  Sleep and protected time can cross midnight. Travel defaults start at zero and, if enabled,
+  apply to every timed event (including online events); use specific protected time instead
+  when travel only applies to some appointments. Defaults are not personal facts.
+- Each calendar view includes a collapsed Availability and preparation panel. Free windows
+  use the same deterministic planning engine and confirmed preferences as Epi, subtract
+  scheduled events, travel, buffers, sleep, meals, protected time and planned work, and never
+  offer elapsed time. No language-model calls are needed.
+- Preparation milestones use loaded task deadlines and total effort estimates, subtract
+  upcoming booked effort before the deadline, and suggest the latest feasible preparation
+  start in the displayed range. Missing durations use a labeled 30-minute assumption;
+  explicit estimates override it. Overdue work, conflicting blocks, and
+  insufficient time are explicit. These are independent per-task suggestions, not reservations
+  or a conflict-free multi-task plan; nothing is scheduled automatically.
+- Availability is withheld when calendar records hit their loading limit. Pending, stale,
+  failed, or expired Google sync makes displayed availability explicitly tentative; sync
+  status is a snapshot from the last load. Only loaded tasks are considered for milestones;
+  task-limit warnings and bounded window/deadline lists remain visible.
 - Calendar views show assignment deadlines as due markers, not automatically scheduled
   study sessions. Approved work blocks are separate and can sync to Google when connected;
   assignment deadlines themselves are not exported.

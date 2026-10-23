@@ -66,6 +66,13 @@ a real Google account yet; the live checks that remain are listed at the end.
 9. Open Dashboard > account menu > **Calendars** > **Connect Google Calendar**. After consent, calendars
    appear within a minute or two (the worker syncs every minute and reads each calendar every 5 minutes).
 
+For local testing, `bun run dev` starts only the website. Run `bun run bot:start` in a separate
+terminal from the project root for background calendar sync (it also starts Discord and reminders).
+On Railway, the separate worker service must be running with the same database and Google
+configuration as the website. Refresh the Calendars page to see the first sync; connecting alone
+does not import events or create the dedicated calendar. Only scheduled work blocks are exported,
+not the dashboard's task deadline markers.
+
 If any of the three variables is missing or invalid the Calendars page says so and nothing else is
 affected (the dashboard and Discord keep working); the server log names the variable, never the value.
 Setting only some of them is reported; setting none keeps calendars off silently.

@@ -33,10 +33,12 @@ import {
   ShieldAlert,
   Sparkles,
   Timer,
+  Trash2,
   TriangleAlert,
   Undo2,
 } from "lucide-react";
 import { AccountMenu } from "./account-menu";
+import { ConfirmationDialog, type DashboardConfirmation } from "./confirmation-dialog";
 import { AssistantChat, type AssistantSetup, type ChatMessage } from "./assistant-chat";
 import type { ConversationState } from "@epiphany/core/assistant";
 import type { OwnerProfile } from "@epiphany/core/services";
@@ -52,6 +54,10 @@ import {
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
+  finishDashboardTasks,
+  proposeDashboardNoteDeletion,
+  confirmDashboardNoteDeletion,
+  cancelDashboardNoteDeletion,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -150,6 +156,7 @@ export function DashboardShell({
     through: "",
   });
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [confirmation, setConfirmation] = useState<DashboardConfirmation | null>(null);
   const [pending, startTransition] = useTransition();
   // Starts from the server's clock so hydration matches, then follows the browser clock.
   const [now, setNow] = useState(() => new Date(initialData.capturedAt));
@@ -268,7 +275,13 @@ export function DashboardShell({
               : current;
           });
         }
-        setNotice({ text: result.message, error: false });
+        if (result.data) {
+          const updated = new Map(
+            [...result.data.tasks, ...(result.updatedTasks ?? [])].map((task) => [task.id, task]),
+          );
+          setHistoryTasks((current) => current.map((task) => updated.get(task.id) ?? task));
+        }
+        setNotice({ text: result.message, error: result.partialFailure ?? false });
         onSuccess?.(result);
       } catch {
         setNotice({
@@ -581,8 +594,65 @@ export function DashboardShell({
 
   const addCategoryId = view === "category" ? categoryFilter : inbox?.id;
 
+  function requestTaskCompletion(ids: string[]) {
+    const selected = ids
+      .map(
+        (id) =>
+          data.tasks.find((task) => task.id === id) ?? historyTasks.find((task) => task.id === id),
+      )
+      .filter((task): task is DashboardTask => task !== undefined && task.status === "open");
+    if (!selected.length) return;
+    setConfirmation({
+      title: `Mark ${selected.length === 1 ? "task" : `${selected.length} tasks`} done?`,
+      description: `${selected.map((task) => task.title).join("; ")}. Completed tasks move to history and remaining planned work blocks are cleared.`,
+      confirmLabel: "Confirm done",
+      onConfirm: () =>
+        perform(() =>
+          selected.length === 1
+            ? finishDashboardTask(selected[0]!.id)
+            : finishDashboardTasks(selected.map((task) => task.id)),
+        ),
+    });
+  }
+
+  function requestNoteDeletion(id: string) {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardNoteDeletion(id);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: "Permanently delete this note or idea?",
+          description: `${proposal.summary}. This cannot be undone. Cancel to keep it.`,
+          confirmLabel: "Delete permanently",
+          onConfirm: () => perform(() => confirmDashboardNoteDeletion(proposal)),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardNoteDeletion(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "The deletion was not confirmed, but its pending request could not be canceled. It will expire automatically.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not prepare deletion. Nothing was deleted.", error: true });
+      }
+    });
+  }
+
   return (
     <div className={styles.workspace}>
+      {confirmation ? (
+        <ConfirmationDialog confirmation={confirmation} onClose={() => setConfirmation(null)} />
+      ) : null}
       <header className={styles.topbar}>
         <Link
           className={styles.brand}
@@ -609,7 +679,7 @@ export function DashboardShell({
             now={now}
             pending={pending}
             truncated={data.tasksTruncated && open.length >= 100}
-            onComplete={(id) => perform(() => finishDashboardTask(id))}
+            onComplete={(id) => requestTaskCompletion([id])}
             onOpen={(task) => {
               selectView("tasks");
               setSearch(task.title);
@@ -895,7 +965,12 @@ export function DashboardShell({
                     />
                     <label className={styles.inlineCheck}>
                       <input name="dueDateOnly" type="checkbox" />
-                      Date only
+                      <span>
+                        No specific due time
+                        <small className={styles.checkHelp}>
+                          Use the selected date only. Leave unchecked for an exact deadline.
+                        </small>
+                      </span>
                     </label>
                     <label className={styles.fullWidth}>
                       Details
@@ -1045,6 +1120,7 @@ export function DashboardShell({
                     <CalendarView
                       key={`${view}:${schedule.weekStart}`}
                       initialSchedule={schedule}
+                      tasksTruncated={data.tasksTruncated}
                       initialMode={view === "today" ? "day" : "week"}
                       initialDate={
                         view === "week" && weekStart !== weekStartOf(today) ? weekStart : today
@@ -1054,7 +1130,7 @@ export function DashboardShell({
                       today={today}
                       now={now}
                       pending={pending}
-                      onComplete={(id) => perform(() => finishDashboardTask(id))}
+                      onComplete={(id) => requestTaskCompletion([id])}
                       onRemove={removeScheduleItem}
                     />
                   </>
@@ -1160,7 +1236,8 @@ export function DashboardShell({
                   timezone={data.timezone}
                   now={now}
                   pending={pending}
-                  onComplete={(id) => perform(() => finishDashboardTask(id))}
+                  onComplete={(id) => requestTaskCompletion([id])}
+                  onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
                   onSave={editTask}
                   emptySearch={historyFilters.search}
@@ -1188,6 +1265,7 @@ export function DashboardShell({
                   timezone={data.timezone}
                   pending={pending}
                   onSave={editNote}
+                  onDelete={requestNoteDeletion}
                 />
                 {data.notesTruncated ? (
                   <div className={styles.historyMore}>
@@ -1213,7 +1291,8 @@ export function DashboardShell({
                     timezone={data.timezone}
                     now={now}
                     pending={pending}
-                    onComplete={(id) => perform(() => finishDashboardTask(id))}
+                    onComplete={(id) => requestTaskCompletion([id])}
+                    onCompleteMany={requestTaskCompletion}
                     onReopen={(id) => perform(() => reopenDashboardTask(id))}
                     onSave={editTask}
                     emptySearch={search}
@@ -1229,6 +1308,7 @@ export function DashboardShell({
                     timezone={data.timezone}
                     pending={pending}
                     onSave={editNote}
+                    onDelete={requestNoteDeletion}
                   />
                   {data.notesTruncated ? (
                     <div className={styles.historyMore}>
@@ -1253,7 +1333,8 @@ export function DashboardShell({
                   timezone={data.timezone}
                   now={now}
                   pending={pending}
-                  onComplete={(id) => perform(() => finishDashboardTask(id))}
+                  onComplete={(id) => requestTaskCompletion([id])}
+                  onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
                   onSave={editTask}
                   emptySearch=""
@@ -1296,7 +1377,8 @@ export function DashboardShell({
                 timezone={data.timezone}
                 now={now}
                 pending={pending}
-                onComplete={(id) => perform(() => finishDashboardTask(id))}
+                onComplete={(id) => requestTaskCompletion([id])}
+                onCompleteMany={requestTaskCompletion}
                 onReopen={(id) => perform(() => reopenDashboardTask(id))}
                 onSave={editTask}
                 emptySearch={search}
@@ -1341,6 +1423,7 @@ function TaskList({
   now,
   pending,
   onComplete,
+  onCompleteMany,
   onReopen,
   onSave,
   emptySearch,
@@ -1353,6 +1436,7 @@ function TaskList({
   now: Date;
   pending: boolean;
   onComplete: (id: string) => void;
+  onCompleteMany: (ids: string[]) => void;
   onReopen: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
   emptySearch: string;
@@ -1360,11 +1444,51 @@ function TaskList({
   clearSearch: () => void;
 }) {
   const [requestedPage, setRequestedPage] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selected = tasks.filter((task) => task.status === "open" && selectedIds.includes(task.id));
   const { items, page, pages } = taskPage(tasks, requestedPage);
   if (!tasks.length)
     return <EmptyState search={emptySearch} label={emptyLabel} clear={clearSearch} />;
   return (
     <>
+      {tasks.some((task) => task.status === "open") ? (
+        <div className={styles.selectionToolbar} role="group" aria-label="Task selection">
+          <span>
+            {selected.length} selected. Checkboxes select tasks; they do not mark them done.
+          </span>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={pending}
+            onClick={() =>
+              setSelectedIds([
+                ...new Set([
+                  ...selectedIds,
+                  ...items.filter((task) => task.status === "open").map((task) => task.id),
+                ]),
+              ])
+            }
+          >
+            Select this page
+          </button>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending || !selected.length}
+            onClick={() => setSelectedIds([])}
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            className={styles.primaryButton}
+            disabled={pending || !selected.length}
+            onClick={() => onCompleteMany(selected.map((task) => task.id))}
+          >
+            Mark selected done ({selected.length})
+          </button>
+        </div>
+      ) : null}
       <ul className={styles.taskList}>
         {items.map((task) => (
           <TaskRow
@@ -1377,6 +1501,12 @@ function TaskList({
             onComplete={onComplete}
             onReopen={onReopen}
             onSave={onSave}
+            selected={selectedIds.includes(task.id)}
+            onSelect={(id, checked) =>
+              setSelectedIds((current) =>
+                checked ? [...new Set([...current, id])] : current.filter((value) => value !== id),
+              )
+            }
           />
         ))}
       </ul>
@@ -1416,6 +1546,8 @@ function TaskRow({
   onComplete,
   onReopen,
   onSave,
+  selected,
+  onSelect,
 }: {
   task: DashboardTask;
   categories: DashboardCategory[];
@@ -1425,6 +1557,8 @@ function TaskRow({
   onComplete: (id: string) => void;
   onReopen: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  selected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const countdown =
@@ -1469,7 +1603,12 @@ function TaskRow({
           <CategorySelect categories={categories} name="categoryId" value={task.categoryId} />
           <label className={styles.inlineCheck}>
             <input name="dueDateOnly" type="checkbox" defaultChecked={task.dueDateOnly} />
-            Date only
+            <span>
+              No specific due time
+              <small className={styles.checkHelp}>
+                Use the selected date only. Leave unchecked for an exact deadline.
+              </small>
+            </span>
           </label>
           <label className={styles.fullWidth}>
             Details
@@ -1498,8 +1637,9 @@ function TaskRow({
           className={styles.taskCheckbox}
           type="checkbox"
           disabled={pending}
-          aria-label={`Complete ${task.title}`}
-          onChange={() => onComplete(task.id)}
+          aria-label={`Select ${task.title}`}
+          checked={selected}
+          onChange={(event) => onSelect(task.id, event.target.checked)}
         />
       ) : (
         <span className={styles.completedMark} aria-label="Completed">
@@ -1549,6 +1689,16 @@ function TaskRow({
         </div>
       </div>
       <div className={styles.rowActions}>
+        {task.status === "open" ? (
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => onComplete(task.id)}
+          >
+            <Check size={14} aria-hidden="true" /> Mark done
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.textButton}
@@ -1580,12 +1730,14 @@ function NoteList({
   timezone,
   pending,
   onSave,
+  onDelete,
 }: {
   notes: DashboardNote[];
   categories: DashboardCategory[];
   timezone: string;
   pending: boolean;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  onDelete: (id: string) => void;
 }) {
   if (!notes.length) return <EmptyState search="" label="No saved notes" clear={() => {}} />;
   return (
@@ -1598,6 +1750,7 @@ function NoteList({
           timezone={timezone}
           pending={pending}
           onSave={onSave}
+          onDelete={onDelete}
         />
       ))}
     </ul>
@@ -1610,12 +1763,14 @@ function NoteCard({
   timezone,
   pending,
   onSave,
+  onDelete,
 }: {
   note: DashboardNote;
   categories: DashboardCategory[];
   timezone: string;
   pending: boolean;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  onDelete: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   if (editing)
@@ -1691,15 +1846,26 @@ function NoteCard({
         <span>
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}
         </span>
-        <button
-          type="button"
-          className={styles.textButton}
-          disabled={pending}
-          onClick={() => setEditing(true)}
-        >
-          <Pencil size={13} aria-hidden="true" />
-          Edit
-        </button>
+        <div className={styles.rowActions}>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => onDelete(note.id)}
+            aria-label={`Delete ${note.title ?? (note.kind === "idea" ? "idea" : "note")}`}
+          >
+            <Trash2 size={13} aria-hidden="true" /> Delete
+          </button>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => setEditing(true)}
+          >
+            <Pencil size={13} aria-hidden="true" />
+            Edit
+          </button>
+        </div>
       </div>
     </li>
   );

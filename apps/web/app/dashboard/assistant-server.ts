@@ -59,6 +59,7 @@ export async function askAssistant(
     deps.clock,
   );
   const assistant = createAssistant({
+    appUrl: deps.config.appUrl,
     services: createServices(deps.db, { clock: deps.clock }),
     provider: createOpenAiProvider({
       apiKey: config.apiKey,

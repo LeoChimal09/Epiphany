@@ -198,6 +198,7 @@ export async function startDiscordGateway(
         if (!principal || !aiConfig?.apiKey) return null;
         const key = `voice:${guildId}`;
         const assistant = createAssistant({
+          appUrl: options.env.APP_URL || undefined,
           services: createServices(database.db, { clock }),
           provider: createOpenAiProvider({
             apiKey: aiConfig.apiKey,
@@ -421,6 +422,7 @@ export async function startDiscordGateway(
       clock,
     );
     const assistant = createAssistant({
+      appUrl: options.env.APP_URL || undefined,
       services: createServices(database.db, { clock }),
       provider: createOpenAiProvider({
         apiKey: aiConfig.apiKey,

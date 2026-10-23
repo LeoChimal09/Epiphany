@@ -8,6 +8,11 @@ import { runMigrations } from "../db/migrate";
 import { actionHistory, confirmations, notes, tasks, workBlocks } from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
 import {
+  computeAvailability,
+  parsePlanningPreferences,
+  validatePlanningSetting,
+} from "../planning";
+import {
   AccessDeniedError,
   ConfirmationError,
   CONFIRMATION_TTL_MS,
@@ -252,6 +257,50 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
   });
 
   describe("preferences", () => {
+    it("retains planning constraints across fresh reads and isolates another owner", async () => {
+      const settings = [
+        { key: "planning.preferred_hours", value: { wed: [{ start: "09:00", end: "17:00" }] } },
+        { key: "planning.sleep", value: { start: "23:00", end: "07:00" } },
+        { key: "planning.meals", value: [{ start: "12:00", end: "13:00" }] },
+        {
+          key: "planning.protected_time",
+          value: [
+            { label: "Commute", weekdays: ["wed"], window: { start: "15:00", end: "16:00" } },
+          ],
+        },
+        { key: "planning.buffer_minutes", value: 15 },
+        { key: "planning.min_block_minutes", value: 30 },
+        { key: "planning.travel_before_minutes", value: 20 },
+      ];
+      for (const setting of settings) {
+        await services.preferences.set(owner, {
+          key: setting.key,
+          value: validatePlanningSetting(setting.key, setting.value),
+          status: "confirmed",
+        });
+      }
+      const fresh = createServices(handle.db, { clock: () => now });
+      const rows = await fresh.preferences.list(owner);
+      expect(rows).toHaveLength(settings.length);
+      const preferences = parsePlanningPreferences(rows, "America/Chicago");
+      expect(preferences.travelBeforeMinutes).toBe(20);
+      const result = computeAvailability({
+        range: { from: "2026-10-14", to: "2026-10-14" },
+        events: [],
+        workBlocks: [],
+        preferences,
+      });
+      expect(result.windows.map((window) => window.minutes)).toEqual([180, 120, 60]);
+      expect(await fresh.preferences.list(strangerOwner)).toEqual([]);
+      const saved = rows.find((row) => row.key === "planning.buffer_minutes")!;
+      await fresh.preferences.set(owner, {
+        key: saved.key,
+        value: 20,
+        status: "confirmed",
+        expectedVersion: saved.version,
+      });
+      expect((await services.preferences.get(owner, saved.key))?.value).toBe(20);
+    });
     it("persists versioned preferences and requires confirmation to forget them", async () => {
       const saved = await services.preferences.set(owner, {
         key: "planning.bufferMinutes",

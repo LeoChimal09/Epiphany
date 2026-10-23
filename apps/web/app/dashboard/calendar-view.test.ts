@@ -107,6 +107,39 @@ describe("unified calendar", () => {
     expect(simple).toContain("Work: Study");
   });
 
+  it("marks only dates before the owner's today as past without hiding their items", () => {
+    const html = renderToStaticMarkup(
+      createElement(MonthView, {
+        schedule,
+        tasks: [task],
+        timezone: "America/Chicago",
+        date: "2026-10-22",
+        today: "2026-10-22",
+        onSelect: () => {},
+      }),
+    );
+    const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!;
+    const yesterday = buttons.find((button) => button.includes("Wednesday, Oct 21,"))!;
+    expect(yesterday).toContain("past day");
+    expect(yesterday).toContain(">Past</span>");
+    expect(yesterday).toContain("monthPast");
+    expect(yesterday).toContain("Due: Homework");
+    expect(yesterday).toContain("Event: Lecture");
+    expect(yesterday).not.toContain('aria-current="date"');
+    const today = buttons.find((button) => button.includes("Thursday, Oct 22,"))!;
+    expect(today).toContain('aria-current="date"');
+    expect(today).toContain("monthToday");
+    expect(today).toContain(">Today</span>");
+    expect(today).not.toContain("monthPast");
+    const tomorrow = buttons.find((button) => button.includes("Friday, Oct 23,"))!;
+    expect(tomorrow).not.toContain("past day");
+    expect(tomorrow).not.toContain(">Past</span>");
+    expect(tomorrow).not.toContain("monthPast");
+    expect(buttons[0]).toContain("past day");
+    expect(buttons.at(-1)).not.toContain("past day");
+    expect(buttons.every((button) => !button.includes("disabled"))).toBe(true);
+  });
+
   it("loads every week in a month and deduplicates records crossing week boundaries", async () => {
     vi.mocked(loadDashboardSchedule).mockResolvedValue({
       ok: true,

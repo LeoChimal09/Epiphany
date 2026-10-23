@@ -16,6 +16,7 @@ import {
   type TimelineItem,
 } from "./schedule";
 import { TodayView, WeekView } from "./schedule-views";
+import { AvailabilityPanel } from "./planning-panel";
 import styles from "./workspace.module.css";
 
 type CalendarMode = "day" | "week" | "month";
@@ -42,13 +43,24 @@ export async function loadCalendarSchedule(
     for (const block of result.schedule.blocks) blocks.set(block.id, block);
     truncated ||= result.schedule.truncated;
   }
-  return { weekStart: from, events: [...events.values()], blocks: [...blocks.values()], truncated };
+  return {
+    weekStart: from,
+    events: [...events.values()],
+    blocks: [...blocks.values()],
+    truncated,
+    planningPreferences: results[0]?.ok ? results[0].schedule.planningPreferences : undefined,
+    syncWarning:
+      results.flatMap((result) =>
+        result.ok && result.schedule.syncWarning ? [result.schedule.syncWarning] : [],
+      )[0] ?? null,
+  };
 }
 
 export function CalendarView({
   initialSchedule,
   initialMode,
   tasks,
+  tasksTruncated = false,
   timezone,
   today,
   initialDate = today,
@@ -61,6 +73,7 @@ export function CalendarView({
   initialMode: CalendarMode;
   initialDate?: string;
   tasks: DashboardTask[];
+  tasksTruncated?: boolean;
   timezone: string;
   today: string;
   now: Date;
@@ -182,6 +195,15 @@ export function CalendarView({
               Some calendar items exceed the display limit. Open a day or week to narrow the range.
             </p>
           ) : null}
+          <AvailabilityPanel
+            schedule={schedule}
+            tasks={tasks}
+            tasksTruncated={tasksTruncated}
+            timezone={timezone}
+            from={mode === "day" ? date : from}
+            to={mode === "day" ? date : addDays(from, weeks * 7 - 1)}
+            now={now}
+          />
           {mode === "month" ? (
             <MonthView
               schedule={schedule}
@@ -248,6 +270,8 @@ export function MonthView({
           <strong key={day}>{day}</strong>
         ))}
         {dates.map((day) => {
+          const past = day < today;
+          const current = day === today;
           const content = buildDay(day, items, tasks, timezone);
           const entries = [
             ...content.allDay.map((event) => `Event: ${event.title}`),
@@ -261,19 +285,24 @@ export function MonthView({
             <button
               key={day}
               type="button"
-              className={`${styles.monthDay} ${day === today ? styles.gridToday : ""}`}
-              aria-current={day === today ? "date" : undefined}
-              aria-label={`${formatDayLabel(day, "long")}, ${entries.length} items`}
+              className={`${styles.monthDay} ${past ? styles.monthPast : ""} ${current ? styles.monthToday : ""}`}
+              aria-current={current ? "date" : undefined}
+              aria-label={`${formatDayLabel(day, "long")}, ${entries.length} items${past ? ", past day" : current ? ", today" : ""}`}
               onClick={() => {
                 onSelect(day);
               }}
             >
-              <span
-                className={
-                  day.slice(0, 7) === date.slice(0, 7) ? styles.monthDate : styles.monthOutside
-                }
-              >
-                {Number(day.slice(-2))}
+              <span className={styles.monthDayHeading}>
+                <span
+                  className={
+                    day.slice(0, 7) === date.slice(0, 7) ? styles.monthDate : styles.monthOutside
+                  }
+                >
+                  {Number(day.slice(-2))}
+                </span>
+                {past || current ? (
+                  <span className={styles.calendarDayStatus}>{past ? "Past" : "Today"}</span>
+                ) : null}
               </span>
               {entries.slice(0, 3).map((entry, index) => (
                 <span className={styles.monthEntry} key={index} title={entry}>

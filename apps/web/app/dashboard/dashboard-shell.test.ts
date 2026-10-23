@@ -44,9 +44,12 @@ describe("compact assistant dashboard", () => {
         voice: { listen: false, speak: false },
       }),
     );
-    expect(html.match(/aria-label="Complete Assignment /g)).toHaveLength(5);
-    expect(html).toContain("Complete Assignment 5");
-    expect(html).not.toContain("Complete Assignment 6");
+    expect(html.match(/aria-label="Select Assignment /g)).toHaveLength(5);
+    expect(html).toContain("Select Assignment 5");
+    expect(html).not.toContain("Select Assignment 6");
+    expect(html).toContain("Checkboxes select tasks; they do not mark them done.");
+    expect(html).toContain("Mark selected done (0)");
+    expect(html).toContain("Select this page");
     expect(html).toContain("View all tasks");
     expect(html).toContain("View this week");
     expect(html).toContain(">40<");

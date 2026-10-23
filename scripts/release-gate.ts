@@ -24,8 +24,7 @@ const hasDatabase = Boolean(process.env.TEST_MYSQL_ADMIN_URL);
 const gates: Gate[] = [
   {
     name: "lint (no warnings)",
-    run: () =>
-      sh("bunx", ["eslint", ".", "--max-warnings=0", "--ignore-pattern", "apps/web/build-ci/**"]),
+    run: () => sh("bun", ["run", "lint"]),
   },
   { name: "formatting", run: () => sh("bunx", ["prettier", "--check", "."]) },
   { name: "typecheck", run: () => sh("bun", ["run", "typecheck"]) },

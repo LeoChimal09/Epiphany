@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { routineIntent } from "./routine";
 
 describe("routine intents", () => {
+  it.each([
+    "send me the website link",
+    "can you give me the dashboard url?",
+    "what's your website?",
+    "Hey Epi give me the website link",
+  ])("gets the configured website without AI: %s", (message) => {
+    expect(routineIntent(message)).toEqual({ kind: "website_link" });
+  });
+
   it.each(["hi", "Hello!", "hey, Epi", "thanks", "Thank you, Epi!"])(
     "handles a standalone social reply without interpreting it: %s",
     (text) => {

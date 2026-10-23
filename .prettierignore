@@ -1,5 +1,7 @@
 bun.lock
 .next
+.next-*
+build-ci
 node_modules
 coverage
 *.md
