@@ -12,6 +12,7 @@ export default function config(phase: string): NextConfig {
 
   return {
     poweredByHeader: false,
+    experimental: { agentUpgrade: "security" },
     transpilePackages: ["@epiphany/core"],
     turbopack: { root: repoRoot },
     // Lets a disposable preview run beside the owner's dev server without sharing its lock.

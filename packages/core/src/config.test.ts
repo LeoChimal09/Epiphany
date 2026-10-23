@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  googleCalendarRequested,
   loadAuthConfig,
+  loadGoogleConfig,
   loadDatabaseToolingConfig,
   loadWebConfig,
   loadWorkerConfig,
@@ -220,5 +222,41 @@ describe("loadAuthConfig with ENV_BYPASS", () => {
     expect(reasons({ ...dev, OWNER_DISCORD_USER_ID: "nope" })).toContain("OWNER_DISCORD_USER_ID");
     expect(reasons({ ...dev, APP_TIMEZONE: "Mars/Base" })).toContain("APP_TIMEZONE");
     expect(reasons({ ...dev, APP_URL: "not a url" })).toContain("APP_URL");
+  });
+});
+
+describe("loadGoogleConfig", () => {
+  const key = Buffer.alloc(32, 7).toString("base64");
+  const complete = {
+    GOOGLE_CLIENT_ID: "placeholder-client-id",
+    GOOGLE_CLIENT_SECRET: "placeholder-client-secret",
+    TOKEN_ENCRYPTION_KEY: key,
+  };
+
+  it("loads a complete configuration with a 32-byte key", () => {
+    const config = loadGoogleConfig(complete);
+    expect(config.clientId).toBe("placeholder-client-id");
+    expect(config.tokenKey.length).toBe(32);
+  });
+
+  it("is quiet when nothing is set, and reports half-finished setups", () => {
+    expect(googleCalendarRequested({})).toBe(false);
+    expect(googleCalendarRequested({ GOOGLE_CLIENT_ID: "x" })).toBe(true);
+    expect(() => loadGoogleConfig({ GOOGLE_CLIENT_ID: "x" })).toThrow(
+      /GOOGLE_CLIENT_SECRET is required[\s\S]*TOKEN_ENCRYPTION_KEY is required/,
+    );
+  });
+
+  it("rejects a key of the wrong size without echoing it", () => {
+    const short = Buffer.alloc(16, 9).toString("base64");
+    expect.assertions(2);
+    try {
+      loadGoogleConfig({ ...complete, TOKEN_ENCRYPTION_KEY: short });
+    } catch (error) {
+      expect((error as ConfigError).message).toContain(
+        "TOKEN_ENCRYPTION_KEY must be 32 random bytes",
+      );
+      expect((error as ConfigError).message).not.toContain(short);
+    }
   });
 });

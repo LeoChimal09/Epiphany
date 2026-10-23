@@ -13,14 +13,10 @@ import {
   Bot,
   CalendarClock,
   CalendarDays,
-  CalendarRange,
   Check,
-  ChevronLeft,
-  ChevronRight,
   CircleCheck,
   Clock,
   FileText,
-  Flag,
   Folder,
   Globe2,
   History,
@@ -37,13 +33,16 @@ import {
   ShieldAlert,
   Sparkles,
   Timer,
+  Trash2,
   TriangleAlert,
   Undo2,
 } from "lucide-react";
 import { AccountMenu } from "./account-menu";
+import { ConfirmationDialog, type DashboardConfirmation } from "./confirmation-dialog";
 import { AssistantChat, type AssistantSetup, type ChatMessage } from "./assistant-chat";
 import type { ConversationState } from "@epiphany/core/assistant";
-import { addDays } from "@epiphany/core/planning";
+import type { OwnerProfile } from "@epiphany/core/services";
+import type { VoiceStatus } from "./voice-status";
 import {
   addDashboardCategory,
   addDashboardEvent,
@@ -55,6 +54,10 @@ import {
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
+  finishDashboardTasks,
+  proposeDashboardNoteDeletion,
+  confirmDashboardNoteDeletion,
+  cancelDashboardNoteDeletion,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -69,6 +72,7 @@ import {
   dateTimeLocalValue,
   formatDate,
   localDateTimeToIso,
+  taskPage,
   visibleHistoryTasks,
   visibleNotes,
   visibleTasks,
@@ -78,12 +82,14 @@ import {
   type DashboardTask,
   type DashboardView,
   type HistoryFilters,
+  type TaskFilter,
 } from "./model";
-import { TodayView, WeekView } from "./schedule-views";
+import { CalendarView } from "./calendar-view";
+import { DeadlineNotifications } from "./deadline-notifications";
+import { IdeaBody } from "./idea-body";
 import { ScheduleComposer } from "./schedule-forms";
 import {
   formatDayLabel,
-  formatWeekRange,
   todayKey,
   weekStartOf,
   type ScheduleData,
@@ -91,12 +97,13 @@ import {
 } from "./schedule";
 import styles from "./workspace.module.css";
 
+const LIVE_REFRESH_MS = 30_000;
+
 const headings: Record<DashboardView, string> = {
   assistant: "Ask Epi",
-  today: "Today",
-  week: "This week",
+  today: "Calendar",
+  week: "Calendar",
   tasks: "Active tasks",
-  priorities: "Upcoming priorities",
   completed: "Completed tasks",
   notes: "Notes & ideas",
   category: "Category",
@@ -108,11 +115,15 @@ export function DashboardShell({
   initialSchedule,
   assistantSetup,
   devBypass,
+  owner,
+  voice,
 }: {
   initialData: DashboardData;
   initialSchedule: ScheduleData | null;
   assistantSetup: AssistantSetup;
   devBypass: boolean;
+  owner: OwnerProfile;
+  voice: VoiceStatus;
 }) {
   const [data, setData] = useState(initialData);
   const homeView: DashboardView = assistantSetup === "ready" ? "assistant" : "today";
@@ -131,6 +142,7 @@ export function DashboardShell({
   const nextMessageId = useRef(1);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | "event" | "block" | null>(null);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -144,6 +156,7 @@ export function DashboardShell({
     through: "",
   });
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [confirmation, setConfirmation] = useState<DashboardConfirmation | null>(null);
   const [pending, startTransition] = useTransition();
   // Starts from the server's clock so hydration matches, then follows the browser clock.
   const [now, setNow] = useState(() => new Date(initialData.capturedAt));
@@ -162,22 +175,54 @@ export function DashboardShell({
   const isSchedule = view === "today" || view === "week";
   const isAssistant = view === "assistant";
   const neededWeek = view === "today" ? weekStartOf(today) : weekStart;
+  // Changes made in Discord appear here without a manual refresh: the visible dashboard re-reads
+  // every half minute and when the tab regains focus. It waits while an action or a chat turn is
+  // in flight, and drops a result that arrives after one started, so it never overwrites an edit.
+  const live = useRef({ busy: false, week: neededWeek, skipSchedule: false });
+  live.current = {
+    busy: pending || chat.asking,
+    week: neededWeek,
+    skipSchedule: view === "history",
+  };
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      if (document.visibilityState !== "visible" || live.current.busy) return;
+      try {
+        const [fresh, week] = await Promise.all([
+          refreshDashboard(),
+          live.current.skipSchedule ? null : loadDashboardSchedule(live.current.week),
+        ]);
+        if (cancelled || live.current.busy) return;
+        if (fresh.ok && fresh.data) {
+          const next = fresh.data;
+          setData((current) => ({ ...current, ...next, capturedAt: new Date().toISOString() }));
+        }
+        if (week?.ok && requestedWeek.current === week.schedule.weekStart)
+          setSchedule(week.schedule);
+      } catch {
+        // A missed refresh is harmless; the next one tries again.
+      }
+    }
+    const timer = window.setInterval(poll, LIVE_REFRESH_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, []);
   const open = data.tasks.filter((task) => task.status === "open");
   const completed = data.tasks.filter((task) => task.status === "completed");
-  const datedOpen = open.filter((task) => task.dueAt !== null);
   const inbox = data.categories.find((category) => category.systemKey === "inbox");
   const selectedCategory = data.categories.find((category) => category.id === categoryFilter);
-  const title =
-    view === "category"
-      ? (selectedCategory?.name ?? "Category")
-      : view === "week" && weekStart !== weekStartOf(today)
-        ? formatWeekRange(weekStart)
-        : headings[view];
+  const title = view === "category" ? (selectedCategory?.name ?? "Category") : headings[view];
   const tasks = visibleTasks(
     data.tasks,
     view,
-    deferredSearch,
+    isAssistant ? "" : deferredSearch,
     view === "category" ? categoryFilter : null,
+    view === "tasks" ? taskFilter : "all",
   );
   const notes = visibleNotes(
     data.notes,
@@ -230,7 +275,13 @@ export function DashboardShell({
               : current;
           });
         }
-        setNotice({ text: result.message, error: false });
+        if (result.data) {
+          const updated = new Map(
+            [...result.data.tasks, ...(result.updatedTasks ?? [])].map((task) => [task.id, task]),
+          );
+          setHistoryTasks((current) => current.map((task) => updated.get(task.id) ?? task));
+        }
+        setNotice({ text: result.message, error: result.partialFailure ?? false });
         onSuccess?.(result);
       } catch {
         setNotice({
@@ -311,6 +362,7 @@ export function DashboardShell({
   }
 
   function selectView(next: DashboardView) {
+    setTaskFilter("all");
     setView(next);
     setCategoryFilter(null);
     setSearch("");
@@ -542,8 +594,65 @@ export function DashboardShell({
 
   const addCategoryId = view === "category" ? categoryFilter : inbox?.id;
 
+  function requestTaskCompletion(ids: string[]) {
+    const selected = ids
+      .map(
+        (id) =>
+          data.tasks.find((task) => task.id === id) ?? historyTasks.find((task) => task.id === id),
+      )
+      .filter((task): task is DashboardTask => task !== undefined && task.status === "open");
+    if (!selected.length) return;
+    setConfirmation({
+      title: `Mark ${selected.length === 1 ? "task" : `${selected.length} tasks`} done?`,
+      description: `${selected.map((task) => task.title).join("; ")}. Completed tasks move to history and remaining planned work blocks are cleared.`,
+      confirmLabel: "Confirm done",
+      onConfirm: () =>
+        perform(() =>
+          selected.length === 1
+            ? finishDashboardTask(selected[0]!.id)
+            : finishDashboardTasks(selected.map((task) => task.id)),
+        ),
+    });
+  }
+
+  function requestNoteDeletion(id: string) {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardNoteDeletion(id);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: "Permanently delete this note or idea?",
+          description: `${proposal.summary}. This cannot be undone. Cancel to keep it.`,
+          confirmLabel: "Delete permanently",
+          onConfirm: () => perform(() => confirmDashboardNoteDeletion(proposal)),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardNoteDeletion(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "The deletion was not confirmed, but its pending request could not be canceled. It will expire automatically.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not prepare deletion. Nothing was deleted.", error: true });
+      }
+    });
+  }
+
   return (
     <div className={styles.workspace}>
+      {confirmation ? (
+        <ConfirmationDialog confirmation={confirmation} onClose={() => setConfirmation(null)} />
+      ) : null}
       <header className={styles.topbar}>
         <Link
           className={styles.brand}
@@ -563,7 +672,22 @@ export function DashboardShell({
             Epiphany<span className={styles.brandCaption}> Personal workspace</span>
           </span>
         </Link>
-        <AccountMenu devBypass={devBypass} timezone={data.timezone} />
+        <div className={styles.rowActions}>
+          <DeadlineNotifications
+            tasks={data.tasks}
+            timezone={data.timezone}
+            now={now}
+            pending={pending}
+            truncated={data.tasksTruncated && open.length >= 100}
+            onComplete={(id) => requestTaskCompletion([id])}
+            onOpen={(task) => {
+              selectView("tasks");
+              setSearch(task.title);
+            }}
+            onHistory={() => selectView("history")}
+          />
+          <AccountMenu devBypass={devBypass} owner={owner} timezone={data.timezone} />
+        </div>
       </header>
       <div className={styles.body}>
         <aside className={styles.sidebar}>
@@ -571,10 +695,8 @@ export function DashboardShell({
             {(
               [
                 ["assistant", "Ask Epi", null, Bot],
-                ["today", "Today", null, CalendarDays],
-                ["week", "Week", null, CalendarRange],
+                ["today", "Calendar", null, CalendarDays],
                 ["tasks", "Tasks", open.length, ListChecks],
-                ["priorities", "Priorities", datedOpen.length, Flag],
                 ["completed", "Done", completed.length, CircleCheck],
                 ["notes", "Notes & ideas", data.notes.length, NotebookText],
               ] as const
@@ -582,7 +704,7 @@ export function DashboardShell({
               <button
                 key={key}
                 type="button"
-                aria-current={view === key ? "page" : undefined}
+                aria-current={view === key || (key === "today" && isSchedule) ? "page" : undefined}
                 onClick={() => selectView(key)}
               >
                 <Icon size={17} aria-hidden="true" />
@@ -843,7 +965,12 @@ export function DashboardShell({
                     />
                     <label className={styles.inlineCheck}>
                       <input name="dueDateOnly" type="checkbox" />
-                      Date only
+                      <span>
+                        No specific due time
+                        <small className={styles.checkHelp}>
+                          Use the selected date only. Leave unchecked for an exact deadline.
+                        </small>
+                      </span>
                     </label>
                     <label className={styles.fullWidth}>
                       Details
@@ -897,6 +1024,27 @@ export function DashboardShell({
           <section className={styles.records} aria-label={title} aria-busy={pending}>
             {view !== "history" && !isSchedule && !isAssistant ? (
               <div className={styles.listToolbar}>
+                {view === "tasks" ? (
+                  <div className={styles.rowActions} role="group" aria-label="Task filters">
+                    {(
+                      [
+                        ["all", "All tasks"],
+                        ["planned", "With due date or duration"],
+                        ["plain", "Just tasks"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={styles.secondaryButton}
+                        aria-pressed={taskFilter === value}
+                        onClick={() => setTaskFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 <label className={styles.searchLabel}>
                   Search
                   <span className={styles.searchField}>
@@ -920,7 +1068,11 @@ export function DashboardShell({
             !isSchedule &&
             !isAssistant &&
             (view === "notes" ? data.notesTruncated : data.tasksTruncated) ? (
-              <p className={styles.limitNotice}>100-record view limit reached.</p>
+              <p className={styles.limitNotice}>
+                {view === "notes"
+                  ? "Showing loaded notes. Load older notes below to browse farther back."
+                  : "Showing the first 100 records per task status. Use Task history to load and search older tasks."}
+              </p>
             ) : null}
             {isAssistant ? (
               <AssistantChat
@@ -929,44 +1081,12 @@ export function DashboardShell({
                 asking={chat.asking}
                 budgetNote={chat.budgetNote}
                 timezone={data.timezone}
+                voice={voice}
                 onSend={(text) => void sendToEpi(text)}
               />
             ) : null}
             {isSchedule ? (
               <div>
-                {view === "week" ? (
-                  <div className={styles.weekNav}>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      aria-label="Previous week"
-                      disabled={pending}
-                      onClick={() => moveWeek(addDays(weekStart, -7))}
-                    >
-                      <ChevronLeft size={18} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      aria-label="Next week"
-                      disabled={pending}
-                      onClick={() => moveWeek(addDays(weekStart, 7))}
-                    >
-                      <ChevronRight size={18} aria-hidden="true" />
-                    </button>
-                    <h2>{formatWeekRange(weekStart)}</h2>
-                    {weekStart !== weekStartOf(today) ? (
-                      <button
-                        type="button"
-                        className={styles.secondaryButton}
-                        disabled={pending}
-                        onClick={() => moveWeek(weekStartOf(today))}
-                      >
-                        This week
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
                 <ul className={styles.scheduleLegend} aria-label="Legend">
                   <li>
                     <span className={`${styles.swatch} ${styles.swatchEvent}`} /> Event
@@ -980,9 +1100,15 @@ export function DashboardShell({
                 </ul>
                 <p className={styles.scheduleNote}>
                   <Info size={14} aria-hidden="true" />
-                  Calendar sync is not connected yet. Events and work blocks created in Epiphany
-                  appear here; nothing is changed in an external calendar.
+                  Task deadlines appear as due markers, not scheduled study sessions. External
+                  calendar connections and sync status are managed in Calendars.
                 </p>
+                {data.tasksTruncated ? (
+                  <p className={styles.limitNotice}>
+                    Only loaded task deadlines are shown. Use Task history to browse tasks beyond
+                    the initial 100-per-status limit.
+                  </p>
+                ) : null}
                 {schedule && schedule.weekStart === neededWeek ? (
                   <>
                     {schedule.truncated ? (
@@ -991,29 +1117,22 @@ export function DashboardShell({
                         Some items are not shown because this week has more than the display limit.
                       </p>
                     ) : null}
-                    {view === "today" ? (
-                      <TodayView
-                        schedule={schedule}
-                        tasks={data.tasks}
-                        timezone={data.timezone}
-                        today={today}
-                        now={now}
-                        pending={pending}
-                        onComplete={(id) => perform(() => finishDashboardTask(id))}
-                        onRemove={removeScheduleItem}
-                      />
-                    ) : (
-                      <WeekView
-                        schedule={schedule}
-                        tasks={data.tasks}
-                        timezone={data.timezone}
-                        today={today}
-                        now={now}
-                        pending={pending}
-                        onComplete={(id) => perform(() => finishDashboardTask(id))}
-                        onRemove={removeScheduleItem}
-                      />
-                    )}
+                    <CalendarView
+                      key={`${view}:${schedule.weekStart}`}
+                      initialSchedule={schedule}
+                      tasksTruncated={data.tasksTruncated}
+                      initialMode={view === "today" ? "day" : "week"}
+                      initialDate={
+                        view === "week" && weekStart !== weekStartOf(today) ? weekStart : today
+                      }
+                      tasks={data.tasks}
+                      timezone={data.timezone}
+                      today={today}
+                      now={now}
+                      pending={pending}
+                      onComplete={(id) => requestTaskCompletion([id])}
+                      onRemove={removeScheduleItem}
+                    />
                   </>
                 ) : (
                   <div className={styles.empty}>
@@ -1111,11 +1230,14 @@ export function DashboardShell({
                     : `Showing ${historyTasks.length} loaded records. Filters search loaded records; load more to search farther back.`}
                 </p>
                 <TaskList
+                  key={JSON.stringify(historyFilters)}
                   tasks={history}
                   categories={data.categories}
                   timezone={data.timezone}
+                  now={now}
                   pending={pending}
-                  onComplete={(id) => perform(() => finishDashboardTask(id))}
+                  onComplete={(id) => requestTaskCompletion([id])}
+                  onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
                   onSave={editTask}
                   emptySearch={historyFilters.search}
@@ -1143,6 +1265,7 @@ export function DashboardShell({
                   timezone={data.timezone}
                   pending={pending}
                   onSave={editNote}
+                  onDelete={requestNoteDeletion}
                 />
                 {data.notesTruncated ? (
                   <div className={styles.historyMore}>
@@ -1162,11 +1285,14 @@ export function DashboardShell({
                 <section>
                   <h2 className={styles.sectionHeading}>Tasks</h2>
                   <TaskList
+                    key={`${view}:${categoryFilter}:${deferredSearch}`}
                     tasks={tasks}
                     categories={data.categories}
                     timezone={data.timezone}
+                    now={now}
                     pending={pending}
-                    onComplete={(id) => perform(() => finishDashboardTask(id))}
+                    onComplete={(id) => requestTaskCompletion([id])}
+                    onCompleteMany={requestTaskCompletion}
                     onReopen={(id) => perform(() => reopenDashboardTask(id))}
                     onSave={editTask}
                     emptySearch={search}
@@ -1182,6 +1308,7 @@ export function DashboardShell({
                     timezone={data.timezone}
                     pending={pending}
                     onSave={editNote}
+                    onDelete={requestNoteDeletion}
                   />
                   {data.notesTruncated ? (
                     <div className={styles.historyMore}>
@@ -1197,13 +1324,61 @@ export function DashboardShell({
                   ) : null}
                 </section>
               </div>
+            ) : isAssistant ? (
+              <div className={styles.historyView}>
+                <h2 className={styles.sectionHeading}>Next up</h2>
+                <TaskList
+                  tasks={tasks.slice(0, 5)}
+                  categories={data.categories}
+                  timezone={data.timezone}
+                  now={now}
+                  pending={pending}
+                  onComplete={(id) => requestTaskCompletion([id])}
+                  onCompleteMany={requestTaskCompletion}
+                  onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                  onSave={editTask}
+                  emptySearch=""
+                  emptyLabel="No active tasks"
+                  clearSearch={() => setSearch("")}
+                />
+                <p className={styles.limitNotice}>
+                  Showing up to five upcoming tasks. Deadlines appear in Today and Week; study time
+                  must be scheduled separately.
+                </p>
+                <div className={styles.rowActions}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => {
+                      setSearch("");
+                      setTaskFilter("all");
+                      setView("tasks");
+                    }}
+                  >
+                    View all tasks
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => {
+                      setView("week");
+                      moveWeek(weekStartOf(today));
+                    }}
+                  >
+                    View this week
+                  </button>
+                </div>
+              </div>
             ) : (
               <TaskList
+                key={`${view}:${deferredSearch}:${taskFilter}`}
                 tasks={tasks}
                 categories={data.categories}
                 timezone={data.timezone}
+                now={now}
                 pending={pending}
-                onComplete={(id) => perform(() => finishDashboardTask(id))}
+                onComplete={(id) => requestTaskCompletion([id])}
+                onCompleteMany={requestTaskCompletion}
                 onReopen={(id) => perform(() => reopenDashboardTask(id))}
                 onSave={editTask}
                 emptySearch={search}
@@ -1245,8 +1420,10 @@ function TaskList({
   tasks,
   categories,
   timezone,
+  now,
   pending,
   onComplete,
+  onCompleteMany,
   onReopen,
   onSave,
   emptySearch,
@@ -1256,31 +1433,107 @@ function TaskList({
   tasks: DashboardTask[];
   categories: DashboardCategory[];
   timezone: string;
+  now: Date;
   pending: boolean;
   onComplete: (id: string) => void;
+  onCompleteMany: (ids: string[]) => void;
   onReopen: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
   emptySearch: string;
   emptyLabel: string;
   clearSearch: () => void;
 }) {
+  const [requestedPage, setRequestedPage] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selected = tasks.filter((task) => task.status === "open" && selectedIds.includes(task.id));
+  const { items, page, pages } = taskPage(tasks, requestedPage);
   if (!tasks.length)
     return <EmptyState search={emptySearch} label={emptyLabel} clear={clearSearch} />;
   return (
-    <ul className={styles.taskList}>
-      {tasks.map((task) => (
-        <TaskRow
-          key={task.id}
-          task={task}
-          categories={categories}
-          timezone={timezone}
-          pending={pending}
-          onComplete={onComplete}
-          onReopen={onReopen}
-          onSave={onSave}
-        />
-      ))}
-    </ul>
+    <>
+      {tasks.some((task) => task.status === "open") ? (
+        <div className={styles.selectionToolbar} role="group" aria-label="Task selection">
+          <span>
+            {selected.length} selected. Checkboxes select tasks; they do not mark them done.
+          </span>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={pending}
+            onClick={() =>
+              setSelectedIds([
+                ...new Set([
+                  ...selectedIds,
+                  ...items.filter((task) => task.status === "open").map((task) => task.id),
+                ]),
+              ])
+            }
+          >
+            Select this page
+          </button>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending || !selected.length}
+            onClick={() => setSelectedIds([])}
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            className={styles.primaryButton}
+            disabled={pending || !selected.length}
+            onClick={() => onCompleteMany(selected.map((task) => task.id))}
+          >
+            Mark selected done ({selected.length})
+          </button>
+        </div>
+      ) : null}
+      <ul className={styles.taskList}>
+        {items.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            categories={categories}
+            timezone={timezone}
+            now={now}
+            pending={pending}
+            onComplete={onComplete}
+            onReopen={onReopen}
+            onSave={onSave}
+            selected={selectedIds.includes(task.id)}
+            onSelect={(id, checked) =>
+              setSelectedIds((current) =>
+                checked ? [...new Set([...current, id])] : current.filter((value) => value !== id),
+              )
+            }
+          />
+        ))}
+      </ul>
+      {pages > 1 ? (
+        <nav className={styles.rowActions} aria-label="Task pages">
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={pending || page === 0}
+            onClick={() => setRequestedPage(page - 1)}
+          >
+            Previous
+          </button>
+          <span role="status">
+            Page {page + 1} of {pages}
+          </span>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={pending || page === pages - 1}
+            onClick={() => setRequestedPage(page + 1)}
+          >
+            Next
+          </button>
+        </nav>
+      ) : null}
+    </>
   );
 }
 
@@ -1288,23 +1541,29 @@ function TaskRow({
   task,
   categories,
   timezone,
+  now,
   pending,
   onComplete,
   onReopen,
   onSave,
+  selected,
+  onSelect,
 }: {
   task: DashboardTask;
   categories: DashboardCategory[];
   timezone: string;
+  now: Date;
   pending: boolean;
   onComplete: (id: string) => void;
   onReopen: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  selected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const countdown =
     task.status === "open" && task.dueAt
-      ? countdownLabel(task.dueAt, timezone, task.dueDateOnly)
+      ? countdownLabel(task.dueAt, timezone, task.dueDateOnly, now)
       : null;
   const overdue = countdown?.startsWith("Overdue") ?? false;
   if (editing)
@@ -1344,7 +1603,12 @@ function TaskRow({
           <CategorySelect categories={categories} name="categoryId" value={task.categoryId} />
           <label className={styles.inlineCheck}>
             <input name="dueDateOnly" type="checkbox" defaultChecked={task.dueDateOnly} />
-            Date only
+            <span>
+              No specific due time
+              <small className={styles.checkHelp}>
+                Use the selected date only. Leave unchecked for an exact deadline.
+              </small>
+            </span>
           </label>
           <label className={styles.fullWidth}>
             Details
@@ -1373,8 +1637,9 @@ function TaskRow({
           className={styles.taskCheckbox}
           type="checkbox"
           disabled={pending}
-          aria-label={`Complete ${task.title}`}
-          onChange={() => onComplete(task.id)}
+          aria-label={`Select ${task.title}`}
+          checked={selected}
+          onChange={(event) => onSelect(task.id, event.target.checked)}
         />
       ) : (
         <span className={styles.completedMark} aria-label="Completed">
@@ -1402,11 +1667,20 @@ function TaskRow({
             </span>
           )}
           {countdown ? <span className={styles.countdown}>{countdown}</span> : null}
+          {task.status === "open" && task.reviewNote ? (
+            <span className={styles.reviewTag}>
+              <TriangleAlert size={13} aria-hidden="true" />
+              Needs review: {task.reviewNote}
+            </span>
+          ) : null}
           {task.estimatedMinutes ? (
             <span>
               <Clock size={13} aria-hidden="true" />
               {task.estimatedMinutes} min
             </span>
+          ) : null}
+          {!task.dueAt && task.estimatedMinutes === null ? (
+            <span className={styles.noteTag}>Just task</span>
           ) : null}
           <span>
             <Folder size={13} aria-hidden="true" />
@@ -1415,6 +1689,16 @@ function TaskRow({
         </div>
       </div>
       <div className={styles.rowActions}>
+        {task.status === "open" ? (
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => onComplete(task.id)}
+          >
+            <Check size={14} aria-hidden="true" /> Mark done
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.textButton}
@@ -1446,12 +1730,14 @@ function NoteList({
   timezone,
   pending,
   onSave,
+  onDelete,
 }: {
   notes: DashboardNote[];
   categories: DashboardCategory[];
   timezone: string;
   pending: boolean;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  onDelete: (id: string) => void;
 }) {
   if (!notes.length) return <EmptyState search="" label="No saved notes" clear={() => {}} />;
   return (
@@ -1464,6 +1750,7 @@ function NoteList({
           timezone={timezone}
           pending={pending}
           onSave={onSave}
+          onDelete={onDelete}
         />
       ))}
     </ul>
@@ -1476,12 +1763,14 @@ function NoteCard({
   timezone,
   pending,
   onSave,
+  onDelete,
 }: {
   note: DashboardNote;
   categories: DashboardCategory[];
   timezone: string;
   pending: boolean;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
+  onDelete: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   if (editing)
@@ -1511,9 +1800,16 @@ function NoteCard({
               Idea
             </label>
           </fieldset>
-          <label>
+          <label className={styles.fullWidth}>
             Thought
-            <textarea name="body" required rows={5} maxLength={50000} defaultValue={note.body} />
+            <textarea
+              className={styles.noteEditorBody}
+              name="body"
+              required
+              rows={12}
+              maxLength={50000}
+              defaultValue={note.body}
+            />
           </label>
           <div className={styles.rowActions}>
             <button className={styles.primaryButton} disabled={pending} type="submit">
@@ -1545,20 +1841,31 @@ function NoteCard({
         <time dateTime={note.createdAt}>{formatDate(note.createdAt, timezone)}</time>
       </div>
       {note.title ? <h2>{note.title}</h2> : null}
-      <p>{note.body}</p>
+      {note.kind === "idea" ? <IdeaBody body={note.body} /> : <p>{note.body}</p>}
       <div className={styles.noteFooter}>
         <span>
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}
         </span>
-        <button
-          type="button"
-          className={styles.textButton}
-          disabled={pending}
-          onClick={() => setEditing(true)}
-        >
-          <Pencil size={13} aria-hidden="true" />
-          Edit
-        </button>
+        <div className={styles.rowActions}>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => onDelete(note.id)}
+            aria-label={`Delete ${note.title ?? (note.kind === "idea" ? "idea" : "note")}`}
+          >
+            <Trash2 size={13} aria-hidden="true" /> Delete
+          </button>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={pending}
+            onClick={() => setEditing(true)}
+          >
+            <Pencil size={13} aria-hidden="true" />
+            Edit
+          </button>
+        </div>
       </div>
     </li>
   );

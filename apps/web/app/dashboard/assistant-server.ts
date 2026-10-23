@@ -59,6 +59,7 @@ export async function askAssistant(
     deps.clock,
   );
   const assistant = createAssistant({
+    appUrl: deps.config.appUrl,
     services: createServices(deps.db, { clock: deps.clock }),
     provider: createOpenAiProvider({
       apiKey: config.apiKey,
@@ -73,7 +74,9 @@ export async function askAssistant(
     clock: deps.clock,
   });
 
-  const result = await assistant.handle(principal, message, state);
+  const result = await assistant.handle(principal, message, state, {
+    sourceRef: "dashboard:ask-epi",
+  });
   const status = await budget.check();
   return {
     ...result,

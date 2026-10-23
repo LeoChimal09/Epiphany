@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ordinalIndex, resolveReference } from "./matching";
+import { findDuplicate, ordinalIndex, resolveReference, similarTitles } from "./matching";
 
 const items = [
   { id: "1", title: "Chemistry lab report" },
@@ -81,5 +81,46 @@ describe("reference resolution", () => {
     expect(ordinalIndex("number 4")).toBe(4);
     expect(ordinalIndex("the fifth one")).toBe(5);
     expect(ordinalIndex("chem lab")).toBeNull();
+  });
+});
+
+describe("duplicate detection", () => {
+  it("does not drop same-title assignments with different course details", () => {
+    const existing = [{ title: "Discussion 1", due: "2026-10-22", details: "MATH-225-001" }];
+    expect(
+      findDuplicate(
+        { title: "Discussion 1", due: "2026-10-22", details: "HIST-101-001" },
+        existing,
+      ),
+    ).toBeUndefined();
+    expect(
+      findDuplicate(
+        { title: "Discussion 1", due: "2026-10-22", details: " math-225-001 " },
+        existing,
+      ),
+    ).toBe(existing[0]);
+  });
+
+  it("treats abbreviations, plurals, and word order noise as the same title", () => {
+    expect(similarTitles("Chem lab report", "Chemistry lab report")).toBe(true);
+    expect(similarTitles("read chapter 4", "Read Chapter 4!")).toBe(true);
+    expect(similarTitles("history essays", "the history essay")).toBe(true);
+  });
+
+  it("keeps genuinely different work apart", () => {
+    expect(similarTitles("Essay", "Essay draft")).toBe(false);
+    expect(similarTitles("Read chapter 4", "Read chapter 5")).toBe(false);
+    expect(similarTitles("Math homework", "History homework")).toBe(false);
+    expect(similarTitles("", "Essay")).toBe(false);
+  });
+
+  it("matches on deadline unless one side has none, and never across different deadlines", () => {
+    const existing = [{ title: "Lab report", due: "2026-10-20" }];
+    expect(findDuplicate({ title: "lab report", due: "2026-10-20" }, existing)).toBe(existing[0]);
+    expect(findDuplicate({ title: "lab report", due: null }, existing)).toBe(existing[0]);
+    expect(findDuplicate({ title: "lab report", due: "2026-10-27" }, existing)).toBeUndefined();
+    expect(
+      findDuplicate({ title: "lab report", due: null }, [{ title: "Lab report", due: null }]),
+    ).toBeDefined();
   });
 });

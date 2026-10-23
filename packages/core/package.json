@@ -10,6 +10,13 @@
     "./services": "./src/services/index.ts",
     "./planning": "./src/planning/index.ts",
     "./assistant": "./src/assistant/index.ts",
+    "./overview": "./src/overview/index.ts",
+    "./reminders": "./src/reminders/index.ts",
+    "./voice": "./src/voice/index.ts",
+    "./ops": "./src/ops/index.ts",
+    "./insights": "./src/insights/index.ts",
+    "./calendar": "./src/calendar/index.ts",
+    "./calendar/testing": "./src/calendar/fake-google.ts",
     "./auth": "./src/auth/sessions.ts",
     "./testing": "./src/db/test-support.ts"
   },

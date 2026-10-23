@@ -97,6 +97,36 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
       expect(JSON.stringify(entry)).not.toContain("Five pages");
     });
 
+    it("keeps a review flag until a deadline is set, can set or clear it directly, and logs only the field name", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Read chapter 7",
+        reviewNote: "no due date given",
+      });
+      expect((await taskRow(task.id)).reviewNote).toBe("no due date given");
+
+      const retitled = await services.tasks.update(owner, task.id, {
+        title: "Read chapter 7 closely",
+      });
+      expect(retitled.task.reviewNote).toBe("no due date given");
+
+      const dated = await services.tasks.update(owner, task.id, {
+        dueAt: "2026-10-20T05:00:00.000Z",
+      });
+      expect(dated.task.reviewNote).toBeNull();
+      const logged = (await history(task.id)).find(
+        (entry) =>
+          entry.action === "task.update" &&
+          (entry.after as { fields?: string[] }).fields?.includes("dueAt"),
+      );
+      expect((logged?.after as { fields: string[] }).fields).toContain("reviewNote");
+      expect(JSON.stringify(logged?.after)).not.toContain("no due date given");
+
+      const flagged = await services.tasks.update(owner, task.id, { reviewNote: "check the date" });
+      expect(flagged.task.reviewNote).toBe("check the date");
+      const cleared = await services.tasks.update(owner, task.id, { reviewNote: "" });
+      expect(cleared.task.reviewNote).toBeNull();
+    });
+
     it("does nothing, and logs nothing, when nothing actually changes", async () => {
       const task = await services.tasks.create(owner, { title: "Same", details: "same" });
       const before = (await history(task.id)).length;

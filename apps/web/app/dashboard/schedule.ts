@@ -6,6 +6,7 @@ import {
   localWallToUtc,
   weekdayOf,
   type DateKey,
+  type PlanningPreferences,
 } from "@epiphany/core/planning";
 import type { DashboardTask } from "./model";
 
@@ -34,6 +35,8 @@ export interface ScheduleData {
   blocks: ScheduleBlock[];
   // True when the per-request record limit was reached, so some items may be missing.
   truncated: boolean;
+  planningPreferences?: PlanningPreferences;
+  syncWarning?: string | null;
 }
 
 export interface TimelineItem {
@@ -80,6 +83,23 @@ export function weekStartOf(date: DateKey): DateKey {
 
 export function weekDays(weekStart: DateKey): DateKey[] {
   return Array.from({ length: 7 }, (_, offset) => addDays(weekStart, offset));
+}
+
+export function monthDays(date: DateKey): DateKey[] {
+  const first = `${date.slice(0, 7)}-01`;
+  const start = weekStartOf(first);
+  const next = shiftMonth(first, 1);
+  const days: DateKey[] = [];
+  for (let day = start; day < next || days.length % 7 !== 0; day = addDays(day, 1)) {
+    days.push(day);
+  }
+  return days;
+}
+
+export function shiftMonth(date: DateKey, offset: number): DateKey {
+  const value = new Date(`${date.slice(0, 7)}-01T12:00:00Z`);
+  value.setUTCMonth(value.getUTCMonth() + offset);
+  return value.toISOString().slice(0, 10);
 }
 
 export function todayKey(timezone: string, now = new Date()): DateKey {

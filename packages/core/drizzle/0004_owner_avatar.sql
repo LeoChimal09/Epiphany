@@ -1,0 +1,1 @@
+ALTER TABLE `owners` ADD `avatar_hash` varchar(64);

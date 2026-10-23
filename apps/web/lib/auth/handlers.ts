@@ -77,7 +77,8 @@ export async function finishLogin(request: Request, deps: AuthDeps): Promise<Res
 
     const ownerId = await authenticateDiscordUser(db, signIn.userId, {
       configuredDiscordUserId: config.ownerDiscordUserId,
-      displayName: "Owner",
+      displayName: signIn.displayName,
+      avatarHash: signIn.avatarHash,
       timezone: config.timezone,
     });
     if (!ownerId) return fail("not_authorized");

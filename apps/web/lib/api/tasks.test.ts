@@ -269,6 +269,7 @@ describe.skipIf(!dbTestsEnabled)("tasks API", () => {
   it("answers 500 without internal details when something unexpected fails", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const cookie = await signedIn();
+    await h.handle.pool.query("DROP TABLE calendar_event_refs");
     await h.handle.pool.query("DROP TABLE work_blocks");
     await h.handle.pool.query("DROP TABLE tasks").catch(() => undefined);
     const response = await listTasks(get(cookie), h.deps);

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyWorkspacePlan,
   planEpiphanyWorkspace,
   privateWorkspacePermissions,
   WORKSPACE_TEXT_CHANNELS,
+  WorkspaceCreateError,
+  workspaceAudience,
   type ExistingWorkspaceChannel,
+  type WorkspaceChannelSpec,
+  type WorkspaceGuildPort,
 } from "./workspace";
 
 describe("Epiphany Discord workspace plan", () => {
@@ -89,5 +94,127 @@ describe("private workspace permission policy", () => {
         deny: [],
       },
     ]);
+  });
+});
+
+describe("applying the workspace plan", () => {
+  function fakeGuild(
+    initial: ExistingWorkspaceChannel[] = [],
+    failAt?: { name: string; error: Error },
+  ) {
+    const channels = [...initial];
+    const specs: WorkspaceChannelSpec[] = [];
+    let next = 1;
+    const guild: WorkspaceGuildPort = {
+      name: "Test Server",
+      async listChannels() {
+        return channels.map((channel) => ({ ...channel }));
+      },
+      async createChannel(spec) {
+        await Promise.resolve();
+        if (failAt && spec.name === failAt.name) throw failAt.error;
+        specs.push(spec);
+        const id = `new-${next++}`;
+        channels.push({ id, name: spec.name, kind: spec.kind, parentId: spec.parentId });
+        return { id };
+      },
+    };
+    return { guild, channels, specs };
+  }
+
+  it("creates the category first, then every channel inside it, all private", async () => {
+    const { guild, specs, channels } = fakeGuild();
+    const result = await applyWorkspacePlan(guild);
+    expect(result).toEqual({
+      created: [...WORKSPACE_TEXT_CHANNELS],
+      categoryCreated: true,
+      problem: null,
+    });
+    expect(specs[0]).toMatchObject({ kind: "category", name: "epiphany", parentId: null });
+    const categoryId = channels.find((channel) => channel.kind === "category")!.id;
+    expect(specs.slice(1).every((spec) => spec.parentId === categoryId)).toBe(true);
+    for (const spec of specs) {
+      expect(spec.overwrites).toEqual(privateWorkspacePermissions());
+      expect(spec.overwrites.find((entry) => entry.subject === "everyone")?.deny).toContain(
+        "viewChannel",
+      );
+    }
+  });
+
+  it("creates nothing the second time, even when two requests arrive together", async () => {
+    const { guild, specs } = fakeGuild();
+    const [first, second] = await Promise.all([
+      applyWorkspacePlan(guild),
+      applyWorkspacePlan(guild),
+    ]);
+    expect(first).toBe(second);
+    expect(specs).toHaveLength(1 + WORKSPACE_TEXT_CHANNELS.length);
+
+    const again = await applyWorkspacePlan(guild);
+    expect(again).toEqual({ created: [], categoryCreated: false, problem: null });
+    expect(specs).toHaveLength(1 + WORKSPACE_TEXT_CHANNELS.length);
+  });
+
+  it("repairs a deleted channel without touching the rest", async () => {
+    const { guild, specs } = fakeGuild([
+      { id: "cat", name: "epiphany", kind: "category", parentId: null },
+      ...WORKSPACE_TEXT_CHANNELS.filter((name) => name !== "today").map(
+        (name, index): ExistingWorkspaceChannel => ({
+          id: `c${index}`,
+          name,
+          kind: "text",
+          parentId: "cat",
+        }),
+      ),
+    ]);
+    const result = await applyWorkspacePlan(guild);
+    expect(result).toEqual({ created: ["today"], categoryCreated: false, problem: null });
+    expect(specs).toHaveLength(1);
+    expect(specs[0]).toMatchObject({ name: "today", parentId: "cat" });
+  });
+
+  it("stops at a permission failure, reports what it made, and continues on the next run", async () => {
+    const denied = fakeGuild([], {
+      name: "schedule",
+      error: new WorkspaceCreateError("missing_permissions"),
+    });
+    const result = await applyWorkspacePlan(denied.guild);
+    expect(result).toEqual({
+      created: ["assistant", "today"],
+      categoryCreated: true,
+      problem: "missing_permissions",
+    });
+
+    const resumed = fakeGuild(denied.channels);
+    const rest = await applyWorkspacePlan(resumed.guild);
+    expect(rest.problem).toBeNull();
+    expect(rest.categoryCreated).toBe(false);
+    expect(rest.created).toEqual(WORKSPACE_TEXT_CHANNELS.slice(2));
+  });
+
+  it("reports an unexpected failure as a generic problem without leaking its message", async () => {
+    const { guild } = fakeGuild([], { name: "epiphany", error: new Error("secret detail") });
+    const result = await applyWorkspacePlan(guild);
+    expect(result).toEqual({ created: [], categoryCreated: false, problem: "failed" });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+});
+
+describe("which conversations count as private", () => {
+  it("accepts DMs and the unseen #assistant channel in the Epiphany category only", () => {
+    expect(workspaceAudience({ isDm: true })).toBe("private");
+    const ok = { isDm: false, name: "assistant", parentName: "epiphany", everyoneCanView: false };
+    expect(workspaceAudience(ok)).toBe("private");
+    expect(workspaceAudience({ ...ok, name: "Assistant", parentName: "Epiphany" })).toBe("private");
+  });
+
+  it("treats a visible, misplaced, or unknown channel as shared", () => {
+    const ok = { isDm: false, name: "assistant", parentName: "epiphany", everyoneCanView: false };
+    expect(workspaceAudience({ ...ok, everyoneCanView: true })).toBe("shared");
+    expect(workspaceAudience({ ...ok, everyoneCanView: undefined })).toBe("shared");
+    expect(workspaceAudience({ ...ok, parentName: "general" })).toBe("shared");
+    expect(workspaceAudience({ ...ok, parentName: null })).toBe("shared");
+    expect(workspaceAudience({ ...ok, name: "today" })).toBe("shared");
+    expect(workspaceAudience({ isDm: false, name: "general" })).toBe("shared");
   });
 });

@@ -4,6 +4,8 @@ export interface DashboardTask {
   title: string;
   details: string | null;
   sourceText: string | null;
+  // What still needs the owner's review (for example a missing due date), or null.
+  reviewNote: string | null;
   status: "open" | "completed";
   dueAt: string | null;
   dueDateOnly: boolean;
@@ -31,15 +33,7 @@ export interface DashboardCategory {
 }
 
 export type DashboardView =
-  | "assistant"
-  | "today"
-  | "week"
-  | "tasks"
-  | "priorities"
-  | "completed"
-  | "notes"
-  | "category"
-  | "history";
+  "assistant" | "today" | "week" | "tasks" | "completed" | "notes" | "category" | "history";
 
 export interface HistoryFilters {
   status: "all" | "open" | "completed";
@@ -48,6 +42,8 @@ export interface HistoryFilters {
   from: string;
   through: string;
 }
+
+export type TaskFilter = "all" | "planned" | "plain";
 
 export interface DashboardData {
   tasks: DashboardTask[];
@@ -64,12 +60,16 @@ export function visibleTasks(
   view: DashboardView,
   search: string,
   categoryId?: string | null,
+  filter: TaskFilter = "all",
 ): DashboardTask[] {
   if (view === "notes" || view === "history" || view === "today" || view === "week") return [];
   const query = search.trim().toLocaleLowerCase();
   return tasks
     .filter((task) => (view === "completed" ? task.status === "completed" : task.status === "open"))
-    .filter((task) => view !== "priorities" || task.dueAt !== null)
+    .filter((task) => {
+      const hasPlanning = task.dueAt !== null || task.estimatedMinutes !== null;
+      return filter === "all" || (filter === "planned" ? hasPlanning : !hasPlanning);
+    })
     .filter((task) => !categoryId || task.categoryId === categoryId)
     .filter((task) =>
       `${task.title} ${task.details ?? ""} ${task.sourceText ?? ""}`
@@ -84,6 +84,13 @@ export function visibleTasks(
     });
 }
 
+export function taskPage(tasks: DashboardTask[], requestedPage: number) {
+  const pageSize = 20;
+  const pages = Math.max(1, Math.ceil(tasks.length / pageSize));
+  const page = Math.max(0, Math.min(Math.trunc(requestedPage), pages - 1));
+  return { items: tasks.slice(page * pageSize, (page + 1) * pageSize), page, pages };
+}
+
 export function countdownLabel(
   value: string | null,
   timezone: string,
@@ -93,6 +100,12 @@ export function countdownLabel(
   if (!value) return "No deadline";
   const dueDate = new Date(value);
   if (Number.isNaN(dueDate.getTime())) return "Date unavailable";
+  if (!dateOnly) {
+    const difference = dueDate.getTime() - now.getTime();
+    if (difference === 0) return "Due now";
+    const duration = deadlineDuration(Math.abs(difference), difference > 0);
+    return difference > 0 ? `Due in ${duration}` : `Overdue ${duration}`;
+  }
   const todayKey = dateKeyInTimezone(now.toISOString(), timezone);
   const dueKey = dateOnly ? dueDate.toISOString().slice(0, 10) : dateKeyInTimezone(value, timezone);
   if (!todayKey || !dueKey) return "Date unavailable";
@@ -104,6 +117,60 @@ export function countdownLabel(
   if (dayDelta === 0) return "Due today";
   if (dayDelta === 1) return "Due tomorrow";
   return `Due in ${dayDelta} days`;
+}
+
+function deadlineDuration(milliseconds: number, roundUp: boolean): string {
+  if (milliseconds < 60_000) return "less than 1 minute";
+  let minutes = roundUp ? Math.ceil(milliseconds / 60_000) : Math.floor(milliseconds / 60_000);
+  const days = Math.floor(minutes / 1440);
+  minutes %= 1440;
+  const hours = Math.floor(minutes / 60);
+  minutes %= 60;
+  return [
+    days ? `${days} ${days === 1 ? "day" : "days"}` : "",
+    hours ? `${hours} ${hours === 1 ? "hour" : "hours"}` : "",
+    minutes ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export interface DeadlineNotification {
+  task: DashboardTask;
+  kind: "due-soon" | "due-now" | "overdue" | "due-today";
+  label: string;
+}
+
+// A live projection of authorized tasks, not another reminder queue. Nothing here completes work.
+export function deadlineNotifications(
+  tasks: DashboardTask[],
+  timezone: string,
+  now: Date,
+): DeadlineNotification[] {
+  const notifications: DeadlineNotification[] = [];
+  for (const task of tasks) {
+    if (task.status !== "open" || task.archivedAt || !task.dueAt) continue;
+    const due = new Date(task.dueAt).getTime();
+    if (!Number.isFinite(due)) continue;
+    const label = countdownLabel(task.dueAt, timezone, task.dueDateOnly, now);
+    let kind: DeadlineNotification["kind"];
+    if (task.dueDateOnly) {
+      if (label.startsWith("Overdue")) kind = "overdue";
+      else if (label === "Due today") kind = "due-today";
+      else continue;
+    } else {
+      const remaining = due - now.getTime();
+      if (remaining > 3_600_000) continue;
+      kind = remaining < 0 ? "overdue" : remaining === 0 ? "due-now" : "due-soon";
+    }
+    notifications.push({ task, kind, label });
+  }
+  const urgency = { "due-now": 0, "due-soon": 1, overdue: 2, "due-today": 3 };
+  return notifications.toSorted((first, second) => {
+    const byUrgency = urgency[first.kind] - urgency[second.kind];
+    const byDeadline = Date.parse(first.task.dueAt!) - Date.parse(second.task.dueAt!);
+    return byUrgency || byDeadline || first.task.id.localeCompare(second.task.id);
+  });
 }
 
 export function visibleHistoryTasks(

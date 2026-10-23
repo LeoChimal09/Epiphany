@@ -219,6 +219,45 @@ export function loadAuthConfig(env: Env): AuthConfig {
   };
 }
 
+export interface GoogleConfig {
+  clientId: string;
+  clientSecret: string;
+  // 32 random bytes; encrypts calendar OAuth tokens at rest (AES-256-GCM).
+  tokenKey: Buffer;
+}
+
+const GOOGLE_VARIABLES = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"];
+
+// True when any Google Calendar setting is present, so a half-finished setup can be reported while a
+// completely unset one stays quiet (the feature is optional).
+export function googleCalendarRequested(env: Env): boolean {
+  return GOOGLE_VARIABLES.some((name) => (env[name]?.trim() ?? "") !== "");
+}
+
+const googleSchema = z.object({
+  GOOGLE_CLIENT_ID: required(
+    "the Google OAuth client ID (Google Cloud console > APIs & Services > Credentials)",
+  ),
+  GOOGLE_CLIENT_SECRET: required("the Google OAuth client secret (same OAuth client)"),
+  TOKEN_ENCRYPTION_KEY: required(
+    "32 random bytes as base64; generate one with: openssl rand -base64 32",
+  ).regex(
+    /^[A-Za-z0-9+/]{43}=$/,
+    "must be 32 random bytes encoded as base64, 44 characters (value hidden)",
+  ),
+});
+
+// Google Calendar settings. Optional: callers treat a ConfigError as "calendar not set up" and keep
+// the rest of the app running. Messages never include the values.
+export function loadGoogleConfig(env: Env): GoogleConfig {
+  const parsed = parse("Google Calendar", googleSchema, env);
+  return {
+    clientId: parsed.GOOGLE_CLIENT_ID,
+    clientSecret: parsed.GOOGLE_CLIENT_SECRET,
+    tokenKey: Buffer.from(parsed.TOKEN_ENCRYPTION_KEY, "base64"),
+  };
+}
+
 export function loadWorkerConfig(env: Env): WorkerConfig {
   const parsed = parse("worker", workerSchema, env);
   return {
@@ -280,7 +319,7 @@ const aiSchema = z.object({
     .max(100, "must be a number between 1 and 100")
     .default(80),
   AI_MAX_INPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(8000),
-  AI_MAX_OUTPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(1000),
+  AI_MAX_OUTPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(4000),
   APP_TIMEZONE: sharedSchema.shape.APP_TIMEZONE,
 });
 

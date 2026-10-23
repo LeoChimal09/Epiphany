@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Bot, CircleAlert, CircleCheck, SendHorizontal, Sparkles, UserRound } from "lucide-react";
 import type { AssistantReply } from "@epiphany/core/assistant";
+import { PushToTalk, StopSpeaking, useSpokenReplies } from "./voice-controls";
 import styles from "./workspace.module.css";
 
 export interface ChatMessage {
@@ -21,7 +22,7 @@ const SUGGESTIONS = [
   "Add a task: read chapter 4 by Friday",
   "Idea: an app that tracks workouts against free time",
 ];
-const MAX_LENGTH = 2000;
+const MAX_LENGTH = 8000;
 
 function SetupHelp({ setup }: { setup: Exclude<AssistantSetup, "ready"> }) {
   return (
@@ -46,13 +47,14 @@ function SetupHelp({ setup }: { setup: Exclude<AssistantSetup, "ready"> }) {
 function Bubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   const failed = ["failed", "unavailable", "denied", "not_found"].includes(message.outcome ?? "");
+  const uncertain = message.outcome === "uncertain";
   return (
     <li className={`${styles.bubbleRow} ${isUser ? styles.bubbleUser : styles.bubbleEpi}`}>
       <span className={styles.bubbleAvatar} aria-hidden="true">
         {isUser ? <UserRound size={15} /> : <Bot size={15} />}
       </span>
       <div
-        className={`${styles.bubble} ${failed ? styles.bubbleFailed : ""} ${message.changed ? styles.bubbleChanged : ""}`}
+        className={`${styles.bubble} ${failed || uncertain ? styles.bubbleFailed : ""} ${message.changed ? styles.bubbleChanged : ""}`}
       >
         <p>{message.text}</p>
         {message.changed ? (
@@ -63,6 +65,11 @@ function Bubble({ message }: { message: ChatMessage }) {
         {failed && !message.changed ? (
           <span className={`${styles.bubbleTag} ${styles.bubbleTagWarn}`}>
             <CircleAlert size={12} aria-hidden="true" /> Nothing was changed
+          </span>
+        ) : null}
+        {uncertain ? (
+          <span className={`${styles.bubbleTag} ${styles.bubbleTagWarn}`}>
+            <CircleAlert size={12} aria-hidden="true" /> Check saved items before retrying
           </span>
         ) : null}
       </div>
@@ -76,6 +83,7 @@ export function AssistantChat({
   asking,
   budgetNote,
   timezone,
+  voice,
   onSend,
 }: {
   setup: AssistantSetup;
@@ -83,9 +91,11 @@ export function AssistantChat({
   asking: boolean;
   budgetNote: string | null;
   timezone: string;
+  voice: { listen: boolean; speak: boolean };
   onSend: (text: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const ready = setup === "ready";
@@ -93,17 +103,24 @@ export function AssistantChat({
   const awaitingConfirmation =
     !asking && last?.role === "epi" && last.outcome === "confirmation_needed";
 
+  const lastEpi = messages.findLast((message) => message.role === "epi");
+  const speech = useSpokenReplies(voice.speak, lastEpi?.text ?? null, lastEpi?.id ?? 0);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [messages.length, asking]);
 
   function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || asking || !ready) return;
+    if (!trimmed || asking || !ready || trimmed.length > MAX_LENGTH) return;
+    speech.stop();
+    setVoiceNotice(null);
     onSend(trimmed);
     setDraft("");
     inputRef.current?.focus();
   }
+
+  const tooLong = draft.trim().length > MAX_LENGTH;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -170,10 +187,10 @@ export function AssistantChat({
       {awaitingConfirmation ? (
         <div className={styles.quickReplies} role="group" aria-label="Confirm">
           <button type="button" className={styles.dangerButton} onClick={() => send("yes")}>
-            Yes, do it
+            Yes, confirm
           </button>
           <button type="button" className={styles.secondaryButton} onClick={() => send("no")}>
-            No, keep it
+            No, cancel
           </button>
         </div>
       ) : null}
@@ -186,7 +203,6 @@ export function AssistantChat({
           ref={inputRef}
           value={draft}
           rows={2}
-          maxLength={MAX_LENGTH}
           disabled={!ready}
           placeholder={
             ready ? "Write anything: a task, a note, or a question" : "Epi is not set up yet"
@@ -194,15 +210,39 @@ export function AssistantChat({
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={keyDown}
         />
+        {voice.listen ? (
+          <PushToTalk
+            disabled={!ready || asking}
+            onStart={speech.stop}
+            onHeard={(text) => send(text)}
+            onNotice={(text, heard) => {
+              setVoiceNotice(text);
+              if (heard) setDraft(heard);
+            }}
+          />
+        ) : null}
         <button
           type="submit"
           className={styles.sendButton}
-          disabled={!ready || asking || !draft.trim()}
+          disabled={!ready || asking || !draft.trim() || tooLong}
           aria-label="Send message"
         >
           <SendHorizontal size={18} aria-hidden="true" />
         </button>
-        <p className={styles.chatHint}>Enter to send, Shift+Enter for a new line.</p>
+        {voiceNotice ? (
+          <p className={`${styles.chatHint} ${styles.chatHintWarn}`} role="status">
+            {voiceNotice}
+          </p>
+        ) : null}
+        {speech.speaking ? <StopSpeaking onStop={speech.stop} /> : null}
+        {tooLong ? (
+          <p className={`${styles.chatHint} ${styles.chatHintWarn}`} role="alert">
+            That&apos;s {draft.trim().length - MAX_LENGTH} characters too long. Epi reads up to{" "}
+            {MAX_LENGTH} at a time, so please send it in smaller pieces.
+          </p>
+        ) : (
+          <p className={styles.chatHint}>Enter to send, Shift+Enter for a new line.</p>
+        )}
       </form>
     </section>
   );

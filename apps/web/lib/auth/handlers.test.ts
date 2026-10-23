@@ -50,6 +50,16 @@ describe.skipIf(!dbTestsEnabled)("Discord sign-in flow", () => {
     expect(cookie).toBe("epiphany_oauth=state-1.verifier-1");
   });
 
+  it("stores the Discord name and avatar for the dashboard on sign-in", async () => {
+    h.discord.profile = { displayName: "Leo", avatarHash: "d".repeat(32) };
+    const { cookie } = await begin();
+    const response = await finishLogin(callback("code=abc&state=state-1", cookie), h.deps);
+    expect(response.status).toBe(303);
+    expect(
+      await rows("SELECT display_name, avatar_hash FROM owners WHERE id = ?", [h.ownerId]),
+    ).toEqual([{ display_name: "Leo", avatar_hash: "d".repeat(32) }]);
+  });
+
   it("signs the owner in: creates a hashed session and a hardened session cookie", async () => {
     const { cookie } = await begin();
     const response = await finishLogin(callback("code=abc&state=state-1", cookie), h.deps);

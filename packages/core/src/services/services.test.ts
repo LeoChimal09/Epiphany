@@ -8,6 +8,11 @@ import { runMigrations } from "../db/migrate";
 import { actionHistory, confirmations, notes, tasks, workBlocks } from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
 import {
+  computeAvailability,
+  parsePlanningPreferences,
+  validatePlanningSetting,
+} from "../planning";
+import {
   AccessDeniedError,
   ConfirmationError,
   CONFIRMATION_TTL_MS,
@@ -89,6 +94,7 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
         () => services.notes.create(forged, { body: "x" }),
         () => services.notes.list(forged),
         () => services.history.list(forged),
+        () => services.owner.profile(forged),
         () =>
           services.workBlocks.create(forged, {
             startsAt: now,
@@ -160,7 +166,141 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
     });
   });
 
+  describe("owner profile", () => {
+    it("returns the signed-in owner's name and a Discord avatar URL", async () => {
+      expect(await services.owner.profile(owner)).toEqual({
+        displayName: "Owner",
+        avatarUrl: null,
+      });
+      await handle.pool.query("UPDATE owners SET display_name = ?, avatar_hash = ? WHERE id = ?", [
+        "Leo",
+        "c".repeat(32),
+        ownerId,
+      ]);
+      expect(await services.owner.profile(owner)).toEqual({
+        displayName: "Leo",
+        avatarUrl: `https://cdn.discordapp.com/avatars/${OWNER_DISCORD}/${"c".repeat(32)}.png?size=128`,
+      });
+    });
+
+    it("never builds a URL from a malformed stored hash, and only reads the caller's own row", async () => {
+      await handle.pool.query("UPDATE owners SET avatar_hash = ? WHERE id = ?", [
+        "../../evil",
+        ownerId,
+      ]);
+      expect((await services.owner.profile(owner)).avatarUrl).toBeNull();
+      expect((await services.owner.profile(strangerOwner)).displayName).toBe("Stranger");
+    });
+
+    it("is not available to a shared audience", async () => {
+      const shared = await principalFor(ownerId, { audience: "shared" });
+      await expect(services.owner.profile(shared)).rejects.toBeInstanceOf(AccessDeniedError);
+    });
+  });
+
+  describe("overview bindings", () => {
+    const GUILD = "300000000000000001";
+    const binding = (over: Record<string, string> = {}) => ({
+      guildId: GUILD,
+      viewKey: "today",
+      channelId: "400000000000000001",
+      messageId: "500000000000000001",
+      contentHash: "a".repeat(64),
+      ...over,
+    });
+
+    it("remembers which message shows a view, and replaces it instead of adding a second row", async () => {
+      expect(await services.overviews.get(owner, GUILD, "today")).toBeNull();
+      await services.overviews.save(owner, binding());
+      await services.overviews.save(
+        owner,
+        binding({ messageId: "500000000000000002", contentHash: "b".repeat(64) }),
+      );
+      expect(await services.overviews.get(owner, GUILD, "today")).toEqual(
+        binding({ messageId: "500000000000000002", contentHash: "b".repeat(64) }),
+      );
+      const rows = (await handle.pool.query("SELECT 1 FROM discord_overviews"))[0] as unknown[];
+      expect(rows).toHaveLength(1);
+    });
+
+    it("keeps views and servers apart, and one owner's bindings from another", async () => {
+      await services.overviews.save(owner, binding());
+      await services.overviews.save(owner, binding({ viewKey: "schedule" }));
+      expect(await services.overviews.get(owner, GUILD, "schedule")).toMatchObject({
+        viewKey: "schedule",
+      });
+      expect(await services.overviews.get(owner, "300000000000000009", "today")).toBeNull();
+      expect(await services.overviews.get(strangerOwner, GUILD, "today")).toBeNull();
+    });
+
+    it("rejects malformed values before writing, and is denied to shared audiences and forged principals", async () => {
+      for (const bad of [
+        binding({ contentHash: "xyz" }),
+        binding({ guildId: "not-an-id" }),
+        binding({ viewKey: "Bad View!" }),
+        { ...binding(), extra: "x" },
+      ]) {
+        await expect(services.overviews.save(owner, bad)).rejects.toBeInstanceOf(ValidationError);
+      }
+      const shared = await principalFor(ownerId, { audience: "shared" });
+      await expect(services.overviews.save(shared, binding())).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+      await expect(services.overviews.get(shared, GUILD, "today")).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+      await expect(
+        services.overviews.save({ ownerId, audience: "private" }, binding()),
+      ).rejects.toBeInstanceOf(AccessDeniedError);
+      expect((await handle.pool.query("SELECT 1 FROM discord_overviews"))[0]).toEqual([]);
+    });
+  });
+
   describe("preferences", () => {
+    it("retains planning constraints across fresh reads and isolates another owner", async () => {
+      const settings = [
+        { key: "planning.preferred_hours", value: { wed: [{ start: "09:00", end: "17:00" }] } },
+        { key: "planning.sleep", value: { start: "23:00", end: "07:00" } },
+        { key: "planning.meals", value: [{ start: "12:00", end: "13:00" }] },
+        {
+          key: "planning.protected_time",
+          value: [
+            { label: "Commute", weekdays: ["wed"], window: { start: "15:00", end: "16:00" } },
+          ],
+        },
+        { key: "planning.buffer_minutes", value: 15 },
+        { key: "planning.min_block_minutes", value: 30 },
+        { key: "planning.travel_before_minutes", value: 20 },
+      ];
+      for (const setting of settings) {
+        await services.preferences.set(owner, {
+          key: setting.key,
+          value: validatePlanningSetting(setting.key, setting.value),
+          status: "confirmed",
+        });
+      }
+      const fresh = createServices(handle.db, { clock: () => now });
+      const rows = await fresh.preferences.list(owner);
+      expect(rows).toHaveLength(settings.length);
+      const preferences = parsePlanningPreferences(rows, "America/Chicago");
+      expect(preferences.travelBeforeMinutes).toBe(20);
+      const result = computeAvailability({
+        range: { from: "2026-10-14", to: "2026-10-14" },
+        events: [],
+        workBlocks: [],
+        preferences,
+      });
+      expect(result.windows.map((window) => window.minutes)).toEqual([180, 120, 60]);
+      expect(await fresh.preferences.list(strangerOwner)).toEqual([]);
+      const saved = rows.find((row) => row.key === "planning.buffer_minutes")!;
+      await fresh.preferences.set(owner, {
+        key: saved.key,
+        value: 20,
+        status: "confirmed",
+        expectedVersion: saved.version,
+      });
+      expect((await services.preferences.get(owner, saved.key))?.value).toBe(20);
+    });
     it("persists versioned preferences and requires confirmation to forget them", async () => {
       const saved = await services.preferences.set(owner, {
         key: "planning.bufferMinutes",

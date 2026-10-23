@@ -56,6 +56,8 @@ export interface PlanningPreferences {
   protectedTime?: ProtectedTime[] | undefined;
   // Applied after travel on both sides of blocking events.
   bufferMinutes: number;
+  travelBeforeMinutes?: number;
+  travelAfterMinutes?: number;
   // Free windows shorter than this are discarded.
   minBlockMinutes: number;
 }
@@ -105,16 +107,13 @@ function dateRange(from: DateKey, to: DateKey): DateKey[] {
   return dates;
 }
 
-// The window as spans on one local date; a window that wraps midnight yields two spans.
+// An overnight window belongs to its starting date and ends on the following morning.
 function windowSpans(date: DateKey, window: TimeWindow, timezone: string): Span[] {
   const start = parseTimeOfDay(window.start);
   const end = parseTimeOfDay(window.end, { allow24: true });
   if (end === start) throw new RangeError(`Window ${window.start}-${window.end} is empty.`);
   if (end > start) return [{ start: wall(date, start, timezone), end: wall(date, end, timezone) }];
-  return [
-    { start: wall(date, start, timezone), end: wall(addDays(date, 1), 0, timezone) },
-    { start: wall(date, 0, timezone), end: wall(date, end, timezone) },
-  ];
+  return [{ start: wall(date, start, timezone), end: wall(addDays(date, 1), end, timezone) }];
 }
 
 function usableSpans(dates: DateKey[], preferences: PlanningPreferences): Span[] {
@@ -135,7 +134,8 @@ function usableSpans(dates: DateKey[], preferences: PlanningPreferences): Span[]
 function recurringBlockers(dates: DateKey[], preferences: PlanningPreferences): Blocker[] {
   const { timezone } = preferences;
   const blockers: Blocker[] = [];
-  for (const date of dates) {
+  const recurringDates = dates.length ? [addDays(dates[0]!, -1), ...dates] : [];
+  for (const date of recurringDates) {
     if (preferences.sleep) {
       for (const span of windowSpans(date, preferences.sleep, timezone)) {
         blockers.push({ ...span, kind: "sleep" });
@@ -210,7 +210,16 @@ function calendarBlockers(
   preferences: PlanningPreferences,
 ): Blocker[] {
   return [
-    ...events.flatMap((event) => eventBlockers(event, preferences.bufferMinutes)),
+    ...events.flatMap((event) =>
+      eventBlockers(
+        {
+          ...event,
+          travelBeforeMinutes: event.travelBeforeMinutes ?? preferences.travelBeforeMinutes,
+          travelAfterMinutes: event.travelAfterMinutes ?? preferences.travelAfterMinutes,
+        },
+        preferences.bufferMinutes,
+      ),
+    ),
     ...workBlocks
       .filter((block) => block.status === "planned")
       .map((block) => ({
@@ -229,6 +238,10 @@ function validatePreferences(preferences: PlanningPreferences): void {
   }
   if (!Number.isFinite(preferences.minBlockMinutes) || preferences.minBlockMinutes < 1) {
     throw new RangeError("Minimum block length must be at least one minute.");
+  }
+  for (const minutes of [preferences.travelBeforeMinutes, preferences.travelAfterMinutes]) {
+    if (minutes !== undefined && (!Number.isFinite(minutes) || minutes < 0))
+      throw new RangeError("Travel minutes must be zero or more.");
   }
 }
 
