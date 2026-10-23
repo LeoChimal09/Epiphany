@@ -66,7 +66,11 @@ export async function principalFromSession(
 export interface OwnerIdentity {
   // The Discord account configured as the owner (OWNER_DISCORD_USER_ID).
   configuredDiscordUserId: string;
-  displayName: string;
+  // What Discord reported at this sign-in. A null name means "Discord gave none": a new owner is
+  // called "Owner" and an existing name is kept. An avatarHash of null means the account has no
+  // custom avatar; undefined means the caller did not look, so the stored value is left alone.
+  displayName: string | null;
+  avatarHash?: string | null;
   timezone: string;
 }
 
@@ -80,17 +84,30 @@ export async function authenticateDiscordUser(
   if (discordUserId !== identity.configuredDiscordUserId) return null;
 
   const [existing] = await db
-    .select({ id: owners.id })
+    .select({ id: owners.id, displayName: owners.displayName, avatarHash: owners.avatarHash })
     .from(owners)
     .where(eq(owners.discordUserId, discordUserId));
-  if (existing) return existing.id;
+  if (existing) {
+    const patch: { displayName?: string; avatarHash?: string | null } = {};
+    if (identity.displayName && identity.displayName !== existing.displayName) {
+      patch.displayName = identity.displayName;
+    }
+    if (identity.avatarHash !== undefined && identity.avatarHash !== existing.avatarHash) {
+      patch.avatarHash = identity.avatarHash;
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.update(owners).set(patch).where(eq(owners.id, existing.id));
+    }
+    return existing.id;
+  }
 
   const id = newId();
   try {
     await db.transaction(async (tx) => {
       await tx.insert(owners).values({
         id,
-        displayName: identity.displayName,
+        displayName: identity.displayName ?? "Owner",
+        avatarHash: identity.avatarHash ?? null,
         timezone: identity.timezone,
         discordUserId,
       });
@@ -130,7 +147,8 @@ export async function authenticateDevBypass(
   if (options.configuredDiscordUserId) {
     ownerId = await authenticateDiscordUser(db, options.configuredDiscordUserId, {
       configuredDiscordUserId: options.configuredDiscordUserId,
-      displayName: DEV_OWNER_NAME,
+      // Never rename the real owner: the bypass has no Discord profile to report.
+      displayName: null,
       timezone: options.timezone,
     });
   } else {

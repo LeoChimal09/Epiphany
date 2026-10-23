@@ -96,3 +96,96 @@ export function privateWorkspacePermissions(): WorkspacePermissionOverwrite[] {
     },
   ];
 }
+
+export interface WorkspaceChannelSpec {
+  kind: DiscordWorkspaceChannelKind;
+  name: string;
+  parentId: string | null;
+  overwrites: WorkspacePermissionOverwrite[];
+}
+
+export type WorkspaceProblem = "missing_permissions" | "failed";
+
+// Thrown by a guild port when Discord refuses or fails a channel creation.
+export class WorkspaceCreateError extends Error {
+  readonly reason: WorkspaceProblem;
+  constructor(reason: WorkspaceProblem) {
+    super(
+      reason === "missing_permissions"
+        ? "Discord refused to create the channel: missing permissions."
+        : "Discord could not create the channel.",
+    );
+    this.name = "WorkspaceCreateError";
+    this.reason = reason;
+  }
+}
+
+// The few Discord operations setup needs, so the logic can be tested without Discord.
+export interface WorkspaceGuildPort {
+  readonly name: string;
+  listChannels(): Promise<ExistingWorkspaceChannel[]>;
+  createChannel(spec: WorkspaceChannelSpec): Promise<{ id: string }>;
+}
+
+export interface WorkspaceApplyResult {
+  // Text channels created by this run, in creation order.
+  created: string[];
+  categoryCreated: boolean;
+  problem: WorkspaceProblem | null;
+}
+
+const inFlight = new WeakMap<WorkspaceGuildPort, Promise<WorkspaceApplyResult>>();
+
+// Creates whatever the plan says is missing, category first, private from the start. It stops at
+// the first failure and reports what already exists, so a rerun continues where it left off and
+// never duplicates. Two simultaneous requests for the same server share one run.
+export function applyWorkspacePlan(guild: WorkspaceGuildPort): Promise<WorkspaceApplyResult> {
+  const running = inFlight.get(guild);
+  if (running) return running;
+  const run = runPlan(guild).finally(() => inFlight.delete(guild));
+  inFlight.set(guild, run);
+  return run;
+}
+
+async function runPlan(guild: WorkspaceGuildPort): Promise<WorkspaceApplyResult> {
+  const plan = planEpiphanyWorkspace(await guild.listChannels());
+  const result: WorkspaceApplyResult = { created: [], categoryCreated: false, problem: null };
+  let categoryId = plan.categoryId;
+
+  for (const action of plan.actions) {
+    const parentId = action.parentId === "$epiphany-category" ? categoryId : action.parentId;
+    try {
+      const made = await guild.createChannel({
+        kind: action.kind,
+        name: action.name,
+        parentId,
+        overwrites: privateWorkspacePermissions(),
+      });
+      if (action.kind === "category") {
+        categoryId = made.id;
+        result.categoryCreated = true;
+      } else {
+        result.created.push(action.name);
+      }
+    } catch (error) {
+      result.problem = error instanceof WorkspaceCreateError ? error.reason : "failed";
+      return result;
+    }
+  }
+  return result;
+}
+
+// A message is private only in a DM, or in the Epiphany #assistant channel that @everyone cannot
+// see. Anything else, including a look-alike channel in a public category, is treated as shared.
+export function workspaceAudience(channel: {
+  isDm: boolean;
+  name?: string | null;
+  parentName?: string | null;
+  everyoneCanView?: boolean;
+}): "private" | "shared" {
+  if (channel.isDm) return "private";
+  const inWorkspace =
+    normalizedName(channel.name ?? "") === "assistant" &&
+    normalizedName(channel.parentName ?? "") === WORKSPACE_CATEGORY_NAME;
+  return inWorkspace && channel.everyoneCanView === false ? "private" : "shared";
+}

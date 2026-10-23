@@ -49,7 +49,7 @@ describe("Discord client", () => {
     expect(client.newVerifier()).not.toBe(client.newVerifier());
   });
 
-  it("exchanges the code with the verifier, reads only the user id, and revokes the token", async () => {
+  it("exchanges the code with the verifier, reads the identity, and revokes the token", async () => {
     const calls: Array<{ url: string; body: string; headers?: Record<string, string> }> = [];
     vi.stubGlobal(
       "fetch",
@@ -64,13 +64,20 @@ describe("Discord client", () => {
           });
         }
         if (call.url.endsWith("/users/@me"))
-          return Response.json({ id: "100000000000000001", username: "someone" });
+          return Response.json({
+            id: "100000000000000001",
+            username: "someone",
+            global_name: "Some One",
+            avatar: "a".repeat(32),
+          });
         return Response.json({});
       }),
     );
 
     const signIn = await createDiscordClient(config)!.exchange("auth-code", "verifier-456");
     expect(signIn.userId).toBe("100000000000000001");
+    expect(signIn.displayName).toBe("Some One");
+    expect(signIn.avatarHash).toBe("a".repeat(32));
     await signIn.revoke();
 
     const token = calls.find((c) => c.url.endsWith("/oauth2/token"))!;
@@ -85,6 +92,25 @@ describe("Discord client", () => {
     });
     expect(calls.some((c) => c.url.endsWith("/oauth2/token/revoke"))).toBe(true);
     expect(calls.every((c) => c.url.startsWith("https://discord.com/"))).toBe(true);
+  });
+
+  it("falls back to the username and ignores a malformed avatar value", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        (await describeCall(input, init)).url.endsWith("/oauth2/token")
+          ? Response.json({ access_token: "at", token_type: "Bearer", expires_in: 1 })
+          : Response.json({
+              id: "100000000000000001",
+              username: "someone",
+              global_name: null,
+              avatar: "../../evil",
+            }),
+      ),
+    );
+    const signIn = await createDiscordClient(config)!.exchange("c", "v");
+    expect(signIn.displayName).toBe("someone");
+    expect(signIn.avatarHash).toBeNull();
   });
 
   it("rejects an unexpected user payload", async () => {

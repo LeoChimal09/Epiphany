@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "next dev apps/web -H 127.0.0.1",
+    "dev": "next dev apps/web -H localhost",
     "start": "next start apps/web",
     "bot:dev": "bun --watch apps/worker/src/index.ts",
     "bot:start": "bun apps/worker/src/index.ts",
@@ -28,6 +28,8 @@
     "test:run": "vitest run",
     "build": "next build apps/web",
     "security:staged": "bun scripts/check-staged-secrets.ts",
+    "gate": "bun scripts/release-gate.ts",
+    "restore:drill": "bun scripts/restore-drill.ts",
     "precommit:check": "eslint . --max-warnings=0 && prettier --check . && tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json && bun scripts/check-migration-drift.ts && bun scripts/check-staged-secrets.ts"
   },
   "devDependencies": {
@@ -38,8 +40,8 @@
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "^0.31.11",
     "eslint": "^10.12.0",
-    "eslint-config-next": "^16.4.0",
-    "next": "^16.4.0",
+    "eslint-config-next": "^16.4.2",
+    "next": "^16.4.2",
     "prettier": "^3.9.10",
     "typescript": "^6",
     "typescript-eslint": "^8.71.2",

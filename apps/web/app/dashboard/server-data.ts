@@ -1,12 +1,18 @@
 import "server-only";
-import { createServices } from "@epiphany/core/services";
-import { addDays, localWallToUtc, type DateKey } from "@epiphany/core/planning";
+import { createServices, type OwnerProfile } from "@epiphany/core/services";
+import {
+  addDays,
+  localWallToUtc,
+  parsePlanningPreferences,
+  type DateKey,
+} from "@epiphany/core/planning";
 import type { CalendarEvent, Category, Note, Task, WorkBlock } from "@epiphany/core/db";
 import { verifySession } from "../../lib/auth/dal";
 import { getAuthDeps } from "../../lib/auth/deps";
 import type { DashboardData, DashboardNote, DashboardTask } from "./model";
 import type { ScheduleBlock, ScheduleData, ScheduleEvent } from "./schedule";
 import { todayKey, weekStartOf } from "./schedule";
+import { calendarSyncWarning } from "./planning-model";
 
 export function taskForDashboard(task: Task): DashboardTask {
   return {
@@ -15,6 +21,7 @@ export function taskForDashboard(task: Task): DashboardTask {
     title: task.title,
     details: task.details,
     sourceText: task.sourceText,
+    reviewNote: task.reviewNote,
     status: task.status,
     dueAt: task.dueAt?.toISOString() ?? null,
     dueDateOnly: task.dueDateOnly,
@@ -84,25 +91,36 @@ export async function loadSchedule(
 ): Promise<ScheduleData> {
   const from = localWallToUtc(weekStart, 0, context.timezone);
   const to = localWallToUtc(addDays(weekStart, 7), 0, context.timezone);
-  const [events, blocks] = await Promise.all([
-    context.services.events.list(context.principal, { from, to, limit: SCHEDULE_LIMIT }),
+  const [events, blocks, preferences, calendar] = await Promise.all([
+    context.services.events.list(context.principal, {
+      from: localWallToUtc(addDays(weekStart, -1), 0, context.timezone),
+      to: localWallToUtc(addDays(weekStart, 8), 0, context.timezone),
+      limit: SCHEDULE_LIMIT,
+    }),
     context.services.workBlocks.list(context.principal, { from, to, limit: SCHEDULE_LIMIT }),
+    context.services.preferences.list(context.principal),
+    context.services.calendar.overview(context.principal),
   ]);
   return {
     weekStart,
     events: events.map(eventForSchedule),
     blocks: blocks.map(blockForSchedule),
     truncated: events.length === SCHEDULE_LIMIT || blocks.length === SCHEDULE_LIMIT,
+    planningPreferences: parsePlanningPreferences(preferences, context.timezone),
+    syncWarning: calendarSyncWarning(calendar),
   };
 }
 
-export async function loadDashboardData(): Promise<DashboardData & { devBypass: boolean }> {
+export async function loadDashboardData(): Promise<
+  DashboardData & { devBypass: boolean; owner: OwnerProfile }
+> {
   const context = await dashboardContext();
-  const [open, completed, notes, categories] = await Promise.all([
+  const [open, completed, notes, categories, owner] = await Promise.all([
     context.services.tasks.list(context.principal, { status: "open", limit: 100 }),
     context.services.tasks.list(context.principal, { status: "completed", limit: 100 }),
     context.services.notes.list(context.principal, { limit: 100 }),
     context.services.categories.list(context.principal),
+    context.services.owner.profile(context.principal),
   ]);
   return {
     tasks: [...open, ...completed].map(taskForDashboard),
@@ -113,6 +131,7 @@ export async function loadDashboardData(): Promise<DashboardData & { devBypass: 
     tasksTruncated: open.length === 100 || completed.length === 100,
     notesTruncated: notes.length === 100,
     devBypass: context.devBypass,
+    owner,
   };
 }
 

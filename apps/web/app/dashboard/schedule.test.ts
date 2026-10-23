@@ -8,12 +8,17 @@ import {
   formatWeekRange,
   hourBounds,
   markConflicts,
+  monthDays,
+  shiftMonth,
   timelineItems,
   weekDays,
   weekStartOf,
   type ScheduleData,
 } from "./schedule";
 import type { DashboardTask } from "./model";
+import { localWallToUtc } from "@epiphany/core/planning";
+import { parseCourseList } from "../../../../packages/core/src/assistant/intake";
+import { COURSE_LIST_PASTE } from "../../../../packages/core/src/assistant/course-list.fixture";
 
 const CHICAGO = "America/Chicago";
 
@@ -53,6 +58,7 @@ const task = (over: Partial<DashboardTask>): DashboardTask => ({
   title: "Task",
   details: null,
   sourceText: null,
+  reviewNote: null,
   status: "open",
   dueAt: null,
   dueDateOnly: false,
@@ -65,6 +71,44 @@ const task = (over: Partial<DashboardTask>): DashboardTask => ({
 });
 
 describe("week math", () => {
+  it("builds complete Monday-first months with spillover days and leap years", () => {
+    const october = monthDays("2026-10-21");
+    expect(october).toHaveLength(35);
+    expect(october[0]).toBe("2026-09-28");
+    expect(october.at(-1)).toBe("2026-11-01");
+    expect(october.filter((day) => day.startsWith("2026-10"))).toHaveLength(31);
+    expect(monthDays("2028-02-12")).toContain("2028-02-29");
+    expect(monthDays("2026-02-12")).not.toContain("2026-02-29");
+    expect(monthDays("2021-02-01")).toHaveLength(28);
+    expect(monthDays("2026-03-01")).toHaveLength(42);
+  });
+
+  it("navigates months without skipping short months or breaking year boundaries", () => {
+    expect(shiftMonth("2026-01-31", 1)).toBe("2026-02-01");
+    expect(shiftMonth("2026-12-31", 1)).toBe("2027-01-01");
+    expect(shiftMonth("2026-01-01", -1)).toBe("2025-12-01");
+  });
+
+  it("places all six imported assignments on their local due dates without inventing work blocks", () => {
+    const capture = parseCourseList(COURSE_LIST_PASTE, "2026-10-21");
+    if (capture?.kind !== "capture") throw new Error("expected course capture");
+    const tasks = capture.items.map((item, index) => {
+      if (!item.dueDate || !item.dueTime) throw new Error("expected assignment deadline");
+      const [hours, minutes] = item.dueTime.split(":").map(Number);
+      return task({
+        id: `assignment-${index}`,
+        title: item.title,
+        dueAt: localWallToUtc(item.dueDate, hours! * 60 + minutes!, CHICAGO).toISOString(),
+      });
+    });
+    const days = ["2026-10-21", "2026-10-22", "2026-10-25", "2026-10-26"].map((date) =>
+      buildDay(date, [], tasks, CHICAGO),
+    );
+    expect(days.map((day) => day.deadlines.length)).toEqual([1, 1, 3, 1]);
+    expect(days.flatMap((day) => day.deadlines)).toHaveLength(6);
+    expect(days.every((day) => day.entries.length === 0)).toBe(true);
+  });
+
   it("finds Monday and lists seven days", () => {
     expect(weekStartOf("2026-10-14")).toBe("2026-10-12");
     expect(weekStartOf("2026-10-12")).toBe("2026-10-12");

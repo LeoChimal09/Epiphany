@@ -22,6 +22,8 @@ export interface TaskPatch {
   estimatedMinutes?: number | null;
   // Moves the task to another of the owner's categories.
   categoryId?: string;
+  // null clears the review flag. Giving the task a deadline clears it too, unless this is set.
+  reviewNote?: string | null;
 }
 
 export interface NotePatch {
@@ -69,6 +71,12 @@ export async function updateTask(
           ? current.categoryId
           : await resolveCategory(tx, actor.ownerId, patch.categoryId),
       remainingMinutes: current.remainingMinutes,
+      reviewNote:
+        patch.reviewNote === undefined
+          ? patch.dueAt
+            ? null
+            : current.reviewNote
+          : patch.reviewNote,
     };
 
     // A date-only deadline needs a deadline; clearing the deadline clears the flag.
@@ -107,6 +115,7 @@ export async function updateTask(
       fields.push("estimatedMinutes");
       values.estimatedMinutes = { from: current.estimatedMinutes, to: next.estimatedMinutes };
     }
+    if (next.reviewNote !== current.reviewNote) fields.push("reviewNote");
     if (next.categoryId !== current.categoryId) {
       fields.push("categoryId");
       values.categoryId = { from: current.categoryId, to: next.categoryId };

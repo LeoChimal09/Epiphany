@@ -8,16 +8,23 @@ drizzle-kit into `packages/core/drizzle/` and applied by Epiphany's own runner.
 
 | Table            | Holds                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |
-| `owners`         | The owner identity (display name, timezone, optional Discord user ID).         |
+| `owners`         | The owner identity (display name, timezone, optional Discord user ID and avatar hash). |
 | `categories`     | Categories per owner. The Inbox is the row with `system_key = 'inbox'`.        |
-| `tasks`          | Assignments and to-dos. `status` is `open`/`completed`; `archived_at` is separate. |
+| `tasks`          | Assignments and to-dos. `status` is `open`/`completed`; `archived_at` is separate. `source_text`/`source_ref` link the message it came from; `review_note` flags what needs the owner's eye (cleared when a deadline is set). |
 | `events`         | Fixed events. `status` is `scheduled`/`canceled`.                              |
 | `work_blocks`    | Movable planned time, optionally tied to a task: `planned`/`completed`/`removed`. |
 | `notes`          | Notes and ideas, categorized (default Inbox).                                  |
 | `preferences`    | Explicit key/value preferences, `proposed` or `confirmed`.                     |
 | `action_history` | Append-only changes with source and before/after, written with each change.    |
 | `confirmations`  | Proposed consequential actions awaiting confirmation (see [security](security.md)). |
+| `discord_overviews` | Which Discord message shows each overview in a server (edited in place, recreated if deleted). |
+| `reminders` | Persistent reminder jobs: dedupe key, status, attempts, claim time, and why a job was skipped or failed. |
+| `provider_usage` | Monthly spending per provider kind (voice) per owner, separate from the text budget in `ai_usage`. |
+| `observations` | Things the owner chose to report about how they work (task durations, snoozes). Only recorded when learning is on; erased on request. |
 | `sessions`       | Dashboard sign-in sessions, keyed by a hash of the cookie token.               |
+| `calendar_accounts` | A connected Google account (Goal 11): encrypted tokens, `status` (`connected`/`needs_reauth`/`revoked`), granted scopes, last error, and the dedicated Epiphany calendar's ID. A CHECK constraint forbids tokens on any account that is not `connected`. |
+| `synced_calendars` | Calendars found in the account. Only `selected` ones are read; the `epiphany` kind is the dedicated one. Holds the incremental sync token, `last_synced_at`, and `sync_status` (`pending`/`ok`/`stale`/`error`). |
+| `calendar_event_refs` | Links a Google event to a local record: imported events (`ownership = 'external'`, `event_id`) or work blocks Epiphany wrote (`ownership = 'epiphany'`, `work_block_id`). Keeps ETag, recurring-series ID and original start, last pushed block version, and `sync_state` (`synced`/`pending`/`uncertain`/`conflict`/`remote_deleted`/`removed`/`detached`). |
 
 Design rules:
 

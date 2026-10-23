@@ -25,6 +25,8 @@ export interface FakeDiscord extends DiscordClient {
   revoked: number;
   // The Discord account the next exchange will report.
   signInAs: string | Error;
+  // The name and avatar hash the next exchange will report.
+  profile: { displayName: string | null; avatarHash: string | null };
 }
 
 export function fakeDiscord(): FakeDiscord {
@@ -33,6 +35,7 @@ export function fakeDiscord(): FakeDiscord {
     exchanges: [],
     revoked: 0,
     signInAs: OWNER_DISCORD_ID,
+    profile: { displayName: null, avatarHash: null },
     newState: () => `state-${++counter}`,
     newVerifier: () => `verifier-${counter}`,
     authorizationUrl: (state) => new URL(`https://discord.example/authorize?state=${state}`),
@@ -41,6 +44,8 @@ export function fakeDiscord(): FakeDiscord {
       if (fake.signInAs instanceof Error) throw fake.signInAs;
       return {
         userId: fake.signInAs,
+        displayName: fake.profile.displayName,
+        avatarHash: fake.profile.avatarHash,
         revoke: async () => {
           fake.revoked++;
         },

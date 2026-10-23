@@ -29,6 +29,7 @@ export const createTaskInput = z
     details: optionalText(10_000),
     sourceText: optionalText(20_000),
     sourceRef: optionalText(255),
+    reviewNote: z.string().trim().min(1).max(300).optional(),
     dueAt: instant.optional(),
     dueDateOnly: z.boolean().optional(),
     estimatedMinutes: z.number().int().min(1).max(100_000).optional(),
@@ -92,6 +93,7 @@ export const updateTaskInput = z
     dueDateOnly: z.boolean().optional(),
     estimatedMinutes: z.number().int().min(1).max(100_000).nullable().optional(),
     categoryId: id.optional(),
+    reviewNote: clearableText(300).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).some((key) => key !== "expectedVersion"), {
@@ -166,3 +168,28 @@ export function parseInput<T extends z.ZodType>(schema: T, value: unknown): z.ou
   }
   return result.data;
 }
+
+const snowflake = z.string().regex(/^\d{15,25}$/, "must be a Discord ID");
+const viewKey = z.string().regex(/^[a-z][a-z-]{0,31}$/, "must be a view name");
+
+export const overviewKeyInput = z.object({ guildId: snowflake, viewKey }).strict();
+
+export const overviewBindingInput = z
+  .object({
+    guildId: snowflake,
+    viewKey,
+    channelId: snowflake,
+    messageId: snowflake,
+    contentHash: z.string().regex(/^[0-9a-f]{64}$/, "must be a SHA-256 hex digest"),
+  })
+  .strict();
+
+export type OverviewBinding = z.infer<typeof overviewBindingInput>;
+
+export const oneOffReminderInput = z
+  .object({
+    message: z.string().trim().min(1).max(500),
+    at: instant,
+    kind: z.enum(["check_in", "custom"]).default("check_in"),
+  })
+  .strict();

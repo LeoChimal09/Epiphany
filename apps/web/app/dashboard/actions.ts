@@ -1,8 +1,9 @@
 "use server";
 
-import { ValidationError, VersionConflictError } from "@epiphany/core/services";
+import { ConfirmationError, ValidationError, VersionConflictError } from "@epiphany/core/services";
 import {
   emptyConversation,
+  MAX_MESSAGE_LENGTH,
   parseConversationState,
   type AssistantReply,
   type ConversationState,
@@ -38,6 +39,8 @@ export type DashboardResult =
       note?: DashboardNote;
       category?: DashboardCategory;
       data?: DashboardData;
+      partialFailure?: boolean;
+      updatedTasks?: DashboardTask[];
     }
   | { ok: false; error: string };
 
@@ -54,8 +57,11 @@ export async function askEpi(message: string, state: unknown): Promise<AskEpiRes
   if (typeof message !== "string" || !message.trim()) {
     return { ok: false, error: "Write a message first." };
   }
-  if (message.length > 2000) {
-    return { ok: false, error: "That message is too long (2000 characters at most)." };
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return {
+      ok: false,
+      error: `That message is too long (${MAX_MESSAGE_LENGTH} characters at most).`,
+    };
   }
   const conversation =
     state === null || state === undefined ? emptyConversation() : parseConversationState(state);
@@ -189,6 +195,103 @@ export async function finishDashboardTask(taskId: string): Promise<DashboardResu
   } catch (error) {
     return failure(error);
   }
+}
+
+export async function finishDashboardTasks(taskIds: string[]): Promise<DashboardResult> {
+  const { principal, services } = await dashboardContext();
+  if (
+    !Array.isArray(taskIds) ||
+    !taskIds.length ||
+    taskIds.length > 100 ||
+    taskIds.some((id) => typeof id !== "string")
+  ) {
+    return { ok: false, error: "Select between 1 and 100 tasks." };
+  }
+  let completed = 0;
+  let failed = 0;
+  const updatedTasks: DashboardTask[] = [];
+  for (const id of new Set(taskIds)) {
+    try {
+      const result = await services.tasks.complete(principal, id);
+      updatedTasks.push(taskForDashboard(result.task));
+      completed++;
+    } catch (error) {
+      failure(error);
+      failed++;
+    }
+  }
+  if (completed === 0)
+    return {
+      ok: false,
+      error: "No selected tasks could be completed. Refresh and review before retrying.",
+    };
+  const data = await loadDashboardData();
+  return {
+    ok: true,
+    data,
+    updatedTasks,
+    partialFailure: failed > 0,
+    message: `${completed} task${completed === 1 ? "" : "s"} marked done.${failed ? ` ${failed} could not be completed. They remain selected; refresh and review before retrying.` : ""}`,
+  };
+}
+
+export type NoteDeleteProposal = {
+  confirmationId: string;
+  payloadHash: string;
+  summary: string;
+};
+
+export async function proposeDashboardNoteDeletion(
+  noteId: string,
+): Promise<{ ok: true; proposal: NoteDeleteProposal } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const proposal = await services.confirmations.propose(principal, {
+      action: "note.delete",
+      payload: { noteId },
+    });
+    return {
+      ok: true,
+      proposal: {
+        confirmationId: proposal.confirmationId,
+        payloadHash: proposal.payloadHash,
+        summary: String(proposal.preview.summary),
+      },
+    };
+  } catch (error) {
+    const result = failure(error);
+    return { ok: false, error: result.error };
+  }
+}
+
+export async function confirmDashboardNoteDeletion(
+  proposal: NoteDeleteProposal,
+): Promise<DashboardResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    await services.confirmations.confirm(principal, {
+      confirmationId: proposal.confirmationId,
+      payloadHash: proposal.payloadHash,
+    });
+    return {
+      ok: true,
+      message: "Note or idea permanently deleted.",
+      data: await loadDashboardData(),
+    };
+  } catch (error) {
+    if (error instanceof ConfirmationError)
+      return {
+        ok: false,
+        error:
+          "Deletion could not be confirmed. It may have expired or the item changed. Refresh and try again.",
+      };
+    return failure(error);
+  }
+}
+
+export async function cancelDashboardNoteDeletion(confirmationId: string): Promise<void> {
+  const { principal, services } = await dashboardContext();
+  await services.confirmations.cancel(principal, confirmationId);
 }
 
 export async function reopenDashboardTask(taskId: string): Promise<DashboardResult> {

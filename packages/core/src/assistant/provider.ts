@@ -10,6 +10,7 @@ export interface OpenTaskContext {
 export interface NoteContext {
   id: string;
   title: string;
+  kind?: "note" | "idea";
 }
 
 export interface Turn {
@@ -32,25 +33,55 @@ export interface InterpretRequest {
   history: Turn[];
   // Summary of an action waiting for yes or no, if any.
   pending: string | null;
+  // What the owner has asked Epi to remember (confirmed only). Current records always win over a
+  // remembered summary.
+  memories: string[];
+  // Existing names only; the model must not invent categories for a pasted list.
+  categories?: string[];
+  activeIdea?: {
+    id: string;
+    title: string;
+    body: string;
+    truncated: boolean;
+  } | null;
+  // An observed flat list count, not an AI guess about the number of tasks.
+  listedEntryCount?: number;
 }
 
 export interface InterpretResult {
   intent: Intent;
-  // Billed cost of this call in USD, as computed by the adapter.
+  // A proposed action was rejected; conversational text is still useful, but no action may run.
+  invalidAction?: boolean;
+  // Estimated cost in USD from provider usage and configured prices (not a billing guarantee).
   costUsd: number;
+}
+
+// A response arrived, but cannot safely be used. Fixed messages only; never attach raw output.
+export class ProviderOutputError extends Error {
+  constructor(
+    readonly reason: "invalid" | "refusal" | "truncated",
+    readonly costUsd = 0,
+  ) {
+    super(`The AI service returned ${reason} output.`);
+    this.name = "ProviderOutputError";
+  }
 }
 
 export interface TextProvider {
   interpret(request: InterpretRequest): Promise<InterpretResult>;
 }
 
-// The provider is down, rate limited, or returned something unusable.
+// The provider is unreachable/rate limited, or a request was refused before dispatch.
 export class ProviderUnavailableError extends Error {
   readonly retryable: boolean;
-  constructor(message: string, retryable = true) {
+  // True when the message was more than one request can handle (too long to read, or too much to
+  // answer), so the owner should send it in smaller pieces rather than try again as it is.
+  readonly tooLarge: boolean;
+  constructor(message: string, retryable = true, tooLarge = false) {
     super(message);
     this.name = "ProviderUnavailableError";
     this.retryable = retryable;
+    this.tooLarge = tooLarge;
   }
 }
 

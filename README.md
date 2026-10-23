@@ -109,6 +109,99 @@ Success checks: differently worded requests can produce the same intended action
 the weekly-planning example works without a command or prefix; contextual follow-ups
 resolve or trigger clarification; advice alone does not mutate the calendar.
 
+### AI Use And Pasted-List Review
+
+The assistant uses AI for uncertain language, not for every reply. Standalone greetings,
+thanks, and simple approvals/rejections use fixed responses and the existing validated
+action handlers, with no model call. These paths also work after the monthly AI budget
+is exhausted. Additional instructions in the same message still go through interpretation.
+Automatic Discord workspace setup, overview rendering, and scheduled reminder delivery
+are also ordinary code, not generated announcements.
+
+For interpreted turns, the OpenAI adapter now answers ordinary conversation as
+natural text, not a required JSON action envelope. A single optional function call
+requests a supported read or update, using only that action's arguments (including
+sparse capture items). Idea feedback travels alongside the call, without repeating
+it inside JSON. There is no automatic second model call, retry, or repair request.
+Input caps include the system prompt, current context, and available function schemas;
+usage-based cost estimates are recorded even when output is rejected.
+
+Functions are proposals, not authorization: the server still validates arguments,
+owner access, current records, no-save instructions, and required confirmations
+through shared services. An invalid function never executes; useful conversational
+text is retained with an explicit **update was not saved** warning. Invalid-only,
+refused, and truncated replies report that nothing changed, rather than presenting
+an outage or claiming success. Network/HTTP failures remain separately classified.
+These paths are tested offline; live-model quality and token savings are not yet
+measured against a deployed provider.
+
+Multi-item captures now show a numbered preview before saving anything. Check the full
+list, dates, categories, and review flags; approve it with a simple yes, or decline and
+send a corrected version. Approval does not make another model call. Previews expire
+after ten minutes and are cleared by unrelated conversation. Single-item captures and
+explicit single-task creation keep their existing immediate-save behavior.
+
+The original paste and source link are preserved when the approved tasks are saved.
+Missing deadlines are flagged in code, existing categories are supplied to interpretation,
+and same-title tasks with conflicting details are not silently discarded as duplicates.
+Discord splits long previews into complete messages rather than truncating the items
+being approved. This makes extraction reviewable; it does not guarantee that a model
+understood every messy paste. Live-model evaluation is still required before deployment.
+
+Complete repeated course cards (`title`, course code, `|`, `Go to course`, points,
+deadline) are parsed in code before AI is used. Relative deadlines use the current
+date in the owner's timezone; AM/PM times are converted without inventing a time.
+These imports still require review and approval. Unsupported, incomplete, or ambiguous
+formats go intact to language understanding rather than being partially imported.
+For consistently numbered or bulleted lists, a visible entry count guards against
+saving an extraction that contains fewer items than the list. Independent goals across
+work, school, errands, and fitness are separate tasks, not one combined task.
+
+### Developing An Idea Together
+
+Saving an idea can include constructive feedback and a focused follow-up question in
+the same model response; no second feedback call is made. As the owner contributes
+features, concerns, problems, or goals, or asks to expand the brainstorm, Epi appends new bullet points to the same
+idea instead of creating another note. The original body, title, category, and Idea
+tag are preserved. Suggested directions should be labeled as suggestions, not owner
+decisions; opinion-only and no-save discussion must not mutate the saved idea.
+
+Points use flexible labels such as **Concern**, **Problem**, **Goal**, **Feature**,
+or an owner-chosen title rather than a fixed label menu. Additions are grouped by the
+owner's local date, with one heading per day instead of dates on each bullet. When
+developing an older idea, the original content stays under its creation date and new
+points use the day they were added. Date grouping and duplicate checks run in code,
+without another model call. The idea card renders date groups and bold labels; its
+editor retains an editable plain-text body. Existing ideas are not retroactively
+rewritten or relabeled; grouping is added when they next receive saved points.
+An idea is a concept to explore (such as a possible hosting migration); a note
+holds reference information, while rotating keys is an actionable task/reminder.
+A new reminder request without timing should get a timing question, not an
+invented deadline or another copy of the active idea. The current message takes
+priority over the previous brainstorm.
+
+If a proposed new idea has a matching saved idea title, Epi asks whether to
+develop that idea or save a separately titled idea instead of creating a second
+card. Different content is explicitly called out, not silently dropped or
+automatically appended. This check uses owner-scoped retrieved ideas (including
+the active idea fetched fresh), not ordinary notes, and makes no success claim.
+Existing duplicate cards are not automatically merged or deleted.
+
+Idea details are collapsed by default in an accessible accordion, leaving the
+title, creation timestamp, and Edit control visible. Expand "Idea details" to
+read all dated sections and labeled bullets.
+
+The active idea reference is owner-bound, and the body is re-read through shared services
+for each interpreted turn. Only a bounded excerpt is sent to the model. Duplicate
+points are skipped and concurrent edits cause a conflict response rather than an
+overwrite. If the intended idea is unclear, Epi asks which one. Conversation-local
+references reset when the conversation/runtime resets; the saved idea remains and
+can be selected by title again. A request to return to an idea uses a read-only
+resume action: it retrieves the saved body, shows a bounded recap, and sets that
+idea as the active context for subsequent turns without adding invented bullets.
+This restores saved idea context, not the full previous chat transcript.
+Live-model feedback quality still needs verification.
+
 ## Personal Memory And Companion Experience
 
 Epi should feel like a familiar personal assistant, not a new chatbot every time
@@ -277,9 +370,61 @@ new behavioral observations.
 
 ## React Dashboard
 
-- Today: timeline, checklist, current activity, and available time.
-- Week: visual calendar distinguishing fixed events from movable work blocks.
-- Priorities: deadlines, countdowns, remaining effort, and next actions.
+Ask Epi for the website or dashboard link to receive the configured `APP_URL`
+with `/dashboard`. Common link requests bypass AI calls; other phrasings can use
+the website-link tool. Set `APP_URL` on the Discord worker as well as the website;
+Epi reports missing configuration instead of guessing an address.
+
+- Ask Epi shows at most five upcoming tasks, with links to all tasks and the current week.
+- A header bell with a count opens a dismissible notification popover, keeping alerts
+  out of the main page until requested. Idea descriptions use a full-width, vertically
+  resizable editor with a larger initial height.
+- Notifications show deadlines within one hour, due now and overdue, with explicit **Mark done**
+  and **View task** controls and five-item paging. Timed countdowns show elapsed hours/minutes;
+  date-only deadlines retain calendar-day labels. Silence never completes work.
+  This area updates while the page is open; background Discord warnings require the separate
+  worker. The existing persistent service defaults to 24-, 2- and 1-hour warnings unless an
+  owner preference overrides them. See [reminders and limits](docs/reminders.md).
+- Task lists show 20 loaded records per page. The initial snapshot includes up to 100
+  tasks per status; Task history can load older records. Search filters loaded records.
+- Task checkboxes select records only. Select one or more (or the current page), then
+  choose Mark selected done and confirm the named tasks. Single-task Mark done and
+  calendar/notification completion also require confirmation. Cancel does not complete
+  anything; completed tasks remain in history.
+- Notes and ideas have a Delete action with an explicit permanent-deletion warning.
+  It uses the existing owner- and version-bound confirmation service (10-minute expiry);
+  canceled or stale confirmations cannot delete the item. This is not a recoverable trash bin.
+- Calendar combines Day, Week, and Month views in one navigation tab, with previous/next
+  controls and a Today shortcut. Selecting a month cell opens that day's details.
+- Account menu > Scheduling preferences provides separately saved, collapsed controls for
+  preferred hours (multiple windows per weekday), sleep, meals, recurring protected time,
+  event buffers, optional default travel before/after timed events, and minimum work blocks.
+  Times use the configured owner timezone; a day with no preferred windows is unavailable.
+  Sleep and protected time can cross midnight. Travel defaults start at zero and, if enabled,
+  apply to every timed event (including online events); use specific protected time instead
+  when travel only applies to some appointments. Defaults are not personal facts.
+- Each calendar view includes a collapsed Availability and preparation panel. Free windows
+  use the same deterministic planning engine and confirmed preferences as Epi, subtract
+  scheduled events, travel, buffers, sleep, meals, protected time and planned work, and never
+  offer elapsed time. No language-model calls are needed.
+- Preparation milestones use loaded task deadlines and total effort estimates, subtract
+  upcoming booked effort before the deadline, and suggest the latest feasible preparation
+  start in the displayed range. Missing durations use a labeled 30-minute assumption;
+  explicit estimates override it. Overdue work, conflicting blocks, and
+  insufficient time are explicit. These are independent per-task suggestions, not reservations
+  or a conflict-free multi-task plan; nothing is scheduled automatically.
+- Availability is withheld when calendar records hit their loading limit. Pending, stale,
+  failed, or expired Google sync makes displayed availability explicitly tentative; sync
+  status is a snapshot from the last load. Only loaded tasks are considered for milestones;
+  task-limit warnings and bounded window/deadline lists remain visible.
+- Calendar views show assignment deadlines as due markers, not automatically scheduled
+  study sessions. Approved work blocks are separate and can sync to Google when connected;
+  assignment deadlines themselves are not exported.
+- Calendar Day: timeline, checklist, current activity, and available time.
+- Calendar Week/Month: visual calendar distinguishing fixed events from movable work blocks.
+- Tasks combines general work and priorities: filter All tasks, With due date or
+  duration, or Just tasks (neither). Due-date/countdown and duration labels remain
+  visible on task rows; unplanned items show Just task. Filters work with search.
 - Ideas: searchable notes, epiphanies, conversations explicitly saved, and transcripts.
 - Inbox: review extracted homework, uncertain details, and uncategorized items.
 - Settings: calendar access, categories, notification preferences, and voice options.

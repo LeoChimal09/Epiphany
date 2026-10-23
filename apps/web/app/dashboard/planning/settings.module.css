@@ -1,0 +1,48 @@
+.section {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: #181818;
+}
+.section summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.fields {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0 0;
+  border: 0;
+  min-width: 0;
+}
+.row,
+.window {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.row {
+  margin: 8px 0;
+}
+.section input:not([type="checkbox"]) {
+  max-width: 100%;
+  box-sizing: border-box;
+  width: 110px;
+  padding: 6px;
+}
+.section button {
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.section button:disabled {
+  cursor: wait;
+}
+.protected {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  min-width: 0;
+}

@@ -1,0 +1,130 @@
+.page {
+  --surface: #181818;
+  --line: rgba(255, 255, 255, 0.12);
+  --muted: #b3b3b3;
+  --accent: #2d7dff;
+  --danger: #e0474c;
+  --success: #1db954;
+  --warn: #e3b341;
+  color-scheme: dark;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  color: #fff;
+  background: #121212;
+  font:
+    15px/1.5 "Trebuchet MS",
+    "Gill Sans",
+    sans-serif;
+}
+
+.header h1 {
+  margin: 8px 0 16px;
+  font-size: 26px;
+}
+
+.back {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.card {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.good {
+  color: var(--success);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.bad,
+.errorText {
+  color: var(--danger);
+}
+
+.alert,
+.success {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--danger);
+  background: rgba(224, 71, 76, 0.12);
+}
+
+.success {
+  border-color: var(--success);
+  background: rgba(29, 185, 84, 0.12);
+}
+
+.list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 6px 0;
+}
+
+.blockRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.primary,
+.secondary,
+.danger {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: #fff;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--accent);
+}
+
+.secondary {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.danger {
+  background: var(--danger);
+}

@@ -70,7 +70,9 @@ allow-list in `permissions.ts` and a test.
   `Secure` on HTTPS). Only a SHA-256 hash is stored, so a copy of the database cannot be replayed.
   They last 7 days and end immediately on sign-out.
 - Mutating requests must come from the dashboard's own origin; cross-site requests get 403.
-- Discord's access token is used once to read the user ID, then revoked and discarded.
+- Discord's access token is used once to read the user ID, display name, and avatar hash, then
+  revoked and discarded. The name and avatar hash are validated and stored on the owner record so
+  the dashboard can show them; the avatar URL is built from the hash, never stored from Discord.
 - If sign-in is not configured, the dashboard fails closed: APIs answer 503, the login page says
   it is not set up, and details go to the server log only.
 
@@ -89,7 +91,7 @@ It is a deliberate hole in the front door, so it is tightly limited:
   addressed to one of those by both URL and `Host` header.
 - **Exactly `dev`.** Any other value (`DEV`, `true`, `prod`) is a configuration error.
 - **POST and same-origin only.** A link or image tag cannot sign anyone in; cross-site requests get 403.
-- **Loopback bind.** `bun run dev` listens on `127.0.0.1` only, so other machines on the network cannot
+- **Loopback bind.** `bun run dev` binds to `localhost` only, so other machines on the network cannot
   reach the dev server at all. This matters because a `Host` header can be forged by someone who can
   reach the port. Do not run the dev server bound to a network address with the bypass on.
 - **Real sessions, audited.** The session is the same kind as a Discord one (hashed token, 7 days). Each
@@ -124,6 +126,36 @@ disposable.
 
 Responses: 401 not signed in, 403 forbidden or cross-site, 404 not found, 409 confirmation
 needed, 422 invalid input (with the reasons), 503 sign-in not configured.
+
+## Google Calendar tokens (Goal 11)
+
+Setup and behavior: [calendar](calendar.md). The security rules:
+
+- **Encrypted at rest.** Access and refresh tokens are stored only as AES-256-GCM ciphertext
+  (`v1.<iv>.<tag>.<data>`) using `TOKEN_ENCRYPTION_KEY` (32 random bytes, base64). The account ID and
+  token kind are bound in as authenticated data, so a ciphertext copied to another row or swapped
+  between tokens fails to decrypt. A copy of the database alone is not enough to use the tokens.
+- **Never exposed.** Service views list columns explicitly and contain no token fields; routes never
+  query tables. Tokens, codes, and request/response bodies are never logged; errors carry only
+  status codes and Google's short reason.
+- **Least scope.** Epiphany asks for `calendar.readonly` (read the calendars you pick) and
+  `calendar.app.created` (write only calendars Epiphany created itself), plus `openid email` to
+  identify the account. It cannot edit your own calendars even with a bug. "Read-only" skips the write scope.
+- **Owner-only, with consent.** Only the signed-in owner can start a connection (`state` + PKCE, a
+  10-minute HttpOnly cookie). The `calendar.connect` action is an *escalate* action: it needs
+  consent, and only the owner finishing Google's consent screen counts (not the assistant, not a
+  shared channel). Disconnect is a same-origin POST from the signed-in owner.
+- **Disconnect ends access first.** Tokens are deleted and the account marked `revoked` in one
+  transaction (the database refuses a revoked account that holds tokens), then the token is revoked at
+  Google (best effort). Every Google call re-reads the account, so a sync running during a
+  disconnect stops at its next request.
+- **Revoked or expired access is visible.** `invalid_grant` (or a token Google still refuses after
+  a refresh) wipes the tokens, marks the account `needs_reauth`, and shows the reason on the Calendars page.
+- **Never silent writes.** The only write path is gated by `assertOwnWrite`: the target must be the
+  dedicated Epiphany calendar and write access must have been granted. Events from other calendars
+  are read-only.
+- **If `TOKEN_ENCRYPTION_KEY` is lost or rotated**, saved tokens cannot be decrypted; sync fails
+  with an error and the owner reconnects. There is no automatic key rotation yet.
 
 ## Known limits
 
