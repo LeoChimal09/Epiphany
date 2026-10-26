@@ -171,12 +171,22 @@ describe("dashboard mutations", () => {
     expect(mocks.context).toHaveBeenCalledOnce();
     expect(mocks.taskCreate).toHaveBeenCalledWith(principal, {
       title: "  Trimmed title ",
+      priority: "minor",
       details: undefined,
       dueAt: undefined,
       estimatedMinutes: 45,
       categoryId: undefined,
     });
     expect(result).toMatchObject({ ok: true, task });
+  });
+
+  it("saves major priority when requested", async () => {
+    mocks.taskCreate.mockResolvedValue(task);
+    await addDashboardTask(form({ title: "Final exam", priority: "major" }));
+    expect(mocks.taskCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({ title: "Final exam", priority: "major" }),
+    );
   });
 
   it("does not write when authentication fails", async () => {

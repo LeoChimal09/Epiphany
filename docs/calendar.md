@@ -1,7 +1,7 @@
 # Google Calendar
 
-Goal 11. Epiphany can read the Google calendars you choose and mirror its planned work blocks to
-one dedicated **"Epiphany"** calendar. It never writes to your other calendars.
+Goal 11. Epiphany can read the Google calendars you choose and mirror task deadlines and planned
+work blocks to one dedicated **"Epiphany"** calendar. It never writes to your other calendars.
 
 **Status:** implemented and tested offline against an in-memory Google. It has not been run against
 a real Google account yet; the live checks that remain are listed at the end.
@@ -16,9 +16,12 @@ a real Google account yet; the live checks that remain are listed at the end.
   days), with their own timezone, and every instance of a recurring event stored separately with its
   series ID. Cancelled or deleted events become canceled (kept, never deleted). Window: the past 30 and
   next 180 days, re-read in full weekly.
-- **Write**: planned work blocks are created, updated, and removed on the "Epiphany" calendar only.
-  Each Google event has an ID derived from the block and a private key (`epiphanyKey`), so a block can
-  never become two events, and Epiphany recognizes its own events and does not import them again.
+- **Write**: tasks with due dates and planned work blocks are created, updated, and removed on the
+  "Epiphany" calendar only. Date-only task deadlines become all-day events; timed deadlines become
+  short 15-minute deadline markers at the specified time. A task without a due date is not exported.
+  Work blocks are separate events representing time planned to work. Events have stable IDs and
+  private keys (`epiphanyKey`), so retries do not create duplicates and Epiphany recognizes its own
+  events rather than importing them again.
 - **Conflicts**: if you edit or delete an Epiphany event in Google Calendar, the block is flagged
   ("Changed in Google" / "Deleted in Google") instead of being overwritten, and the Calendars page
   offers "Keep Google's version" (stop mirroring that block) or "Overwrite with Epiphany's" (the next
@@ -64,14 +67,15 @@ a real Google account yet; the live checks that remain are listed at the end.
 
 8. Restart/redeploy. Run the migration (`bun run db:migrate`, or let your deploy do it): `0008_google_calendar`.
 9. Open Dashboard > account menu > **Calendars** > **Connect Google Calendar**. After consent, calendars
-   appear within a minute or two (the worker syncs every minute and reads each calendar every 5 minutes).
+   appear within a minute or two (the worker checks for changes every 15 seconds and reads each external
+   calendar every 5 minutes).
 
 For local testing, `bun run dev` starts only the website. Run `bun run bot:start` in a separate
 terminal from the project root for background calendar sync (it also starts Discord and reminders).
 On Railway, the separate worker service must be running with the same database and Google
 configuration as the website. Refresh the Calendars page to see the first sync; connecting alone
-does not import events or create the dedicated calendar. Only scheduled work blocks are exported,
-not the dashboard's task deadline markers.
+does not import events or create the dedicated calendar. Open tasks with due dates sync during the
+worker's next pass; tasks without due dates cannot be placed on a calendar automatically.
 
 If any of the three variables is missing or invalid the Calendars page says so and nothing else is
 affected (the dashboard and Discord keep working); the server log names the variable, never the value.
@@ -80,7 +84,8 @@ Setting only some of them is reported; setting none keeps calendars off silently
 ## Limits
 
 - One Google account per owner. Microsoft/Outlook is a later goal.
-- Polling, not push: changes in Google show up within about 5 minutes.
+- Polling, not push: changes in Google show up within about 5 minutes. Task deadlines and work blocks
+  changed in Epiphany are written to Google on the worker's next pass, usually within 15 seconds.
 - External events are read-only in Epiphany; changing an external appointment or a recurring series
   from Epiphany is not implemented.
 - `workingLocation` entries are not imported. Events with an ID over 255 characters are skipped.

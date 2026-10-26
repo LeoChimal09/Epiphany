@@ -16,8 +16,8 @@ import {
 export type DeliveryResult =
   // channelId is where the message landed, so a reply there can be tied to the reminder.
   | { ok: true; channelId?: string }
-  // blocked: the owner cannot be reached this way (for example DMs are closed); retrying will not
-  // help. rate_limited: try again later. error: anything else, worth a few more tries.
+  // blocked: the configured private destination cannot be reached; retrying will not help.
+  // rate_limited: try again later. error: anything else, worth a few more tries.
   | { ok: false; reason: "blocked" | "rate_limited" | "error"; retryAfterMs?: number };
 
 export interface ReminderDelivery {
@@ -88,8 +88,8 @@ export async function runReminderCycle(options: {
     summarized: 0,
   };
 
-  report.unknown = await markInterruptedUnknown(db, now);
-  const claimed = (await claimDue(db, now)).filter((reminder) => reminder.ownerId === ownerId);
+  report.unknown = await markInterruptedUnknown(db, ownerId, now);
+  const claimed = await claimDue(db, ownerId, now);
   if (claimed.length === 0) return report;
 
   const today = dateKeyOf(now, timezone);
@@ -177,7 +177,7 @@ export async function runReminderCycle(options: {
         await markSent(db, reminder.id, now, detail);
         report.sent++;
       } else if (result.reason === "blocked") {
-        await markFailed(db, reminder.id, "could not deliver: Discord DMs are closed or blocked");
+        await markFailed(db, reminder.id, "could not deliver to the private Discord channel");
         report.failed++;
       } else if (reminder.attempts >= settings.maxAttempts) {
         await markFailed(

@@ -1,6 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { connectDatabase, createOwner, createWorkBlock, removeWorkBlock } from "../db";
+import {
+  completeTask,
+  connectDatabase,
+  createOwner,
+  createTask,
+  createWorkBlock,
+  removeWorkBlock,
+} from "../db";
 import type { DatabaseHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
 import {
@@ -782,6 +789,153 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
     });
   });
 
+  describe("pushing task deadlines", () => {
+    const makeTask = (title: string, dueAt: Date, dueDateOnly = false) =>
+      createTask(h.handle.db, h.actor(), { title, dueAt, dueDateOnly });
+
+    it("exports date-only and timed deadlines once, and updates the existing events", async () => {
+      const allDay = await makeTask(
+        "Submit lab report",
+        new Date("2026-10-23T00:00:00.000Z"),
+        true,
+      );
+      const timedTask = await makeTask("Call the dentist", new Date("2026-10-23T21:00:00.000Z"));
+
+      const first = await h.syncOnce();
+      const calendar = epiphanyCalendar();
+      expect(first.pushed.created).toBe(2);
+      const allDayEvent = [...calendar.events.values()].find(
+        (event) => event.summary === "Due: Submit lab report",
+      )!;
+      const timedEvent = [...calendar.events.values()].find(
+        (event) => event.summary === "Due: Call the dentist",
+      )!;
+      expect(allDayEvent).toMatchObject({
+        start: { date: "2026-10-23" },
+        end: { date: "2026-10-24" },
+      });
+      expect(timedEvent).toMatchObject({
+        start: { dateTime: "2026-10-23T21:00:00.000Z", timeZone: "America/Chicago" },
+        end: { dateTime: "2026-10-23T21:15:00.000Z", timeZone: "America/Chicago" },
+      });
+      expect(allDayEvent.extendedProperties?.private?.epiphanyKey).toMatch(
+        new RegExp(`^deadline:${allDay.id}:v`),
+      );
+
+      h.google.clearCalls();
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      expect((await h.syncOnce({ force: true })).pushed.created).toBe(0);
+      expect(h.google.writes()).toHaveLength(0);
+      expect(calendar.events.size).toBe(2);
+
+      await h.query(
+        "UPDATE tasks SET title = 'Call dentist office', due_at = ?, version = version + 1 WHERE id = ?",
+        ["2026-10-23 22:00:00.000", timedTask.id],
+      );
+      h.clock.current = new Date(T0.getTime() + 12 * 60_000);
+      const updated = await h.syncOnce();
+      expect(updated.pushed.updated).toBe(1);
+      expect(calendar.events.size).toBe(2);
+      expect(calendar.events.get(timedEvent.id)).toMatchObject({
+        summary: "Due: Call dentist office",
+        start: { dateTime: "2026-10-23T22:00:00.000Z" },
+      });
+      expect(h.google.writes().at(-1)!.ifMatch).toBeTruthy();
+    });
+
+    it("removes deadlines when completed and creates a fresh event if the deadline is restored", async () => {
+      const task = await makeTask("Return library book", new Date("2026-10-24T15:00:00.000Z"));
+      await h.syncOnce();
+      const calendar = epiphanyCalendar();
+      const original = [...calendar.events.values()].find(
+        (event) => event.summary === "Due: Return library book",
+      )!;
+
+      await completeTask(h.handle.db, h.actor(), task.id);
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      expect((await h.syncOnce()).pushed.removed).toBe(1);
+      expect(calendar.events.get(original.id)!.status).toBe("cancelled");
+
+      await h.query(
+        "UPDATE tasks SET status = 'open', completed_at = NULL, remaining_minutes = 30, version = version + 1 WHERE id = ?",
+        [task.id],
+      );
+      h.clock.current = new Date(T0.getTime() + 12 * 60_000);
+      expect((await h.syncOnce()).pushed.created).toBe(1);
+      const live = [...calendar.events.values()].filter(
+        (event) => event.summary === "Due: Return library book" && event.status !== "cancelled",
+      );
+      expect(live).toHaveLength(1);
+      expect(live[0]!.id).not.toBe(original.id);
+    });
+
+    it("reconciles an uncertain deadline create without making a duplicate", async () => {
+      await makeTask("Pay the bill", new Date("2026-10-24T15:00:00.000Z"));
+      h.google.fail(
+        (call) => call.method === "POST" && call.path.endsWith("/events"),
+        "timeout-after-apply",
+      );
+      const first = await h.syncOnce();
+      expect(first.uncertain).toBe(1);
+      expect(epiphanyCalendar().events.size).toBe(1);
+
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      const retry = await h.syncOnce();
+      expect(retry.uncertain).toBe(0);
+      expect(retry.pushed.updated).toBe(1);
+      expect(epiphanyCalendar().events.size).toBe(1);
+      expect((await refs()).filter((ref) => String(ref.sync_key).startsWith("deadline:"))).toEqual([
+        expect.objectContaining({ sync_state: "synced" }),
+      ]);
+    });
+
+    it("surfaces Google edits as conflicts instead of overwriting them", async () => {
+      const task = await makeTask("Renew library card", new Date("2026-10-24T15:00:00.000Z"));
+      await h.syncOnce();
+      const calendar = epiphanyCalendar();
+      const deadline = [...calendar.events.values()][0]!;
+      h.google.editEvent(calendar.id, deadline.id, { summary: "Edited in Google" });
+      await h.query(
+        "UPDATE tasks SET title = 'Renew library card online', version = version + 1 WHERE id = ?",
+        [task.id],
+      );
+
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      const report = await h.syncOnce();
+      expect(report.conflicts).toBe(1);
+      expect(report.errors).toEqual([
+        "Changed in Google Calendar since Epiphany last wrote it. The task deadline was not overwritten.",
+      ]);
+      expect(calendar.events.get(deadline.id)!.summary).toBe("Edited in Google");
+      expect((await refs())[0]).toMatchObject({ sync_state: "conflict" });
+    });
+
+    it("writes a task deadline only to its owner's dedicated calendar", async () => {
+      await makeTask("Private deadline", new Date("2026-10-24T15:00:00.000Z"));
+      const before = JSON.stringify([...h.google.calendars.get(OWNER_CAL)!.events.values()]);
+      await h.syncOnce();
+      expect(epiphanyCalendar().events.size).toBe(1);
+      expect(JSON.stringify([...h.google.calendars.get(OWNER_CAL)!.events.values()])).toBe(before);
+      expect(
+        h.google
+          .writes()
+          .every(
+            (call) =>
+              call.path.startsWith(
+                `/calendars/${encodeURIComponent(epiphanyCalendar().id)}/events`,
+              ) || call.path === "/calendars",
+          ),
+      ).toBe(true);
+    });
+
+    it("does not export tasks without a due date", async () => {
+      await createTask(h.handle.db, h.actor(), { title: "Unscheduled personal task" });
+      const report = await h.syncOnce();
+      expect(report.pushed.created).toBe(0);
+      expect(epiphanyCalendar().events.size).toBe(0);
+    });
+  });
+
   describe("disconnect and revoked access", () => {
     it("deletes tokens, revokes at Google, cancels imported events, and blocks all later access", async () => {
       h.google.addEvent(OWNER_CAL, {
@@ -930,8 +1084,32 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
         summary: "Private to the other owner",
         ...timed("2026-10-21T14:00:00-05:00", "2026-10-21T15:00:00-05:00"),
       });
+      await createTask(
+        h.handle.db,
+        { ownerId: other.id, source: "dashboard", now: T0 },
+        { title: "Other owner's deadline", dueAt: new Date("2026-10-24T15:00:00.000Z") },
+      );
+      await createTask(h.handle.db, h.actor(), {
+        title: "My deadline",
+        dueAt: new Date("2026-10-24T16:00:00.000Z"),
+      });
       await syncAccount(otherRt, otherAccount);
       await h.syncOnce();
+      expect(
+        [...otherGoogle.findCalendarBySummary("Epiphany")!.events.values()].map(
+          (event) => event.summary,
+        ),
+      ).toContain("Due: Other owner's deadline");
+      expect(
+        [...h.google.findCalendarBySummary("Epiphany")!.events.values()].map(
+          (event) => event.summary,
+        ),
+      ).toContain("Due: My deadline");
+      expect(
+        [...h.google.findCalendarBySummary("Epiphany")!.events.values()].map(
+          (event) => event.summary,
+        ),
+      ).not.toContain("Due: Other owner's deadline");
 
       expect(await h.query("SELECT id FROM events WHERE owner_id = ?", [h.ownerId])).toHaveLength(
         0,

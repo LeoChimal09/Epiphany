@@ -43,6 +43,7 @@ export type Expectation =
       dueTime?: string;
       estimatedMinutes?: number;
     }
+  | { kind: "create_reminder"; titleIncludes: string; date: DateKey; time: string }
   | { kind: "complete_task"; taskId: string }
   | { kind: "complete_ambiguous" }
   | { kind: "delete_note"; noteId: string }
@@ -123,6 +124,18 @@ export const EVAL_CASES: EvalCase[] = [
       { role: "assistant", text: 'Saved your idea "Hosting migration".' },
     ],
   },
+  c(
+    "one-off-reminder",
+    "held_out",
+    "remind me at 2pm today to go grocery shopping",
+    { kind: "create_reminder", titleIncludes: "grocery", date: "2026-10-14", time: "14:00" },
+    {
+      kind: "create_reminder",
+      title: "Go grocery shopping",
+      date: "2026-10-14",
+      time: "14:00",
+    },
+  ),
   {
     ...c(
       "course-paste-six",
@@ -782,6 +795,13 @@ export function judge(intent: Intent, expectation: Expectation): string | null {
       }
       return null;
     }
+    case "create_reminder":
+      if (intent.kind !== "create_reminder") return wrongKind();
+      if (!intent.title.toLowerCase().includes(expectation.titleIncludes))
+        return `title was "${intent.title}"`;
+      if (intent.date !== expectation.date) return `date was ${intent.date}`;
+      if (intent.time !== expectation.time) return `time was ${intent.time}`;
+      return null;
     case "complete_task":
     case "complete_ambiguous": {
       if (

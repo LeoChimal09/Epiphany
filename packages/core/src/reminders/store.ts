@@ -119,6 +119,7 @@ export const SENDING_STALE_MS = 2 * 60_000;
 
 export async function markInterruptedUnknown(
   db: Database,
+  ownerId: string,
   now: Date,
   staleMs = SENDING_STALE_MS,
 ): Promise<number> {
@@ -131,6 +132,7 @@ export async function markInterruptedUnknown(
     })
     .where(
       and(
+        eq(reminders.ownerId, ownerId),
         eq(reminders.status, "sending"),
         lt(reminders.claimedAt, new Date(now.getTime() - staleMs)),
       ),
@@ -140,12 +142,18 @@ export async function markInterruptedUnknown(
 
 // Takes up to `limit` due reminders for sending. Each is claimed with a conditional update, so two
 // workers (or a worker restarting mid-cycle) can never both send the same one.
-export async function claimDue(db: Database, now: Date, limit = 25): Promise<Reminder[]> {
+export async function claimDue(
+  db: Database,
+  ownerId: string,
+  now: Date,
+  limit = 25,
+): Promise<Reminder[]> {
   const candidates = await db
     .select({ id: reminders.id })
     .from(reminders)
     .where(
       and(
+        eq(reminders.ownerId, ownerId),
         eq(reminders.status, "scheduled"),
         lte(reminders.dueAt, now),
         or(isNull(reminders.nextAttemptAt), lte(reminders.nextAttemptAt, now)),

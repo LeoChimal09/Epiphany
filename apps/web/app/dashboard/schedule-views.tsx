@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { DateKey } from "@epiphany/core/planning";
+import { localParts, type DateKey } from "@epiphany/core/planning";
 import { countdownLabel, type DashboardTask } from "./model";
 import {
   buildDay,
@@ -103,6 +103,45 @@ function EntryBlock({
   );
 }
 
+function DeadlineBlock({
+  task,
+  timezone,
+  topMinute,
+  gridHeight,
+}: {
+  task: DashboardTask;
+  timezone: string;
+  topMinute: number;
+  gridHeight: number;
+}) {
+  if (!task.dueAt || task.dueDateOnly) return null;
+  const due = new Date(task.dueAt);
+  if (Number.isNaN(due.getTime())) return null;
+  const { hour, minute } = localParts(due, timezone);
+  const dueMinute = hour * 60 + minute;
+  const time = formatClock(due.getTime(), timezone);
+  const label = `Due at ${time}: ${task.title}`;
+  const height = 28;
+  const top = Math.max(
+    0,
+    Math.min(((dueMinute - topMinute) / 60) * HOUR_PX - height / 2, gridHeight - height),
+  );
+  return (
+    <div
+      className={styles.slotDeadline}
+      style={{ top, height }}
+      title={label}
+      aria-label={label}
+      role="note"
+    >
+      <Flag size={12} aria-hidden="true" />
+      <span>
+        {time}: {task.title}
+      </span>
+    </div>
+  );
+}
+
 function DayChips({
   day,
   pending,
@@ -112,6 +151,7 @@ function DayChips({
   pending: boolean;
   onRemove: (item: TimelineItem) => void;
 }) {
+  const headerDeadlines = day.deadlines.filter((task) => task.dueDateOnly || !task.dueAt);
   return (
     <div className={styles.dayChips}>
       {day.allDay.slice(0, 2).map((item) => (
@@ -128,15 +168,15 @@ function DayChips({
           </button>
         </span>
       ))}
-      {day.deadlines.slice(0, 2).map((task) => (
+      {headerDeadlines.slice(0, 2).map((task) => (
         <span key={task.id} className={styles.chipDue} title={`Due: ${task.title}`}>
           <Flag size={10} aria-hidden="true" />
           {task.title}
         </span>
       ))}
-      {day.allDay.length + day.deadlines.length > 4 ? (
+      {day.allDay.length + headerDeadlines.length > 4 ? (
         <span className={styles.chipMore}>
-          +{day.allDay.length + day.deadlines.length - 4} more
+          +{day.allDay.length + headerDeadlines.length - 4} more
         </span>
       ) : null}
     </div>
@@ -166,6 +206,7 @@ function TimeGrid({
   );
   const columns = `3.4rem repeat(${days.length}, minmax(0, 1fr))`;
   const topMinute = bounds.start * 60;
+  const gridHeight = hours.length * HOUR_PX;
   return (
     <div className={styles.grid} role="table" aria-label="Schedule">
       <div className={styles.gridHead} style={{ gridTemplateColumns: columns }} role="row">
@@ -187,11 +228,7 @@ function TimeGrid({
         ))}
       </div>
       <div className={styles.gridBody} style={{ gridTemplateColumns: columns }} role="row">
-        <div
-          className={styles.hourAxis}
-          style={{ height: hours.length * HOUR_PX }}
-          aria-hidden="true"
-        >
+        <div className={styles.hourAxis} style={{ height: gridHeight }} aria-hidden="true">
           {hours.map((hour) => (
             <span key={hour} style={{ height: HOUR_PX }}>
               {formatHourLabel(hour)}
@@ -206,7 +243,7 @@ function TimeGrid({
               role="cell"
               className={`${styles.dayColumn} ${day.date === today ? styles.gridToday : ""}`}
               style={{
-                height: hours.length * HOUR_PX,
+                height: gridHeight,
                 backgroundSize: `100% ${HOUR_PX}px`,
               }}
             >
@@ -218,6 +255,15 @@ function TimeGrid({
                   timezone={timezone}
                   pending={pending}
                   onRemove={onRemove}
+                />
+              ))}
+              {day.deadlines.map((task) => (
+                <DeadlineBlock
+                  key={`deadline:${task.id}`}
+                  task={task}
+                  timezone={timezone}
+                  topMinute={topMinute}
+                  gridHeight={gridHeight}
                 />
               ))}
               {nowMinute !== null && nowMinute >= topMinute && nowMinute <= bounds.end * 60 ? (
@@ -371,6 +417,9 @@ function AgendaList({
                 <span>
                   {task.title}
                   <span className={styles.agendaMeta}>
+                    {!task.dueDateOnly && task.dueAt
+                      ? `Due at ${formatClock(new Date(task.dueAt).getTime(), timezone)} · `
+                      : ""}
                     {countdownLabel(task.dueAt, timezone, task.dueDateOnly, now)}
                     {task.estimatedMinutes ? ` · ${formatDuration(task.estimatedMinutes)}` : ""}
                   </span>

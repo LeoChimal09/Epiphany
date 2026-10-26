@@ -163,6 +163,7 @@ export async function createCategory(db: Database, actor: Actor, name: string): 
 
 export interface NewTask {
   title: string;
+  priority?: "minor" | "major";
   categoryId?: string;
   details?: string;
   sourceText?: string;
@@ -182,6 +183,7 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
       ownerId: actor.ownerId,
       categoryId,
       title: input.title,
+      priority: input.priority ?? "minor",
       details: input.details ?? null,
       sourceText: input.sourceText ?? null,
       sourceRef: input.sourceRef ?? null,

@@ -1644,6 +1644,26 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(reminder?.dueAt.getTime()).toBe(now.getTime() + 60 * 60_000);
     });
 
+    it("schedules a one-time errand alert 30 minutes before its target time", async () => {
+      const owner = await ownerPrincipal();
+      const { assistant } = build(() => ({
+        kind: "create_reminder",
+        title: "Go grocery shopping",
+        date: "2026-10-14",
+        time: "14:00",
+      }));
+      const { reply } = await say(assistant, "remind me at 2pm to go grocery shopping");
+      expect(reply).toMatchObject({ outcome: "created", changed: true });
+      expect(reply.text).toContain("1:30 PM");
+      expect(reply.text).toContain("2:00 PM");
+      const [reminder] = await services.reminders.recent(owner);
+      expect(reminder).toMatchObject({
+        kind: "custom",
+        message: 'Time to "Go grocery shopping" (scheduled for 2:00 PM).',
+        dueAt: new Date("2026-10-14T18:30:00.000Z"),
+      });
+    });
+
     it("clears a finished task's remaining work blocks but keeps the task and its deadline", async () => {
       const owner = await seed();
       const task = (await taskRows()).find((t) => t.title === "Chemistry lab report")!;

@@ -37,6 +37,7 @@ const task: DashboardTask = {
   id: "task",
   categoryId: "inbox",
   title: "Homework",
+  priority: "minor",
   details: null,
   sourceText: null,
   reviewNote: null,
@@ -74,7 +75,9 @@ describe("unified calendar", () => {
     expect(html).toContain('aria-label="Previous day"');
     expect(html).toContain('aria-label="Next day"');
     expect(html).toContain("Homework");
+    expect(html).toContain("Due at 11:59 PM");
     expect(html).toContain("Lecture");
+    expect(html).toContain('aria-label="Due at 11:59 PM: Homework"');
   });
 
   it("renders a bounded month with deadlines, events, work blocks, and today's marker", () => {
@@ -91,7 +94,7 @@ describe("unified calendar", () => {
     expect(html.match(/<button/g)).toHaveLength(35);
     expect(html).toContain('aria-current="date"');
     expect(html).toContain("Wednesday, Oct 21, 7 items");
-    expect(html).toContain("Due: Homework");
+    expect(html).toContain("Due at 11:59 PM: Homework");
     expect(html).toContain("+4 more");
     const simple = renderToStaticMarkup(
       createElement(MonthView, {
@@ -123,7 +126,7 @@ describe("unified calendar", () => {
     expect(yesterday).toContain("past day");
     expect(yesterday).toContain(">Past</span>");
     expect(yesterday).toContain("monthPast");
-    expect(yesterday).toContain("Due: Homework");
+    expect(yesterday).toContain("Due at 11:59 PM: Homework");
     expect(yesterday).toContain("Event: Lecture");
     expect(yesterday).not.toContain('aria-current="date"');
     const today = buttons.find((button) => button.includes("Thursday, Oct 22,"))!;

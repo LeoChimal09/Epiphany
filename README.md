@@ -362,7 +362,7 @@ new behavioral observations.
 - Offer acknowledgment-required reminders with bounded follow-ups, not an
   unlimited notification loop or a claim that replies can literally be forced.
 - Configure quiet hours, urgency levels, frequency, delivery channels, and limits.
-- Send important reminders to DMs when enabled; Discord/device settings still
+- Send personal reminders to the private Discord `#check-ins` channel; Discord/device settings still
   control whether messages produce audible or push alerts.
 - Treat no reply as unknown. Provide a way to pause accountability without penalty.
 - Keep notifications persistent across service restarts, avoid duplicate sends,
@@ -417,9 +417,10 @@ Epi reports missing configuration instead of guessing an address.
   failed, or expired Google sync makes displayed availability explicitly tentative; sync
   status is a snapshot from the last load. Only loaded tasks are considered for milestones;
   task-limit warnings and bounded window/deadline lists remain visible.
-- Calendar views show assignment deadlines as due markers, not automatically scheduled
-  study sessions. Approved work blocks are separate and can sync to Google when connected;
-  assignment deadlines themselves are not exported.
+- Calendar views show task due dates as deadline markers, not automatically scheduled
+  work sessions. When Google write access is connected, due-dated tasks sync to the
+  dedicated Epiphany calendar (date-only deadlines as all-day events, timed deadlines
+  as short markers); approved work blocks sync separately as planned work sessions.
 - Calendar Day: timeline, checklist, current activity, and available time.
 - Calendar Week/Month: visual calendar distinguishing fixed events from movable work blocks.
 - Tasks combines general work and priorities: filter All tasks, With due date or

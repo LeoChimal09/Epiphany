@@ -19,6 +19,7 @@ const examples = {
   pause_reminders: {},
   resume_reminders: {},
   start_activity: { title: "Gardening", estimated_minutes: 60 },
+  create_reminder: { title: "Go grocery shopping", due_date: "2026-10-26", due_time: "14:00" },
   voice_control: { search: "join" },
   report_duration: { reference: "Return drill", estimated_minutes: 20 },
   show_insights: {},

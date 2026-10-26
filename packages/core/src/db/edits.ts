@@ -14,6 +14,7 @@ import { categories, notes, tasks, type Category, type Note, type Task } from ".
 
 export interface TaskPatch {
   title?: string;
+  priority?: "minor" | "major";
   details?: string | null;
   // null clears the deadline.
   dueAt?: Date | null;
@@ -61,6 +62,7 @@ export async function updateTask(
 
     const next = {
       title: patch.title ?? current.title,
+      priority: patch.priority ?? current.priority,
       details: patch.details === undefined ? current.details : patch.details,
       dueAt: patch.dueAt === undefined ? current.dueAt : patch.dueAt,
       dueDateOnly: patch.dueDateOnly ?? current.dueDateOnly,
@@ -99,6 +101,10 @@ export async function updateTask(
     const fields: string[] = [];
     const values: Record<string, unknown> = {};
     if (next.title !== current.title) fields.push("title");
+    if (next.priority !== current.priority) {
+      fields.push("priority");
+      values.priority = { from: current.priority, to: next.priority };
+    }
     if (next.details !== current.details) fields.push("details");
     if (!sameDate(next.dueAt, current.dueAt)) {
       fields.push("dueAt");

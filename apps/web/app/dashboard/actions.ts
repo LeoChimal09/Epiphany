@@ -101,6 +101,13 @@ function textField(form: FormData, name: string): string | undefined {
   return value;
 }
 
+function priorityField(form: FormData): "minor" | "major" | undefined {
+  const value = textField(form, "priority");
+  if (value === undefined) return undefined;
+  if (value === "minor" || value === "major") return value;
+  throw new ValidationError(["priority must be minor or major"]);
+}
+
 function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
   if (error instanceof ValidationError) return { ok: false, error: error.issues.join(". ") };
   if (error instanceof VersionConflictError) {
@@ -124,6 +131,7 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
   try {
     const task = await services.tasks.create(principal, {
       title: textField(form, "title"),
+      priority: priorityField(form) ?? "minor",
       details: textField(form, "details"),
       dueAt: textField(form, "dueAt"),
       estimatedMinutes,
@@ -171,6 +179,7 @@ export async function editDashboardTask(taskId: string, form: FormData): Promise
     const result = await services.tasks.update(principal, taskId, {
       expectedVersion: versionField(form),
       title: textField(form, "title"),
+      priority: priorityField(form),
       details: textField(form, "details") ?? "",
       dueAt: editDeadline(form),
       dueDateOnly: form.get("dueDateOnly") === "on",

@@ -270,7 +270,7 @@ export function buildDay(
 // the default waking hours.
 export function hourBounds(
   days: DayView[],
-  defaults = { start: 7, end: 21 },
+  defaults = { start: 0, end: 24 },
 ): { start: number; end: number } {
   let start = defaults.start;
   let end = defaults.end;

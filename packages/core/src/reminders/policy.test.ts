@@ -42,7 +42,7 @@ describe("reminder settings", () => {
     ]);
     expect(settings.dailyLimit).toBe(5);
     expect(settings.graceMinutes).toBe(DEFAULT_REMINDER_SETTINGS.graceMinutes);
-    expect(settings.quietHours).toBeNull();
+    expect(settings.quietHours).toEqual({ start: "22:00", end: "07:00" });
     expect(settings.paused).toBe(false);
     expect(settings.eventLeadMinutes).toBe(30);
   });
@@ -56,6 +56,11 @@ describe("reminder settings", () => {
     expect(settings.quietHours).toEqual({ start: "22:00", end: "07:00" });
     expect(settings.deadlineLeadHours).toEqual([48, 24, 2]);
     expect(settings.paused).toBe(true);
+  });
+
+  it("uses local overnight quiet hours unless the owner explicitly turns them off", () => {
+    expect(parseReminderSettings([]).quietHours).toEqual({ start: "22:00", end: "07:00" });
+    expect(parseReminderSettings([pref("reminders.quiet_hours", null)]).quietHours).toBeNull();
   });
 
   it("includes a one-hour warning by default but does not override the owner's chosen leads", () => {
@@ -168,9 +173,14 @@ describe("deciding whether to send", () => {
       now: at("2026-10-14T15:45:00.000Z"),
     });
     expect(decideDelivery(check)).toEqual({ action: "skip", reason: "stale" });
-    expect(decideDelivery(base({ now: at("2026-10-15T10:00:00.000Z") }))).toMatchObject({
-      action: "send",
-    });
+    expect(
+      decideDelivery(
+        base({
+          now: at("2026-10-15T10:00:00.000Z"),
+          settings: { ...DEFAULT_REMINDER_SETTINGS, quietHours: null },
+        }),
+      ),
+    ).toMatchObject({ action: "send" });
     expect(decideDelivery(base({ now: at("2026-10-15T16:00:00.000Z") }))).toEqual({
       action: "skip",
       reason: "stale",

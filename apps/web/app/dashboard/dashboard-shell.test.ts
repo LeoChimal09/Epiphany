@@ -14,6 +14,7 @@ describe("compact assistant dashboard", () => {
       id: `task-${index}`,
       categoryId: "inbox",
       title: `Assignment ${index + 1}`,
+      priority: "minor",
       details: null,
       sourceText: null,
       reviewNote: null,

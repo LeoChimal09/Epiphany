@@ -158,7 +158,13 @@ school assignments.
 
 - [ ] Complete goal 11.
 - Owner confirmed OAuth connection on 2026-10-22 and asked to defer further calendar
-  checks. Live import, work-block sync, conflict, and disconnect acceptance remain pending.
+  checks. On 2026-10-23 the production Calendars page showed the primary, holiday, and
+  Epiphany calendars up to date. Live task-deadline/work-block writes, conflict, and
+  disconnect acceptance remain pending.
+- 2026-10-23 follow-up: implemented idempotent task-deadline events on the dedicated
+  Epiphany calendar (date-only deadlines are all-day; timed deadlines are 15-minute
+  markers) and fixed narrow agenda text wrapping. Focused tests and the full automated
+  release gate passed; a real task event write still needs confirmation after deployment.
 - Deliver: OAuth consent, secure token storage, calendar selection, external
   event references, sync status, and a dedicated Epiphany calendar for writes.
 - Require: version-aware conflict checks, visible stale/pending sync state, and

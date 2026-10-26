@@ -952,6 +952,13 @@ export function DashboardShell({
                       <input name="title" required maxLength={300} autoFocus />
                     </label>
                     <label>
+                      Priority
+                      <select name="priority" defaultValue="minor">
+                        <option value="minor">Minor</option>
+                        <option value="major">Major — extra advance reminders</option>
+                      </select>
+                    </label>
+                    <label>
                       Due ({data.timezone})<input name="dueAt" type="datetime-local" />
                     </label>
                     <label>
@@ -1582,6 +1589,13 @@ function TaskRow({
             <input name="title" required maxLength={300} defaultValue={task.title} />
           </label>
           <label>
+            Priority
+            <select name="priority" defaultValue={task.priority}>
+              <option value="minor">Minor</option>
+              <option value="major">Major — extra advance reminders</option>
+            </select>
+          </label>
+          <label>
             Due ({timezone})
             <input
               name="dueAt"
@@ -1673,6 +1687,7 @@ function TaskRow({
               Needs review: {task.reviewNote}
             </span>
           ) : null}
+          {task.priority === "major" ? <span className={styles.majorTag}>Major</span> : null}
           {task.estimatedMinutes ? (
             <span>
               <Clock size={13} aria-hidden="true" />

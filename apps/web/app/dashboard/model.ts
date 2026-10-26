@@ -2,6 +2,7 @@ export interface DashboardTask {
   id: string;
   categoryId: string;
   title: string;
+  priority: "minor" | "major";
   details: string | null;
   sourceText: string | null;
   // What still needs the owner's review (for example a missing due date), or null.

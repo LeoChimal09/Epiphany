@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `priority` enum('minor','major') DEFAULT 'minor' NOT NULL;

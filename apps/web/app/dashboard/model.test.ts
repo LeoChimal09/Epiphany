@@ -17,6 +17,7 @@ const task = (overrides: Partial<DashboardTask> = {}): DashboardTask => ({
   id: "task-one",
   categoryId: "inbox",
   title: "Chemistry worksheet",
+  priority: "minor",
   details: "Chapter three",
   sourceText: null,
   reviewNote: null,

@@ -1,4 +1,4 @@
-import { DiscordAPIError, type Client } from "discord.js";
+import { ChannelType, DiscordAPIError, PermissionFlagsBits, type Client } from "discord.js";
 import type { Database } from "@epiphany/core/db";
 import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services";
 import { loadOverviewData, renderBriefing } from "@epiphany/core/overview";
@@ -11,30 +11,56 @@ import {
   type ReminderDelivery,
 } from "@epiphany/core/reminders";
 
-// Discord error code for "Cannot send messages to this user" (DMs closed or blocked).
-const CANNOT_DM = 50007;
-
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(
     JSON.stringify({ time: new Date().toISOString(), service: "discord", event, ...fields }),
   );
 }
 
-// Sends a reminder as a DM to the owner. Closed DMs are reported as "blocked" (retrying cannot
-// help); a rate limit or any other failure is reported so the engine can back off and retry.
-export function dmDelivery(client: Client, ownerUserId: string): ReminderDelivery {
+// Delivers only to the owner's private Epiphany #check-ins channel. It will not fall back to a
+// public/look-alike channel or DM, so personal reminders cannot leak across destinations.
+export function serverChannelDelivery(client: Client, ownerUserId: string): ReminderDelivery {
   return {
     async send(text): Promise<DeliveryResult> {
       try {
-        const owner = await client.users.fetch(ownerUserId);
-        const message = await owner.send({
-          content: text.slice(0, 2000),
-          allowedMentions: { parse: [] },
-        });
-        return { ok: true, channelId: message.channelId };
+        const botUser = client.user;
+        if (!botUser) return { ok: false, reason: "error" };
+        for (const guild of client.guilds.cache.values()) {
+          let channels;
+          try {
+            channels = await guild.channels.fetch();
+          } catch (error) {
+            if (error instanceof DiscordAPIError && Number(error.code) === 50001) continue;
+            throw error;
+          }
+          const channel = channels.find(
+            (candidate) =>
+              candidate?.type === ChannelType.GuildText &&
+              candidate.name.toLowerCase() === "check-ins" &&
+              candidate.parent?.name.toLowerCase() === "epiphany" &&
+              candidate
+                .permissionsFor(guild.roles.everyone)
+                ?.has(PermissionFlagsBits.ViewChannel) === false &&
+              candidate.permissionsFor(botUser)?.has(PermissionFlagsBits.SendMessages),
+          );
+          if (!channel || channel.type !== ChannelType.GuildText) continue;
+          let owner;
+          try {
+            owner = await guild.members.fetch(ownerUserId);
+          } catch (error) {
+            if (error instanceof DiscordAPIError && Number(error.code) === 10007) continue;
+            throw error;
+          }
+          if (!owner.permissionsIn(channel).has(PermissionFlagsBits.ViewChannel)) continue;
+          const message = await channel.send({
+            content: `<@${ownerUserId}> ${text}`.slice(0, 2000),
+            allowedMentions: { parse: [], users: [ownerUserId] },
+          });
+          return { ok: true, channelId: message.channelId };
+        }
+        return { ok: false, reason: "blocked" };
       } catch (error) {
         if (error instanceof DiscordAPIError) {
-          if (Number(error.code) === CANNOT_DM) return { ok: false, reason: "blocked" };
           if (error.status === 429) {
             return { ok: false, reason: "rate_limited", retryAfterMs: 60_000 };
           }
@@ -60,12 +86,12 @@ export function createReminderRunner(options: {
   ownerUserId: string;
   timezone: string;
   clock?: () => Date;
-  // Called after a reminder DM was delivered, so a reply in that DM can be tied to it.
+  // Called after a reminder was delivered, so a reply in that private channel can be tied to it.
   onDelivered?: (reminders: Reminder[], result: { channelId?: string }) => void | Promise<void>;
 }): ReminderRunner {
   const { client, db, ownerUserId, timezone } = options;
   const clock = options.clock ?? (() => new Date());
-  const delivery = dmDelivery(client, ownerUserId);
+  const delivery = serverChannelDelivery(client, ownerUserId);
   let running = false;
   let timer: ReturnType<typeof setInterval> | undefined;
 

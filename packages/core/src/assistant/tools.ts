@@ -8,7 +8,7 @@ type Field = Exclude<keyof typeof intentWireSchema.shape, "kind" | "text">;
 // so scripted providers and the existing semantic validation/dispatch stay unchanged.
 const fields = {
   list_tasks: ["status", "from_date", "through_date", "search"],
-  create_task: ["title", "details", "due_date", "due_time", "estimated_minutes"],
+  create_task: ["title", "details", "due_date", "due_time", "estimated_minutes", "priority"],
   create_note: ["title", "details", "note_kind"],
   develop_idea: ["reference", "target_id", "details"],
   resume_idea: ["reference", "target_id"],
@@ -23,6 +23,7 @@ const fields = {
   pause_reminders: ["estimated_minutes"],
   resume_reminders: [],
   start_activity: ["title", "estimated_minutes"],
+  create_reminder: ["title", "due_date", "due_time"],
   voice_control: ["search"],
   report_duration: ["reference", "target_id", "estimated_minutes"],
   show_insights: [],
@@ -46,6 +47,7 @@ const required: Partial<Record<Action, Field[]>> = {
   capture: ["items"],
   recategorize: ["category"],
   start_activity: ["title", "estimated_minutes"],
+  create_reminder: ["title", "due_date", "due_time"],
   voice_control: ["search"],
   report_duration: ["estimated_minutes"],
   correct_estimate: ["title", "estimated_minutes"],

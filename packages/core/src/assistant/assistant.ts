@@ -1030,6 +1030,7 @@ export function createAssistant(options: AssistantOptions) {
             dueAt,
             dueDateOnly,
             estimatedMinutes: item.estimatedMinutes,
+            priority: item.priority,
             categoryId: category?.id,
             reviewNote: item.review ?? (!item.dueDate ? "no due date given" : undefined),
           });
@@ -1470,6 +1471,7 @@ export function createAssistant(options: AssistantOptions) {
           dueAt,
           dueDateOnly,
           estimatedMinutes: intent.estimatedMinutes ?? learned?.minutes,
+          priority: intent.priority,
         });
         const effort = task.estimatedMinutes ? `, about ${task.estimatedMinutes} min` : "";
         const why = learned
@@ -2002,6 +2004,36 @@ export function createAssistant(options: AssistantOptions) {
         });
         return reply({
           text: `Sounds good, enjoy your ${intent.activity}. I'll check in with you in ${intent.minutes} minutes.`,
+          outcome: "created",
+          changed: true,
+        });
+      }
+
+      case "create_reminder": {
+        const targetAt = localWallToUtc(intent.date, parseTimeOfDay(intent.time), timezone);
+        const now = clock();
+        if (targetAt.getTime() <= now.getTime()) {
+          return reply({
+            text: `That time has already passed in your timezone. What future date and time should I remind you about "${intent.title}"?`,
+            outcome: "clarification",
+            changed: false,
+          });
+        }
+        const remindAt = new Date(Math.max(targetAt.getTime() - 30 * 60_000, now.getTime()));
+        const display = (value: Date) =>
+          new Intl.DateTimeFormat("en-US", {
+            timeZone: timezone,
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(value);
+        const notifyWhen = remindAt.getTime() <= now.getTime() + 60_000 ? "now" : display(remindAt);
+        await services.reminders.create(principal, {
+          message: `Time to "${intent.title}" (scheduled for ${display(targetAt)}).`,
+          at: remindAt,
+          kind: "custom",
+        });
+        return reply({
+          text: `Got it. I'll remind you in Discord ${notifyWhen === "now" ? "now" : `at ${notifyWhen}`}, before ${display(targetAt)}, to ${intent.title}.`,
           outcome: "created",
           changed: true,
         });

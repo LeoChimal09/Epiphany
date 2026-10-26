@@ -19,6 +19,7 @@ const task = (over: Partial<Task>): Task => ({
   ownerId: "o",
   categoryId: "inbox",
   title: "Task",
+  priority: "minor",
   details: null,
   sourceText: null,
   sourceRef: null,
@@ -270,7 +271,7 @@ describe("overview rendering", () => {
             id: "r2",
             status: "failed",
             dueAt: at("2026-10-13T22:00:00.000Z"),
-            detail: "could not deliver: Discord DMs are closed or blocked",
+            detail: "could not deliver to the private Discord channel",
           }),
           reminder({ id: "r3", status: "sent", message: "Already sent" }),
           reminder({
@@ -284,7 +285,7 @@ describe("overview rendering", () => {
     );
     expect(text).toContain("__Coming up__\n• Thu, Oct 15 5:00 PM: Heads up");
     expect(text).toContain("__Didn't reach you__");
-    expect(text).toContain("DMs are closed or blocked");
+    expect(text).toContain("private Discord channel");
     expect(text).not.toContain("Already sent");
     expect(text).not.toContain("Ancient");
     expect(renderOverview("check-ins", data())).toContain("No reminders scheduled.");

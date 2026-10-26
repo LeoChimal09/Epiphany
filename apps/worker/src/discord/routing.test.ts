@@ -29,6 +29,10 @@ describe("routing Discord messages", () => {
       action: "handle",
       audience: "private",
     });
+    expect(routeMessage({ ...base, ...privateChannel, channelName: "check-ins" })).toEqual({
+      action: "handle",
+      audience: "private",
+    });
   });
 
   it("never answers anyone but the owner, or another bot, anywhere", () => {

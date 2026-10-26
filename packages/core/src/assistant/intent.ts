@@ -13,6 +13,7 @@ export interface CaptureItem {
   dueDate?: DateKey;
   dueTime?: string;
   estimatedMinutes?: number;
+  priority?: "minor" | "major";
   // The name of one of the owner's existing categories; anything unknown lands in the Inbox.
   category?: string;
   // What is missing or unclear (for example "no due date given"). Flags the record for review.
@@ -39,6 +40,7 @@ export type Intent =
       dueDate?: DateKey;
       dueTime?: string;
       estimatedMinutes?: number;
+      priority?: "minor" | "major";
     }
   | {
       kind: "create_note";
@@ -78,6 +80,7 @@ export type Intent =
   | { kind: "resume_reminders" }
   // The owner starts something and wants a check-in afterwards ("gaming for an hour").
   | { kind: "start_activity"; activity: string; minutes: number }
+  | { kind: "create_reminder"; title: string; date: DateKey; time: string }
   // Change one of the owner's settings (quiet hours, briefing time, routines, planning hours).
   | { kind: "set_preference"; key: SettableKey; value: unknown; summary: string }
   // Show the schedule for a range of dates with free time and what could be tackled, and schedule
@@ -127,6 +130,7 @@ export const INTENT_KINDS = [
   "pause_reminders",
   "resume_reminders",
   "start_activity",
+  "create_reminder",
   "voice_control",
   "report_duration",
   "show_insights",
@@ -151,6 +155,7 @@ const captureItemWireSchema = z
     due_date: z.string().nullable(),
     due_time: z.string().nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
+    priority: z.enum(["minor", "major"]).nullable().optional(),
     category: z.string().max(100).nullable(),
     review: z.string().max(300).nullable(),
   })
@@ -167,6 +172,7 @@ export const intentWireSchema = z
     due_date: z.string().nullable(),
     due_time: z.string().nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
+    priority: z.enum(["minor", "major"]).nullable(),
     note_kind: z.enum(["note", "idea"]).nullable().default(null),
     status: z.enum(["open", "completed", "all"]).nullable(),
     from_date: z.string().nullable(),
@@ -232,6 +238,7 @@ function toCaptureItem(item: z.infer<typeof captureItemWireSchema>): CaptureItem
     ...(dueDate ? { dueDate } : {}),
     ...(dueTime ? { dueTime } : {}),
     ...(item.estimated_minutes ? { estimatedMinutes: item.estimated_minutes } : {}),
+    ...(item.priority ? { priority: item.priority } : {}),
     ...(category ? { category } : {}),
     ...(review ? { review } : {}),
   };
@@ -283,6 +290,7 @@ export function toIntent(raw: unknown): Intent {
         ...(dueDate ? { dueDate } : {}),
         ...(dueTime ? { dueTime } : {}),
         ...(wire.estimated_minutes ? { estimatedMinutes: wire.estimated_minutes } : {}),
+        ...(wire.priority ? { priority: wire.priority } : {}),
       };
     }
     case "create_note":
@@ -371,6 +379,22 @@ export function toIntent(raw: unknown): Intent {
         kind: "start_activity",
         activity: need(wire.title, "title"),
         minutes: wire.estimated_minutes,
+      };
+    }
+    case "create_reminder": {
+      const dueDate = date(wire.due_date, "due_date");
+      if (!dueDate) throw new IntentError("due_date is required");
+      const dueTime = need(wire.due_time, "due_time");
+      try {
+        parseTimeOfDay(dueTime);
+      } catch {
+        throw new IntentError("due_time is not a valid time");
+      }
+      return {
+        kind: "create_reminder",
+        title: need(wire.title, "title"),
+        date: dueDate,
+        time: dueTime,
       };
     }
     case "voice_control": {

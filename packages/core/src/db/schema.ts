@@ -86,6 +86,7 @@ export const tasks = mysqlTable(
       .notNull()
       .references(() => categories.id),
     title: varchar("title", { length: 300 }).notNull(),
+    priority: mysqlEnum("priority", ["minor", "major"]).notNull().default("minor"),
     details: text("details"),
     sourceText: text("source_text"),
     sourceRef: varchar("source_ref", { length: 255 }),
@@ -461,9 +462,10 @@ export type CalendarRefState = (typeof CALENDAR_REF_STATES)[number];
 // Links a provider event to a local record so nothing is duplicated or looped.
 //   ownership 'external': the event came from the provider (event_id is the imported local event).
 //     Epiphany never edits or deletes these.
-//   ownership 'epiphany': Epiphany created it from a work block (work_block_id) in its own calendar.
+//   ownership 'epiphany': Epiphany created it from a work block (work_block_id) or task deadline
+//     (identified by sync_key) in its own calendar.
 // etag/remote_updated_at are the provider's version of the event as last seen; synced_version is
-// the work block version last pushed. 'uncertain' means a write may or may not have happened and
+// the local work-block or task version last pushed. 'uncertain' means a write may or may not have happened and
 // must be reconciled (looked up by sync_key) before it is retried.
 export const calendarEventRefs = mysqlTable(
   "calendar_event_refs",

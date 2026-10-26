@@ -39,6 +39,10 @@
 .workspace select {
   font: inherit;
 }
+.workspace select option {
+  color: var(--ink);
+  background-color: var(--surface-2);
+}
 .workspace button,
 .workspace a,
 .workspace input,
@@ -1385,7 +1389,9 @@
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
-  overflow: hidden;
+  max-height: min(70dvh, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .gridHead,
 .gridBody {
@@ -1475,10 +1481,44 @@
   background: rgba(29, 185, 84, 0.16);
   border-color: rgba(29, 185, 84, 0.4);
 }
+.slotDeadline {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  left: 4px;
+  right: 4px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid rgba(93, 153, 255, 0.75);
+  border-radius: 8px;
+  color: #e2edff;
+  background: rgba(45, 125, 255, 0.82);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.slotDeadline svg {
+  flex: 0 0 auto;
+}
+.slotDeadline span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .slotConflict {
   color: #ffd2d4;
   background: rgba(224, 71, 76, 0.2);
   border-color: var(--danger);
+}
+.majorTag {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #ffd2d4;
+  background: rgba(224, 71, 76, 0.16);
+  font-size: 11px;
+  font-weight: 700;
 }
 .slotTitle {
   display: flex;
@@ -1539,11 +1579,16 @@
   align-items: flex-start;
   overflow-wrap: anywhere;
 }
+.agendaList li > span:not(.agendaTime) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .agendaTime {
-  flex-shrink: 0;
+  flex: 0 0 7.6rem;
   min-width: 7.6rem;
   color: var(--muted-2);
   font-size: 12px;
+  white-space: nowrap;
 }
 .agendaMeta,
 .agendaWarn {

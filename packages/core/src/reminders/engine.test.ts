@@ -102,11 +102,22 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       });
       await sync("2026-10-14T15:00:00.000Z");
       const times = (await rows()).map((r) => r.dueAt.toISOString()).toSorted();
-      expect(times).toEqual([
-        "2026-10-16T04:59:00.000Z",
-        "2026-10-17T02:59:00.000Z",
-        "2026-10-17T03:59:00.000Z",
-      ]);
+      expect(times).toEqual(["2026-10-15T14:00:00.000Z", "2026-10-16T14:00:00.000Z"]);
+      expect((await rows()).map((r) => r.message).join("\n")).toContain("due today");
+    });
+
+    it("schedules major deadlines two weeks ahead plus the closer configured reminders", async () => {
+      const dueAt = "2026-11-04T23:00:00.000Z";
+      await services.tasks.create(owner, { title: "Exam", dueAt, priority: "major" });
+      await services.tasks.create(owner, { title: "Minor task", dueAt });
+
+      await sync("2026-10-21T23:00:00.000Z");
+
+      const all = await rows();
+      const twoWeekAlerts = all.filter((reminder) => reminder.dedupeKey.includes("lead336h"));
+      expect(twoWeekAlerts).toHaveLength(1);
+      expect(twoWeekAlerts[0]?.message).toContain('"Exam"');
+      expect(all.filter((reminder) => reminder.status === "scheduled")).toHaveLength(9);
     });
 
     it("replaces the reminders when the deadline moves, and cancels them when the task is done", async () => {
@@ -139,6 +150,37 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       expect(all.find((r) => r.kind === "event")?.dueAt.toISOString()).toBe(
         "2026-10-14T19:30:00.000Z",
       );
+    });
+
+    it("sends a same-day meeting reminder and schedules all-day events for the morning", async () => {
+      const meeting = await services.events.create(owner, {
+        title: "Project review",
+        startsAt: "2026-10-14T15:20:00.000Z",
+        endsAt: "2026-10-14T16:20:00.000Z",
+        timezone: TZ,
+      });
+      const allDay = await services.events.create(owner, {
+        title: "Conference",
+        startsAt: "2026-10-15T05:00:00.000Z",
+        endsAt: "2026-10-16T05:00:00.000Z",
+        timezone: TZ,
+        allDay: true,
+      });
+      await sync("2026-10-14T15:00:00.000Z", { briefingTime: null });
+      const scheduled = await rows();
+      expect(
+        scheduled
+          .find((r) => r.subjectId === meeting.id && r.kind === "event")
+          ?.dueAt.toISOString(),
+      ).toBe("2026-10-14T14:50:00.000Z");
+      expect(scheduled.filter((r) => r.subjectId === allDay.id)).toMatchObject([
+        { kind: "event", dueAt: at("2026-10-15T14:00:00.000Z") },
+      ]);
+      expect(scheduled.some((r) => r.subjectId === allDay.id && r.kind === "check_in")).toBe(false);
+
+      const result = await cycle("2026-10-14T15:00:00.000Z", { briefingTime: null });
+      expect(result.sent).toBe(1);
+      expect(sent[0]).toContain("Project review");
     });
   });
 
@@ -208,7 +250,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       outcome = () => ({ ok: false, reason: "blocked" });
       expect((await cycle("2026-10-15T22:00:30.000Z")).failed).toBe(1);
       const failed = (await rows()).find((r) => r.status === "failed");
-      expect(failed?.detail).toContain("DMs are closed");
+      expect(failed?.detail).toContain("private Discord channel");
       expect(failed?.attempts).toBe(1);
       await cycle("2026-10-15T22:30:00.000Z");
       expect(failed && (await rows()).find((r) => r.id === failed.id)?.attempts).toBe(1);
@@ -218,7 +260,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       await addTask();
       await sync("2026-10-14T15:00:00.000Z");
       // A worker claims the job and dies before recording the result.
-      const claimed = await claimDue(handle.db, at("2026-10-15T22:00:30.000Z"));
+      const claimed = await claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z"));
       expect(claimed).toHaveLength(1);
 
       const later = new Date(at("2026-10-15T22:00:30.000Z").getTime() + SENDING_STALE_MS + 1000);
@@ -234,9 +276,9 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       await addTask();
       await sync("2026-10-14T15:00:00.000Z");
       const results = await Promise.all([
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
       ]);
       expect(results.flat()).toHaveLength(1);
     });
@@ -442,5 +484,39 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
     await sync("2026-10-14T15:00:00.000Z");
     expect(await rows()).toHaveLength(0);
     expect(await handle.db.select().from(tasks).where(eq(tasks.ownerId, other.id))).toHaveLength(1);
+  });
+
+  it("claims and recovers only this owner's reminder jobs", async () => {
+    const other = await createOwner(handle.db, { displayName: "Other" });
+    const theirs = await issueOwnerPrincipal(handle.db, other.id, {
+      source: "dashboard",
+      audience: "private",
+      initiator: "owner",
+    });
+    await services.tasks.create(theirs, { title: "Other's task", dueAt: DUE });
+    await syncReminders({
+      db: handle.db,
+      ownerId: other.id,
+      now: at("2026-10-14T15:00:00.000Z"),
+      timezone: TZ,
+      settings: settings(),
+    });
+    const otherJobs = (await rows()).filter((row) => row.ownerId === other.id);
+    const stale = otherJobs[0]!;
+    await handle.db
+      .update(reminders)
+      .set({
+        status: "sending",
+        claimedAt: at("2026-10-15T21:57:00.000Z"),
+      })
+      .where(eq(reminders.id, stale.id));
+
+    await addTask();
+    await sync("2026-10-14T15:00:00.000Z");
+    await cycle("2026-10-15T22:00:30.000Z");
+
+    const after = (await rows()).filter((row) => row.ownerId === other.id);
+    expect(after.find((row) => row.id === stale.id)?.status).toBe("sending");
+    expect(after.filter((row) => row.status === "scheduled")).toHaveLength(2);
   });
 });

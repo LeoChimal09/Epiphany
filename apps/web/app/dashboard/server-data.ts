@@ -19,6 +19,7 @@ export function taskForDashboard(task: Task): DashboardTask {
     id: task.id,
     categoryId: task.categoryId,
     title: task.title,
+    priority: task.priority,
     details: task.details,
     sourceText: task.sourceText,
     reviewNote: task.reviewNote,

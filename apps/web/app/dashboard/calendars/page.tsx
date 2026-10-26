@@ -125,8 +125,8 @@ function Panel({ overview, timezone }: { overview: CalendarOverview; timezone: s
         </p>
         {account.canWrite ? (
           <p className={styles.muted}>
-            Task deadlines shown as &quot;Due:&quot; in the dashboard are not exported. Schedule a
-            work block to put time for a task on Google Calendar.
+            Tasks with due dates are added to the Epiphany calendar as deadline events (all-day if
+            no due time was set). Scheduled work blocks appear separately as work sessions.
           </p>
         ) : null}
         {account.status === "needs_reauth" ? (

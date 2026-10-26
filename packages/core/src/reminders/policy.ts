@@ -12,7 +12,7 @@ import type { Preference } from "../db/schema";
 // Reminder behavior the owner can change. Defaults (chosen for Goal 15, see docs/reminders.md):
 // a time-sensitive reminder (an event, a check-in, a wind-down) is only worth sending for 30
 // minutes after it was due; a deadline or custom reminder stays worth sending for 24 hours;
-// at most 12 ordinary reminders a day; quiet hours are off until the owner sets them.
+// at most 12 ordinary reminders a day; ordinary reminders are quiet from 10 PM to 7 AM locally.
 export interface RoutineSettings {
   // Daily bedtime wind-down prompt, "HH:MM".
   bedtime: string | null;
@@ -41,7 +41,7 @@ export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
   paused: false,
   briefingTime: "08:00",
   routines: { bedtime: null, workout: null, awareness: null },
-  quietHours: null,
+  quietHours: { start: "22:00", end: "07:00" },
   graceMinutes: 30,
   catchUpHours: 24,
   dailyLimit: 12,

@@ -35,6 +35,7 @@ const task: DashboardTask = {
   id: "task",
   title: "Homework",
   categoryId: "inbox",
+  priority: "minor",
   details: null,
   sourceText: null,
   reviewNote: null,

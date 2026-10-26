@@ -25,6 +25,7 @@ const timezone = z
 export const createTaskInput = z
   .object({
     title,
+    priority: z.enum(["minor", "major"]).optional(),
     categoryId: id.optional(),
     details: optionalText(10_000),
     sourceText: optionalText(20_000),
@@ -88,6 +89,7 @@ export const updateTaskInput = z
   .object({
     expectedVersion: version.optional(),
     title: title.optional(),
+    priority: z.enum(["minor", "major"]).optional(),
     details: clearableText(10_000).optional(),
     dueAt: instant.nullable().optional(),
     dueDateOnly: z.boolean().optional(),

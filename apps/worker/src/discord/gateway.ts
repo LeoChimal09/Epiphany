@@ -63,8 +63,8 @@ export interface DiscordGateway {
 }
 
 // How often the overviews are compared with the records, to catch changes made in the dashboard.
-const OVERVIEW_POLL_MS = 30_000;
-const REMINDER_POLL_MS = 30_000;
+const OVERVIEW_POLL_MS = 15_000;
+const REMINDER_POLL_MS = 15_000;
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(
@@ -233,7 +233,7 @@ export async function startDiscordGateway(
     });
   }
 
-  // Persistent reminders: independent of the model, safe to restart, delivered as DMs.
+  // Persistent reminders: independent of the model, safe to restart, delivered in private #check-ins.
   const reminderRunner = createReminderRunner({
     client,
     db: database.db,
@@ -241,7 +241,7 @@ export async function startDiscordGateway(
     timezone: options.timezone,
     clock,
     // Replies to a reminder ("done", "snooze", "not going") are understood in its context: the
-    // DM conversation remembers which reminder and which task or event it was about.
+    // The private-channel conversation remembers which reminder and which task or event it was about.
     onDelivered: (delivered, { channelId }) => {
       const reminder = delivered.at(-1);
       if (!channelId || !reminder || delivered.length !== 1) return;
@@ -295,9 +295,11 @@ export async function startDiscordGateway(
         await prepareServer(client, guild, ownerUserId);
       await overviews.run({ verify: true });
       overviews.start(OVERVIEW_POLL_MS);
-      void reminderRunner.run();
+      await reminderRunner.run();
       reminderRunner.start(REMINDER_POLL_MS);
-    })();
+    })().catch((error: unknown) => {
+      log("discord_ready_setup_failed", { error: error instanceof Error ? error.name : "unknown" });
+    });
   });
   // Someone deleting an overview message only removes the message; it is put back, and no record is
   // touched.

@@ -9,6 +9,7 @@ const wire = (over: Record<string, unknown>) => ({
   due_date: null,
   due_time: null,
   estimated_minutes: null,
+  priority: null,
   note_kind: null,
   status: null,
   from_date: null,
@@ -115,6 +116,7 @@ describe("intent parsing", () => {
           due_date: "2026-10-16",
           due_time: "17:00",
           estimated_minutes: 45,
+          priority: "major",
         }),
       ),
     ).toEqual({
@@ -123,7 +125,38 @@ describe("intent parsing", () => {
       dueDate: "2026-10-16",
       dueTime: "17:00",
       estimatedMinutes: 45,
+      priority: "major",
     });
+    expect(toIntent(wire({ kind: "create_task", title: "Exam next month" }))).toEqual({
+      kind: "create_task",
+      title: "Exam next month",
+    });
+    expect(
+      toIntent(
+        wire({
+          kind: "create_reminder",
+          title: "Go grocery shopping",
+          due_date: "2026-10-26",
+          due_time: "14:00",
+        }),
+      ),
+    ).toEqual({
+      kind: "create_reminder",
+      title: "Go grocery shopping",
+      date: "2026-10-26",
+      time: "14:00",
+    });
+    for (const invalid of [
+      wire({ kind: "create_reminder", title: "Groceries", due_date: null, due_time: "14:00" }),
+      wire({
+        kind: "create_reminder",
+        title: "Groceries",
+        due_date: "2026-10-26",
+        due_time: "2pm",
+      }),
+    ]) {
+      expect(() => toIntent(invalid)).toThrow(IntentError);
+    }
     expect(
       toIntent(wire({ kind: "complete_task", reference: "chem lab", target_id: "abc" })),
     ).toEqual({

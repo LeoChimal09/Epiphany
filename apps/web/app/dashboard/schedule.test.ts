@@ -56,6 +56,7 @@ const task = (over: Partial<DashboardTask>): DashboardTask => ({
   id: "task",
   categoryId: "inbox",
   title: "Task",
+  priority: "minor",
   details: null,
   sourceText: null,
   reviewNote: null,
@@ -274,7 +275,7 @@ describe("a day's timeline", () => {
 });
 
 describe("formatting and bounds", () => {
-  it("widens hour bounds to fit early and late items", () => {
+  it("shows the full day and widens bounds to fit early and late items", () => {
     const early = buildDay(
       "2026-10-14",
       timelineItems(schedule({ blocks: [block("dawn", "2026-10-14T05:30", "2026-10-14T06:30")] })),
@@ -287,8 +288,8 @@ describe("formatting and bounds", () => {
       [],
       CHICAGO,
     );
-    expect(hourBounds([])).toEqual({ start: 7, end: 21 });
-    expect(hourBounds([early, late])).toEqual({ start: 5, end: 23 });
+    expect(hourBounds([])).toEqual({ start: 0, end: 24 });
+    expect(hourBounds([early, late], { start: 7, end: 21 })).toEqual({ start: 5, end: 23 });
   });
 
   it("reports the current minute only on today's date", () => {

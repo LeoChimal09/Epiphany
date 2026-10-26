@@ -55,10 +55,12 @@ in the same call; long idea replies are also delivered in full across messages.
 
 Once the workspace exists, Epi keeps one message in each of `today`, `schedule`, `priorities`,
 `notes-and-ideas`, and `activity-log` up to date. (`check-ins` waits for reminders, Goal 15.)
+Personal reminders are posted with an owner-only mention in the private `#check-ins` channel; replies
+there are handled privately like replies in `#assistant`.
 
 - The message is **edited in place**, never reposted. It is rebuilt from the database, so a change
   made in Discord or in the dashboard shows up: right away for changes made in Discord, and within
-  about 30 seconds for dashboard changes (the worker compares the records with what it last posted).
+  about 15 seconds for dashboard changes (the worker compares the records with what it last posted).
   Nothing is sent when nothing changed.
 - If someone **deletes an overview message**, Epi posts it again. Only the message is gone; no task,
   note, or event is touched.
