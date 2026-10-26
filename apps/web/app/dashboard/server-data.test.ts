@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { localWallToUtc } from "@epiphany/core/planning";
-import { dashboardContext, loadSchedule } from "./server-data";
+import { dashboardContext, loadSchedule, taskForDashboard } from "./server-data";
 
 const mocks = vi.hoisted(() => ({
   events: vi.fn(),
@@ -45,6 +45,7 @@ describe("schedule planning snapshot", () => {
       to: localWallToUtc("2026-10-27", 0, "America/Chicago"),
       limit: 200,
     });
+
     expect(mocks.preferences).toHaveBeenCalledWith(context.principal);
     expect(mocks.overview).toHaveBeenCalledWith(context.principal);
   });
@@ -53,5 +54,40 @@ describe("schedule planning snapshot", () => {
     await expect(loadSchedule(await dashboardContext(), "2026-10-19")).rejects.toThrow(
       "unavailable",
     );
+  });
+});
+
+describe("legacy task type mapping", () => {
+  it("shows records without a deadline or effort estimate as todos", () => {
+    const now = new Date("2026-10-26T12:00:00.000Z");
+    const mapped = taskForDashboard({
+      id: "legacy-task",
+      ownerId: "owner",
+      categoryId: "inbox",
+      taskType: "task",
+      title: "Buy the right part",
+      priority: "major",
+      details: null,
+      sourceText: null,
+      sourceRef: null,
+      reviewNote: null,
+      dueAt: null,
+      dueDateOnly: false,
+      estimatedMinutes: null,
+      remainingMinutes: null,
+      status: "open",
+      completedAt: null,
+      archivedAt: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(mapped).toMatchObject({
+      taskType: "todo",
+      priority: "minor",
+      dueAt: null,
+      estimatedMinutes: null,
+    });
   });
 });

@@ -1,6 +1,7 @@
 export interface DashboardTask {
   id: string;
   categoryId: string;
+  taskType: "task" | "todo";
   title: string;
   priority: "minor" | "major";
   details: string | null;
@@ -44,7 +45,7 @@ export interface HistoryFilters {
   through: string;
 }
 
-export type TaskFilter = "all" | "planned" | "plain";
+export type TaskFilter = "all" | "planned" | "todo" | "events";
 
 export interface DashboardData {
   tasks: DashboardTask[];
@@ -63,13 +64,22 @@ export function visibleTasks(
   categoryId?: string | null,
   filter: TaskFilter = "all",
 ): DashboardTask[] {
-  if (view === "notes" || view === "history" || view === "today" || view === "week") return [];
+  if (
+    filter === "events" ||
+    view === "notes" ||
+    view === "history" ||
+    view === "today" ||
+    view === "week"
+  )
+    return [];
   const query = search.trim().toLocaleLowerCase();
   return tasks
     .filter((task) => (view === "completed" ? task.status === "completed" : task.status === "open"))
     .filter((task) => {
-      const hasPlanning = task.dueAt !== null || task.estimatedMinutes !== null;
-      return filter === "all" || (filter === "planned" ? hasPlanning : !hasPlanning);
+      return (
+        filter === "all" ||
+        (filter === "planned" ? task.taskType === "task" : task.taskType === "todo")
+      );
     })
     .filter((task) => !categoryId || task.categoryId === categoryId)
     .filter((task) =>

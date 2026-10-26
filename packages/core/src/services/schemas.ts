@@ -25,6 +25,7 @@ const timezone = z
 export const createTaskInput = z
   .object({
     title,
+    taskType: z.enum(["task", "todo"]).optional(),
     priority: z.enum(["minor", "major"]).optional(),
     categoryId: id.optional(),
     details: optionalText(10_000),
@@ -88,6 +89,7 @@ const clearableText = (max: number) =>
 export const updateTaskInput = z
   .object({
     expectedVersion: version.optional(),
+    taskType: z.enum(["task", "todo"]).optional(),
     title: title.optional(),
     priority: z.enum(["minor", "major"]).optional(),
     details: clearableText(10_000).optional(),

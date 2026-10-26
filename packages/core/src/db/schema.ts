@@ -85,6 +85,7 @@ export const tasks = mysqlTable(
     categoryId: char("category_id", { length: 36 })
       .notNull()
       .references(() => categories.id),
+    taskType: mysqlEnum("task_type", ["task", "todo"]).notNull().default("task"),
     title: varchar("title", { length: 300 }).notNull(),
     priority: mysqlEnum("priority", ["minor", "major"]).notNull().default("minor"),
     details: text("details"),

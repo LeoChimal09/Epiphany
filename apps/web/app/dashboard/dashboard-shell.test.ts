@@ -13,6 +13,7 @@ describe("compact assistant dashboard", () => {
     const tasks: DashboardTask[] = Array.from({ length: 40 }, (_, index) => ({
       id: `task-${index}`,
       categoryId: "inbox",
+      taskType: "task",
       title: `Assignment ${index + 1}`,
       priority: "minor",
       details: null,

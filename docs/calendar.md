@@ -21,10 +21,11 @@ a real Google account yet; the live checks that remain are listed at the end.
   and removed on the "Epiphany" calendar only. Date-only task deadlines become all-day events;
   timed task deadlines become 15-minute markers beginning at the due time. An estimate describes
   effort only; it does not shift a deadline or reserve calendar time. The Dashboard's single **Add
-  task** entry point offers an explicit **Task — due date or deadline** versus **Event — start and
-  end time** choice. Events can use a start/end range or a start time plus duration; both create the
-  same actual calendar interval. Work blocks also occupy their actual start-to-end interval. A task
-  without a due date is not exported. Events have stable IDs and
+  task** entry point offers separate **Task — has a deadline**, **Todo — no deadline**, and
+  **Event — start and end time** types. Todos stay on the task list without estimated effort, a due
+  date, deadline reminders, or calendar items/exports. Events can use a start/end range or a start
+  time plus estimated duration; both create the same actual calendar interval. Work blocks also
+  occupy their actual start-to-end interval. Events have stable IDs and
   private keys (`epiphanyKey`), so retries do not create duplicates and Epiphany recognizes its own
   events rather than importing them again.
 - **Dashboard timeline**: task deadlines remain compact deadline markers; only events and work

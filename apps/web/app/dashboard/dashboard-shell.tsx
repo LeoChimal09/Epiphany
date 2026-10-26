@@ -57,6 +57,7 @@ import {
   proposeDashboardNoteDeletion,
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
+  loadDashboardEvents,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -64,6 +65,7 @@ import {
   removeDashboardWorkBlock,
   reopenDashboardTask,
   type DashboardResult,
+  type DashboardEventsResult,
   type DashboardScheduleChangeResult,
 } from "./actions";
 import {
@@ -91,6 +93,7 @@ import {
   todayKey,
   weekStartOf,
   type ScheduleData,
+  type ScheduleEvent,
   type TimelineItem,
 } from "./schedule";
 import styles from "./workspace.module.css";
@@ -101,7 +104,7 @@ const headings: Record<DashboardView, string> = {
   assistant: "Ask Epi",
   today: "Calendar",
   week: "Calendar",
-  tasks: "Active tasks",
+  tasks: "Tasks & Todos",
   completed: "Completed tasks",
   notes: "Notes & ideas",
   category: "Category",
@@ -143,7 +146,7 @@ export function DashboardShell({
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | null>(null);
-  const [calendarEntryType, setCalendarEntryType] = useState<"task" | "event">("task");
+  const [calendarEntryType, setCalendarEntryType] = useState<"task" | "todo" | "event">("task");
   const [eventAllDay, setEventAllDay] = useState(false);
   const [eventTimingMode, setEventTimingMode] = useState<"end" | "duration">("end");
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -162,8 +165,16 @@ export function DashboardShell({
   // Starts from the server's clock so hydration matches, then follows the browser clock.
   const [now, setNow] = useState(() => new Date(initialData.capturedAt));
   const [schedule, setSchedule] = useState(initialSchedule);
+  const [eventListResult, setEventListResult] = useState<{
+    key: string;
+    result: DashboardEventsResult;
+  } | null>(null);
+  const [eventListRefresh, setEventListRefresh] = useState(0);
   const [weekStart, setWeekStart] = useState(() =>
     weekStartOf(todayKey(initialData.timezone, new Date(initialData.capturedAt))),
+  );
+  const [calendarFocusDate, setCalendarFocusDate] = useState(() =>
+    todayKey(initialData.timezone, new Date(initialData.capturedAt)),
   );
   const requestedWeek = useRef(weekStart);
   useEffect(() => {
@@ -173,6 +184,32 @@ export function DashboardShell({
     return () => window.clearInterval(timer);
   }, []);
   const today = todayKey(data.timezone, now);
+  const showingEvents = view === "tasks" && taskFilter === "events";
+  const includeUpcomingEvents =
+    view === "tasks" && (taskFilter === "all" || taskFilter === "events");
+  const eventListKey = `${today}:${eventListRefresh}`;
+  useEffect(() => {
+    if (!includeUpcomingEvents) return;
+    let cancelled = false;
+    void loadDashboardEvents(today)
+      .then((result) => {
+        if (!cancelled) setEventListResult({ key: eventListKey, result });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEventListResult({
+            key: eventListKey,
+            result: {
+              ok: false,
+              error: "Upcoming events could not be loaded. Refresh and try again.",
+            },
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [includeUpcomingEvents, today, eventListKey]);
   const isSchedule = view === "today" || view === "week";
   const isAssistant = view === "assistant";
   const neededWeek = view === "today" ? weekStartOf(today) : weekStart;
@@ -317,16 +354,37 @@ export function DashboardShell({
     event.preventDefault();
     const form = event.currentTarget;
     if (calendarEntryType === "event") {
-      changeSchedule(() => addDashboardEvent(new FormData(form)), {
-        week: neededWeek,
-        onSuccess: () => {
-          form.reset();
-          setComposer(null);
-          setCalendarEntryType("task");
-          setEventAllDay(false);
-          setEventTimingMode("end");
+      const fields = new FormData(form);
+      const selectedDate = fields.get("date");
+      const eventDate =
+        typeof selectedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate)
+          ? selectedDate
+          : today;
+      const eventWeek = weekStartOf(eventDate);
+      changeSchedule(
+        async () => {
+          const result = await addDashboardEvent(fields);
+          return result.ok
+            ? {
+                ...result,
+                message: `Event saved. Showing it on the calendar for ${formatDayLabel(eventDate, "long")}.`,
+              }
+            : result;
         },
-      });
+        {
+          week: eventWeek,
+          onSuccess: () => {
+            form.reset();
+            setComposer(null);
+            setCalendarEntryType("task");
+            setEventAllDay(false);
+            setEventTimingMode("end");
+            setCalendarFocusDate(eventDate);
+            setWeekStart(eventWeek);
+            setView("week");
+          },
+        },
+      );
       return;
     }
     const fields = prepareTaskForm(form, false);
@@ -395,6 +453,7 @@ export function DashboardShell({
     setComposer(null);
     if (next === "today" || next === "week") {
       const week = next === "today" ? weekStartOf(today) : weekStart;
+      setCalendarFocusDate(next === "today" ? today : week);
       if (schedule?.weekStart !== week) loadWeek(week);
     }
     if (next === "history") {
@@ -543,6 +602,12 @@ export function DashboardShell({
     changeSchedule(() =>
       item.kind === "event" ? cancelDashboardEvent(item.id) : removeDashboardWorkBlock(item.id),
     );
+  }
+
+  function cancelListedEvent(id: string) {
+    changeSchedule(() => cancelDashboardEvent(id), {
+      onSuccess: () => setEventListRefresh((current) => current + 1),
+    });
   }
 
   function loadHistoryPage(offset: number, replace = false) {
@@ -872,7 +937,7 @@ export function DashboardShell({
               <span className={styles.summaryIcon} aria-hidden="true">
                 <ListChecks size={19} />
               </span>
-              <dt>Open tasks</dt>
+              <dt>Open tasks & todos</dt>
               <dd>{open.length}</dd>
             </div>
             <div>
@@ -911,9 +976,11 @@ export function DashboardShell({
               <div className={styles.composerHeading}>
                 <h2>
                   {composer === "task"
-                    ? calendarEntryType === "task"
-                      ? "New task"
-                      : "New event"
+                    ? calendarEntryType === "event"
+                      ? "New event"
+                      : calendarEntryType === "todo"
+                        ? "New todo"
+                        : "New task"
                     : "Capture a thought"}
                 </h2>
                 <button
@@ -935,63 +1002,79 @@ export function DashboardShell({
                     <label className={styles.fullWidth}>
                       Type
                       <select
-                        name="entryType"
                         value={calendarEntryType}
                         onChange={(event) => {
                           setCalendarEntryType(
-                            event.currentTarget.value === "event" ? "event" : "task",
+                            event.currentTarget.value === "event"
+                              ? "event"
+                              : event.currentTarget.value === "todo"
+                                ? "todo"
+                                : "task",
                           );
                           setEventAllDay(false);
                           setEventTimingMode("end");
                         }}
                       >
-                        <option value="task">Task — due date or deadline</option>
+                        <option value="task">Task — deadline or effort estimate</option>
+                        <option value="todo">Todo — no deadline</option>
                         <option value="event">Event — start and end time</option>
                       </select>
                     </label>
-                    {calendarEntryType === "task" ? (
+                    {calendarEntryType !== "event" ? (
                       <>
-                        <label>
-                          Priority
-                          <select name="priority" defaultValue="minor">
-                            <option value="minor">Minor</option>
-                            <option value="major">Major — extra advance reminders</option>
-                          </select>
-                        </label>
-                        <label>
-                          Due date and time ({data.timezone})
-                          <input name="dueAt" type="datetime-local" />
-                        </label>
-                        <label>
-                          Estimated minutes
-                          <input
-                            name="estimatedMinutes"
-                            type="number"
-                            min={1}
-                            max={100000}
-                            step={1}
-                          />
-                        </label>
-                        <p className={styles.fullWidth}>
-                          A task is a deadline. An estimate is effort only; it does not reserve
-                          calendar time. Leave the due time blank if you do not know it. Deadline
-                          reminders default to one hour before; your reminder settings can change
-                          that. Major priorities keep their existing advance reminders.
-                        </p>
+                        <input type="hidden" name="entryType" value={calendarEntryType} />
+                        {calendarEntryType === "task" ? (
+                          <>
+                            <label>
+                              Estimated effort (minutes)
+                              <input
+                                name="estimatedMinutes"
+                                type="number"
+                                min={1}
+                                max={100000}
+                                step={1}
+                              />
+                            </label>
+                            <label>
+                              Priority
+                              <select name="priority" defaultValue="minor">
+                                <option value="minor">Minor</option>
+                                <option value="major">Major — extra advance reminders</option>
+                              </select>
+                            </label>
+                            <label>
+                              Due date and time ({data.timezone})
+                              <input name="dueAt" type="datetime-local" />
+                            </label>
+                            <p className={styles.fullWidth}>
+                              Add a deadline or effort estimate for a task. If both are blank, this
+                              will be saved as a todo. Effort does not reserve calendar time;
+                              deadline reminders default to one hour before. Major priorities keep
+                              their existing advance reminders.
+                            </p>
+                          </>
+                        ) : (
+                          <p className={styles.fullWidth}>
+                            This todo stays on your task list without a deadline or estimated
+                            effort; it does not create a calendar item or deadline reminder.
+                          </p>
+                        )}
                         <CategorySelect
                           categories={data.categories}
                           name="categoryId"
                           value={addCategoryId ?? ""}
                         />
-                        <label className={styles.inlineCheck}>
-                          <input name="dueDateOnly" type="checkbox" />
-                          <span>
-                            No specific due time
-                            <small className={styles.checkHelp}>
-                              Use the selected date only. Leave unchecked for an exact deadline.
-                            </small>
-                          </span>
-                        </label>
+                        {calendarEntryType === "task" ? (
+                          <label className={styles.inlineCheck}>
+                            <input name="dueDateOnly" type="checkbox" />
+                            <span>
+                              No specific due time
+                              <small className={styles.checkHelp}>
+                                Use the selected date only. Leave unchecked for an exact deadline.
+                              </small>
+                            </span>
+                          </label>
+                        ) : null}
                         <label className={styles.fullWidth}>
                           Details
                           <textarea name="details" rows={3} maxLength={10000} />
@@ -1041,7 +1124,7 @@ export function DashboardShell({
                                 </label>
                               ) : (
                                 <label>
-                                  Duration (minutes)
+                                  Estimated duration (minutes)
                                   <input
                                     name="durationMinutes"
                                     type="number"
@@ -1067,9 +1150,7 @@ export function DashboardShell({
                     )}
                     <div className={styles.formFooter}>
                       <button className={styles.primaryButton} type="submit">
-                        {pending
-                          ? "Saving..."
-                          : `Save ${calendarEntryType === "task" ? "task" : "event"}`}
+                        {pending ? "Saving..." : `Save ${calendarEntryType}`}
                       </button>
                     </div>
                   </fieldset>
@@ -1116,12 +1197,13 @@ export function DashboardShell({
             {view !== "history" && !isSchedule && !isAssistant ? (
               <div className={styles.listToolbar}>
                 {view === "tasks" ? (
-                  <div className={styles.rowActions} role="group" aria-label="Task filters">
+                  <div className={styles.rowActions} role="group" aria-label="Item filters">
                     {(
                       [
                         ["all", "All tasks"],
-                        ["planned", "With due date or duration"],
-                        ["plain", "Just tasks"],
+                        ["planned", "Deadline tasks"],
+                        ["todo", "Todos"],
+                        ["events", "Events"],
                       ] as const
                     ).map(([value, label]) => (
                       <button
@@ -1145,7 +1227,11 @@ export function DashboardShell({
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
                       placeholder={
-                        view === "notes" ? "Search notes and ideas" : "Search tasks and notes"
+                        showingEvents
+                          ? "Search events"
+                          : view === "notes"
+                            ? "Search notes and ideas"
+                            : "Search tasks and notes"
                       }
                     />
                   </span>
@@ -1158,6 +1244,7 @@ export function DashboardShell({
             {view !== "history" &&
             !isSchedule &&
             !isAssistant &&
+            !showingEvents &&
             (view === "notes" ? data.notesTruncated : data.tasksTruncated) ? (
               <p className={styles.limitNotice}>
                 {view === "notes"
@@ -1209,13 +1296,11 @@ export function DashboardShell({
                       </p>
                     ) : null}
                     <CalendarView
-                      key={`${view}:${schedule.weekStart}`}
+                      key={`${view}:${schedule.weekStart}:${calendarFocusDate}`}
                       initialSchedule={schedule}
                       tasksTruncated={data.tasksTruncated}
                       initialMode={view === "today" ? "day" : "week"}
-                      initialDate={
-                        view === "week" && weekStart !== weekStartOf(today) ? weekStart : today
-                      }
+                      initialDate={calendarFocusDate}
                       tasks={data.tasks}
                       timezone={data.timezone}
                       today={today}
@@ -1460,22 +1545,44 @@ export function DashboardShell({
                   </button>
                 </div>
               </div>
-            ) : (
-              <TaskList
-                key={`${view}:${deferredSearch}:${taskFilter}`}
-                tasks={tasks}
-                categories={data.categories}
-                timezone={data.timezone}
-                now={now}
+            ) : showingEvents ? (
+              <EventList
+                result={eventListResult?.key === eventListKey ? eventListResult.result : null}
+                search={search}
                 pending={pending}
-                onComplete={(id) => requestTaskCompletion([id])}
-                onCompleteMany={requestTaskCompletion}
-                onReopen={(id) => perform(() => reopenDashboardTask(id))}
-                onSave={editTask}
-                emptySearch={search}
-                emptyLabel={view === "completed" ? "No completed tasks" : "No active tasks"}
+                onCancel={cancelListedEvent}
                 clearSearch={() => setSearch("")}
               />
+            ) : (
+              <>
+                <TaskList
+                  key={`${view}:${deferredSearch}:${taskFilter}`}
+                  tasks={tasks}
+                  categories={data.categories}
+                  timezone={data.timezone}
+                  now={now}
+                  pending={pending}
+                  onComplete={(id) => requestTaskCompletion([id])}
+                  onCompleteMany={requestTaskCompletion}
+                  onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                  onSave={editTask}
+                  emptySearch={search}
+                  emptyLabel={view === "completed" ? "No completed tasks" : "No active tasks"}
+                  clearSearch={() => setSearch("")}
+                />
+                {taskFilter === "all" ? (
+                  <section className={styles.historyView} aria-label="Upcoming events">
+                    <h2 className={styles.eventHeading}>Upcoming events</h2>
+                    <EventList
+                      result={eventListResult?.key === eventListKey ? eventListResult.result : null}
+                      search={search}
+                      pending={pending}
+                      onCancel={cancelListedEvent}
+                      clearSearch={() => setSearch("")}
+                    />
+                  </section>
+                ) : null}
+              </>
             )}
           </section>
         </main>
@@ -1505,6 +1612,129 @@ function CategorySelect({
       </select>
     </label>
   );
+}
+
+function EventList({
+  result,
+  search,
+  pending,
+  onCancel,
+  clearSearch,
+}: {
+  result: DashboardEventsResult | null;
+  search: string;
+  pending: boolean;
+  onCancel: (id: string) => void;
+  clearSearch: () => void;
+}) {
+  if (!result) {
+    return <p role="status">Loading upcoming events...</p>;
+  }
+  if (!result.ok) {
+    return <p role="alert">{result.error}</p>;
+  }
+
+  const query = search.trim().toLocaleLowerCase();
+  const events = result.events.filter((event) =>
+    `${event.title} ${event.location ?? ""}`.toLocaleLowerCase().includes(query),
+  );
+  return (
+    <div className={styles.historyView}>
+      <p className={styles.historyHint}>
+        Showing scheduled events from today through the next 60 days.
+      </p>
+      {result.truncated ? (
+        <p className={styles.limitNotice}>
+          More than 200 upcoming events were found; only the first 200 are shown.
+        </p>
+      ) : null}
+      {events.length ? (
+        <ul className={styles.taskList}>
+          {events.map((event) => (
+            <li key={event.id} className={styles.task}>
+              <div className={styles.taskContent}>
+                <h2>{event.title}</h2>
+                <div className={styles.taskMeta}>
+                  <span>
+                    <strong>Type:</strong> Event
+                  </span>
+                  <span>
+                    <strong>Date:</strong> {formatEventDate(event)}
+                  </span>
+                  <span>
+                    <strong>Time:</strong> {formatEventTime(event)}
+                  </span>
+                  {!event.allDay ? (
+                    <span>
+                      <strong>Duration:</strong> {formatEventDuration(event)}
+                    </span>
+                  ) : null}
+                  {event.location ? (
+                    <span>
+                      <strong>Location:</strong> {event.location}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                disabled={pending}
+                onClick={() => onCancel(event.id)}
+              >
+                Cancel event
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className={styles.empty}>
+          <p>
+            {query
+              ? "No upcoming events match your search."
+              : "No upcoming events in the next 60 days."}
+          </p>
+          {query ? (
+            <button type="button" className={styles.secondaryButton} onClick={clearSearch}>
+              Clear search
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatEventDate(event: ScheduleEvent): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: event.timezone,
+  }).format(new Date(event.startsAt));
+}
+
+function formatEventTime(event: ScheduleEvent): string {
+  if (event.allDay) return "All day";
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: event.timezone,
+  });
+  return `${time.format(new Date(event.startsAt))} – ${time.format(new Date(event.endsAt))}`;
+}
+
+function formatEventDuration(event: ScheduleEvent): string {
+  const minutes = Math.max(
+    0,
+    Math.round((Date.parse(event.endsAt) - Date.parse(event.startsAt)) / 60_000),
+  );
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours && remainingMinutes) return `${hours} hr ${remainingMinutes} min`;
+  if (hours) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return `${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"}`;
 }
 
 function TaskList({
@@ -1652,6 +1882,7 @@ function TaskRow({
   onSelect: (id: string, checked: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [editType, setEditType] = useState<"task" | "todo">(task.taskType);
   const countdown =
     task.status === "open" && task.dueAt
       ? countdownLabel(task.dueAt, timezone, task.dueDateOnly, now)
@@ -1673,41 +1904,69 @@ function TaskRow({
             <input name="title" required maxLength={300} defaultValue={task.title} />
           </label>
           <label>
-            Priority
-            <select name="priority" defaultValue={task.priority}>
-              <option value="minor">Minor</option>
-              <option value="major">Major — extra advance reminders</option>
+            Type
+            <select
+              name="taskType"
+              value={editType}
+              onChange={(event) =>
+                setEditType(event.currentTarget.value === "todo" ? "todo" : "task")
+              }
+            >
+              <option value="task">Task — deadline or effort estimate</option>
+              <option value="todo">Todo — no deadline</option>
             </select>
           </label>
-          <label>
-            Due ({timezone})
-            <input
-              name="dueAt"
-              type="datetime-local"
-              defaultValue={dateTimeLocalValue(task.dueAt, timezone)}
-            />
-          </label>
-          <label>
-            Estimated minutes
-            <input
-              name="estimatedMinutes"
-              type="number"
-              min={1}
-              max={100000}
-              step={1}
-              defaultValue={task.estimatedMinutes ?? ""}
-            />
-          </label>
+          {editType === "task" ? (
+            <>
+              <label>
+                Priority
+                <select name="priority" defaultValue={task.priority}>
+                  <option value="minor">Minor</option>
+                  <option value="major">Major — extra advance reminders</option>
+                </select>
+              </label>
+              <label>
+                Deadline date and time ({timezone})
+                <input
+                  name="dueAt"
+                  type="datetime-local"
+                  defaultValue={dateTimeLocalValue(task.dueAt, timezone)}
+                />
+              </label>
+              <label>
+                Estimated effort (minutes)
+                <input
+                  name="estimatedMinutes"
+                  type="number"
+                  min={1}
+                  max={100000}
+                  step={1}
+                  defaultValue={task.estimatedMinutes ?? ""}
+                />
+              </label>
+            </>
+          ) : (
+            <p className={styles.fullWidth}>
+              Todos have no due date, deadline reminder, or estimated effort.
+            </p>
+          )}
+          {editType === "task" ? (
+            <p className={styles.fullWidth}>
+              Leave both the deadline and effort estimate blank to save this as a todo.
+            </p>
+          ) : null}
           <CategorySelect categories={categories} name="categoryId" value={task.categoryId} />
-          <label className={styles.inlineCheck}>
-            <input name="dueDateOnly" type="checkbox" defaultChecked={task.dueDateOnly} />
-            <span>
-              No specific due time
-              <small className={styles.checkHelp}>
-                Use the selected date only. Leave unchecked for an exact deadline.
-              </small>
-            </span>
-          </label>
+          {editType === "task" ? (
+            <label className={styles.inlineCheck}>
+              <input name="dueDateOnly" type="checkbox" defaultChecked={task.dueDateOnly} />
+              <span>
+                No specific due time
+                <small className={styles.checkHelp}>
+                  Use the selected date only. Leave unchecked for an exact deadline.
+                </small>
+              </span>
+            </label>
+          ) : null}
           <label className={styles.fullWidth}>
             Details
             <textarea name="details" rows={3} maxLength={10000} defaultValue={task.details ?? ""} />
@@ -1720,7 +1979,10 @@ function TaskRow({
               className={styles.textButton}
               disabled={pending}
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => {
+                setEditType(task.taskType);
+                setEditing(false);
+              }}
             >
               Cancel
             </button>
@@ -1746,43 +2008,56 @@ function TaskRow({
       )}
       <div className={styles.taskContent}>
         <h2>{task.title}</h2>
-        {task.details ? <p>{task.details}</p> : null}
+        {task.details ? (
+          <p>
+            <strong>Details:</strong> {task.details}
+          </p>
+        ) : null}
         <div className={styles.taskMeta}>
           {task.archivedAt ? (
             <span className={styles.archivedTag}>
-              Archived {formatDate(task.archivedAt, timezone)}
+              <strong>Archived:</strong> {formatDate(task.archivedAt, timezone)}
             </span>
           ) : null}
+          <span className={styles.noteTag}>
+            <strong>Type:</strong> {task.taskType === "todo" ? "Todo" : "Task"}
+          </span>
           {task.status === "completed" ? (
             <span className={styles.completedTag}>
               <CircleCheck size={13} aria-hidden="true" />
-              Completed {formatDate(task.completedAt, timezone)}
+              <strong>Completed:</strong> {formatDate(task.completedAt, timezone)}
             </span>
-          ) : (
+          ) : task.taskType === "task" ? (
             <span className={overdue ? styles.overdue : styles.deadline}>
               <CalendarClock size={13} aria-hidden="true" />
-              {formatDate(task.dueAt, timezone, task.dueDateOnly)}
+              <strong>Deadline:</strong> {formatDate(task.dueAt, timezone, task.dueDateOnly)}
             </span>
-          )}
-          {countdown ? <span className={styles.countdown}>{countdown}</span> : null}
+          ) : null}
+          {countdown ? (
+            <span className={styles.countdown}>
+              <strong>Status:</strong> {countdown}
+            </span>
+          ) : null}
           {task.status === "open" && task.reviewNote ? (
             <span className={styles.reviewTag}>
               <TriangleAlert size={13} aria-hidden="true" />
               Needs review: {task.reviewNote}
             </span>
           ) : null}
-          {task.priority === "major" ? <span className={styles.majorTag}>Major</span> : null}
+          {task.taskType === "task" ? (
+            <span className={task.priority === "major" ? styles.majorTag : undefined}>
+              <strong>Priority:</strong> {task.priority === "major" ? "Major" : "Minor"}
+            </span>
+          ) : null}
           {task.estimatedMinutes ? (
             <span>
               <Clock size={13} aria-hidden="true" />
-              {task.estimatedMinutes} min
+              <strong>Estimated effort:</strong> {task.estimatedMinutes} min
             </span>
-          ) : null}
-          {!task.dueAt && task.estimatedMinutes === null ? (
-            <span className={styles.noteTag}>Just task</span>
           ) : null}
           <span>
             <Folder size={13} aria-hidden="true" />
+            <strong>Category:</strong>{" "}
             {categories.find((category) => category.id === task.categoryId)?.name ?? "Inbox"}
           </span>
         </div>
@@ -1802,7 +2077,10 @@ function TaskRow({
           type="button"
           className={styles.textButton}
           disabled={pending}
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            setEditType(task.taskType);
+            setEditing(true);
+          }}
         >
           <Pencil size={14} aria-hidden="true" />
           Edit

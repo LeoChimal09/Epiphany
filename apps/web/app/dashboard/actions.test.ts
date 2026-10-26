@@ -14,6 +14,7 @@ import {
   proposeDashboardNoteDeletion,
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
+  loadDashboardEvents,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -37,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   categoryCreate: vi.fn(),
   eventCreate: vi.fn(),
   eventCancel: vi.fn(),
+  eventList: vi.fn(),
   blockCreate: vi.fn(),
   blockRemove: vi.fn(),
   propose: vi.fn(),
@@ -76,7 +78,7 @@ beforeEach(() => {
       },
       notes: { create: mocks.noteCreate, list: mocks.noteList, update: mocks.noteUpdate },
       categories: { create: mocks.categoryCreate },
-      events: { create: mocks.eventCreate, cancel: mocks.eventCancel },
+      events: { create: mocks.eventCreate, cancel: mocks.eventCancel, list: mocks.eventList },
       workBlocks: { create: mocks.blockCreate, remove: mocks.blockRemove },
       confirmations: { propose: mocks.propose, confirm: mocks.confirm, cancel: mocks.cancel },
     },
@@ -84,6 +86,50 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it("loads upcoming events within the bounded date range", async () => {
+    const startsAt = new Date("2026-10-27T17:00:00.000Z");
+    const endsAt = new Date("2026-10-27T18:00:00.000Z");
+    mocks.eventList.mockResolvedValue([
+      {
+        id: "event-1",
+        title: "Dinner",
+        location: "Cafe",
+        startsAt,
+        endsAt,
+        allDay: false,
+        timezone: "America/Chicago",
+      },
+    ]);
+
+    const result = await loadDashboardEvents("2026-10-27");
+
+    expect(mocks.eventList).toHaveBeenCalledWith(principal, {
+      from: expect.any(Date),
+      to: expect.any(Date),
+      limit: 200,
+    });
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          id: "event-1",
+          title: "Dinner",
+          location: "Cafe",
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+          allDay: false,
+          timezone: "America/Chicago",
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("rejects invalid event date ranges before loading events", async () => {
+    expect(await loadDashboardEvents("not-a-date")).toMatchObject({ ok: false });
+    expect(mocks.context).not.toHaveBeenCalled();
+  });
+
   it("completes only unique selected tasks and returns reloaded state", async () => {
     mocks.taskComplete.mockResolvedValue({ changed: true, task });
     mocks.load.mockResolvedValue({
@@ -171,6 +217,7 @@ describe("dashboard mutations", () => {
     expect(mocks.context).toHaveBeenCalledOnce();
     expect(mocks.taskCreate).toHaveBeenCalledWith(principal, {
       title: "  Trimmed title ",
+      taskType: "task",
       priority: "minor",
       details: undefined,
       dueAt: undefined,
@@ -182,10 +229,31 @@ describe("dashboard mutations", () => {
 
   it("saves major priority when requested", async () => {
     mocks.taskCreate.mockResolvedValue(task);
-    await addDashboardTask(form({ title: "Final exam", priority: "major" }));
+    await addDashboardTask(
+      form({
+        title: "Final exam",
+        priority: "major",
+        dueAt: "2026-10-30T15:00:00.000Z",
+      }),
+    );
     expect(mocks.taskCreate).toHaveBeenCalledWith(
       principal,
       expect.objectContaining({ title: "Final exam", priority: "major" }),
+    );
+  });
+
+  it("automatically saves an item with neither deadline nor effort as a todo", async () => {
+    mocks.taskCreate.mockResolvedValue(task);
+    await addDashboardTask(form({ title: "Buy the right part" }));
+    expect(mocks.taskCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        title: "Buy the right part",
+        taskType: "todo",
+        priority: "minor",
+        dueAt: undefined,
+        estimatedMinutes: undefined,
+      }),
     );
   });
 
@@ -206,6 +274,38 @@ describe("dashboard mutations", () => {
         estimatedMinutes: 30,
       }),
     );
+  });
+
+  it("saves a todo without effort, deadline, or major priority", async () => {
+    mocks.taskCreate.mockResolvedValue(task);
+    await addDashboardTask(
+      form({
+        title: "Buy a snack",
+        entryType: "todo",
+        estimatedMinutes: "45",
+        dueAt: "2026-10-23T21:30:00.000Z",
+        dueDateOnly: "on",
+        priority: "major",
+      }),
+    );
+    expect(mocks.taskCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        title: "Buy a snack",
+        taskType: "todo",
+        dueAt: undefined,
+        estimatedMinutes: undefined,
+        priority: "minor",
+      }),
+    );
+    expect(mocks.taskCreate.mock.calls[0]?.[1]).not.toHaveProperty("dueDateOnly");
+  });
+
+  it("rejects an unknown task entry type", async () => {
+    expect(await addDashboardTask(form({ title: "Task", entryType: "sometime" }))).toMatchObject({
+      ok: false,
+    });
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
   it("does not write when authentication fails", async () => {
@@ -258,6 +358,7 @@ describe("dashboard mutations", () => {
       task.id,
       form({
         title: "Updated title",
+        taskType: "task",
         details: "Updated details",
         dueAt: "",
         estimatedMinutes: "",
@@ -267,7 +368,9 @@ describe("dashboard mutations", () => {
     );
     expect(mocks.taskUpdate).toHaveBeenCalledWith(principal, task.id, {
       expectedVersion: 1,
+      taskType: "todo",
       title: "Updated title",
+      priority: "minor",
       details: "Updated details",
       dueAt: null,
       dueDateOnly: false,
@@ -275,6 +378,34 @@ describe("dashboard mutations", () => {
       categoryId: "school",
     });
     expect(result).toMatchObject({ ok: true, task: { version: 2 } });
+  });
+
+  it("clears task-only planning fields when converting to a todo", async () => {
+    mocks.taskUpdate.mockResolvedValue({ changed: true, task: { ...task, version: 2 } });
+    await editDashboardTask(
+      task.id,
+      form({
+        expectedVersion: "1",
+        taskType: "todo",
+        title: "Buy a snack",
+        priority: "major",
+        dueAt: "",
+        dueDateOnly: "on",
+        estimatedMinutes: "45",
+        details: "",
+      }),
+    );
+    expect(mocks.taskUpdate).toHaveBeenCalledWith(principal, task.id, {
+      expectedVersion: 1,
+      taskType: "todo",
+      title: "Buy a snack",
+      priority: "minor",
+      details: "",
+      dueAt: null,
+      dueDateOnly: false,
+      estimatedMinutes: null,
+      categoryId: undefined,
+    });
   });
 
   it("reports stale task edits rather than claiming success", async () => {

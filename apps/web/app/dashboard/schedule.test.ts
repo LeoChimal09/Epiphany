@@ -55,6 +55,7 @@ const block = (id: string, from: string, to: string) => ({
 const task = (over: Partial<DashboardTask>): DashboardTask => ({
   id: "task",
   categoryId: "inbox",
+  taskType: "task",
   title: "Task",
   priority: "minor",
   details: null,
@@ -237,6 +238,18 @@ describe("a day's timeline", () => {
     expect(day.entries).toHaveLength(1);
     expect(day.entries[0]).toMatchObject({ startMinute: 960, endMinute: 990 });
     expect(day.conflictCount).toBe(0);
+  });
+
+  it("does not put no-deadline todos on the calendar", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [task({ id: "snack", title: "Buy a snack", dueAt: null, estimatedMinutes: null })],
+      CHICAGO,
+    );
+    expect(day.deadlines).toEqual([]);
+    expect(day.deadlineEntries).toEqual([]);
+    expect(day.entries).toEqual([]);
   });
 
   it("lays nearby deadline markers side by side and counts their deadline conflict", () => {

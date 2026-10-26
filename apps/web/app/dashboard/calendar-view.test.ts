@@ -36,6 +36,7 @@ const schedule: ScheduleData = {
 const task: DashboardTask = {
   id: "task",
   categoryId: "inbox",
+  taskType: "task",
   title: "Homework",
   priority: "minor",
   details: null,
@@ -78,6 +79,11 @@ describe("unified calendar", () => {
     expect(html).toContain("Due at 11:59 PM");
     expect(html).toContain("Lecture");
     expect(html).toContain('aria-label="Due at 11:59 PM: Homework"');
+    expect(html).toContain('aria-label="Complete Homework"');
+    expect(html).toMatch(/class="[^"]*agendaComplete[^"]*"[^>]*>Mark done<\/button>/);
+    expect(html).toMatch(
+      /class="[^"]*slotDeadline[^"]*" style="[^"]*transform:translateY\(-50%\);[^"]*max-width:calc\(100% - 8px\)/,
+    );
   });
 
   it("renders a bounded month with deadlines, events, work blocks, and today's marker", () => {

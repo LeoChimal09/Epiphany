@@ -52,6 +52,8 @@ export type DashboardNotesPageResult =
 
 export type DashboardScheduleResult =
   { ok: true; schedule: ScheduleData } | { ok: false; error: string };
+export type DashboardEventsResult =
+  { ok: true; events: ScheduleData["events"]; truncated: boolean } | { ok: false; error: string };
 
 export async function askEpi(message: string, state: unknown): Promise<AskEpiResult> {
   if (typeof message !== "string" || !message.trim()) {
@@ -124,16 +126,27 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
   const { principal, services } = await dashboardContext();
   let estimatedMinutes: number | undefined;
   let dueAt: string | undefined;
-  const dueDateOnly = form.get("dueDateOnly") === "on";
+  let dueDateOnly = false;
+  let isTodo: boolean;
   try {
-    estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
-    const enteredDueAt = textField(form, "dueAt");
-    if (enteredDueAt) {
-      const deadline = new Date(enteredDueAt);
-      if (Number.isNaN(deadline.getTime())) {
-        throw new ValidationError(["enter a valid deadline"]);
+    const requestedType = textField(form, "entryType") ?? "task";
+    if (requestedType !== "task" && requestedType !== "todo") {
+      throw new ValidationError(["choose a task or todo"]);
+    }
+    isTodo = requestedType === "todo";
+    if (!isTodo) {
+      estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
+      dueDateOnly = form.get("dueDateOnly") === "on";
+      const enteredDueAt = textField(form, "dueAt");
+      if (enteredDueAt) {
+        const deadline = new Date(enteredDueAt);
+        if (Number.isNaN(deadline.getTime())) {
+          throw new ValidationError(["enter a valid deadline"]);
+        }
+        dueAt = deadline.toISOString();
       }
-      dueAt = deadline.toISOString();
+      isTodo = !dueAt && estimatedMinutes === undefined;
+      if (isTodo) dueDateOnly = false;
     }
   } catch (error) {
     if (error instanceof ValidationError) {
@@ -144,7 +157,8 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
   try {
     const task = await services.tasks.create(principal, {
       title: textField(form, "title"),
-      priority: priorityField(form) ?? "minor",
+      taskType: isTodo ? "todo" : "task",
+      priority: isTodo ? "minor" : (priorityField(form) ?? "minor"),
       details: textField(form, "details"),
       dueAt,
       estimatedMinutes,
@@ -190,14 +204,23 @@ function editDeadline(form: FormData): string | null | undefined {
 export async function editDashboardTask(taskId: string, form: FormData): Promise<DashboardResult> {
   const { principal, services } = await dashboardContext();
   try {
+    const taskType = textField(form, "taskType");
+    if (taskType !== undefined && taskType !== "task" && taskType !== "todo") {
+      throw new ValidationError(["choose a task or todo"]);
+    }
+    const estimatedMinutes = taskType === "todo" ? null : editEffort(form);
+    const dueAt = taskType === "todo" ? null : editDeadline(form);
+    const becomesTodo = taskType !== "todo" && dueAt === null && estimatedMinutes === null;
+    const effectiveType = becomesTodo ? "todo" : taskType;
     const result = await services.tasks.update(principal, taskId, {
       expectedVersion: versionField(form),
+      ...(effectiveType ? { taskType: effectiveType } : {}),
       title: textField(form, "title"),
-      priority: priorityField(form),
+      priority: effectiveType === "todo" ? "minor" : priorityField(form),
       details: textField(form, "details") ?? "",
-      dueAt: editDeadline(form),
-      dueDateOnly: form.get("dueDateOnly") === "on",
-      estimatedMinutes: editEffort(form),
+      dueAt: effectiveType === "todo" ? null : dueAt,
+      dueDateOnly: effectiveType === "todo" ? false : form.get("dueDateOnly") === "on",
+      estimatedMinutes: effectiveType === "todo" ? null : estimatedMinutes,
       categoryId: textField(form, "categoryId"),
     });
     return {
@@ -450,6 +473,47 @@ export async function loadDashboardSchedule(weekStart: string): Promise<Dashboar
     return {
       ok: false,
       error: "The schedule could not be loaded. Your tasks and notes are unchanged.",
+    };
+  }
+}
+
+export async function loadDashboardEvents(fromDate: string): Promise<DashboardEventsResult> {
+  let from: string;
+  try {
+    if (typeof fromDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+      throw new RangeError("invalid date");
+    }
+    parseDateKey(fromDate);
+    from = fromDate;
+  } catch {
+    return { ok: false, error: "That event date is not valid. Refresh and try again." };
+  }
+  try {
+    const { principal, services, timezone } = await dashboardContext();
+    const start = localWallToUtc(from, 0, timezone);
+    const end = localWallToUtc(addDays(from, 60), 0, timezone);
+    const events = await services.events.list(principal, {
+      from: start,
+      to: end,
+      limit: 200,
+    });
+    return {
+      ok: true,
+      events: events.map((event) => ({
+        id: event.id,
+        title: event.title,
+        location: event.location,
+        startsAt: event.startsAt.toISOString(),
+        endsAt: event.endsAt.toISOString(),
+        allDay: event.allDay,
+        timezone: event.timezone,
+      })),
+      truncated: events.length === 200,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "Upcoming events could not be loaded. Your tasks and calendar are unchanged.",
     };
   }
 }

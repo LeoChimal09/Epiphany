@@ -109,12 +109,10 @@ function DeadlineBlock({
   entry,
   timezone,
   topMinute,
-  gridHeight,
 }: {
   entry: DayView["deadlineEntries"][number];
   timezone: string;
   topMinute: number;
-  gridHeight: number;
 }) {
   const { task } = entry;
   if (!task.dueAt || task.dueDateOnly) return null;
@@ -122,19 +120,14 @@ function DeadlineBlock({
   if (Number.isNaN(due.getTime())) return null;
   const time = formatClock(due.getTime(), timezone);
   const label = `${entry.conflict ? "Nearby deadline conflict. " : ""}Due at ${time}: ${task.title}`;
-  const height = 28;
-  const top = Math.max(
-    0,
-    Math.min(((entry.dueMinute - topMinute) / 60) * HOUR_PX - height / 2, gridHeight - height),
-  );
   return (
     <div
       className={`${styles.slotDeadline} ${entry.conflict ? styles.slotConflict : ""}`}
       style={{
-        top,
-        height,
+        top: ((entry.dueMinute - topMinute) / 60) * HOUR_PX,
+        transform: "translateY(-50%)",
         left: `calc(${(entry.column / entry.columns) * 100}% + 2px)`,
-        width: `calc(${100 / entry.columns}% - 4px)`,
+        maxWidth: `calc(${100 / entry.columns}% - 8px)`,
       }}
       title={label}
       aria-label={label}
@@ -270,7 +263,6 @@ function TimeGrid({
                   entry={entry}
                   timezone={timezone}
                   topMinute={topMinute}
-                  gridHeight={gridHeight}
                 />
               ))}
               {nowMinute !== null && nowMinute >= topMinute && nowMinute <= bounds.end * 60 ? (
@@ -414,7 +406,7 @@ function AgendaList({
               <li key={task.id}>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={`${styles.secondaryButton} ${styles.agendaComplete}`}
                   disabled={pending}
                   aria-label={`Complete ${task.title}`}
                   onClick={() => onComplete(task.id)}

@@ -83,6 +83,38 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
       expect((await services.tasks.get(owner, task.id)).title).toBe("Essay");
     });
 
+    it("persists todos without task-only fields and keeps them out of deadline scheduling", async () => {
+      const todo = await services.tasks.create(owner, {
+        title: "Buy a snack",
+        taskType: "todo",
+        priority: "major",
+        dueAt: "2026-10-16T04:59:59.000Z",
+        estimatedMinutes: 30,
+      });
+      expect(todo).toMatchObject({
+        taskType: "todo",
+        priority: "minor",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+        remainingMinutes: null,
+      });
+
+      await services.tasks.update(owner, todo.id, {
+        dueAt: "2026-10-17T04:59:59.000Z",
+        dueDateOnly: true,
+        estimatedMinutes: 45,
+        priority: "major",
+      });
+      expect(await services.tasks.get(owner, todo.id)).toMatchObject({
+        taskType: "todo",
+        priority: "minor",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+      });
+    });
+
     it("lists only the current owner's newly created tasks and events for announcements", async () => {
       const task = await services.tasks.create(owner, { title: "Study for finals" });
       const event = await services.events.create(owner, {

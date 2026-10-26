@@ -18,6 +18,7 @@ const task = (over: Partial<Task>): Task => ({
   id: "t1",
   ownerId: "o",
   categoryId: "inbox",
+  taskType: "task",
   title: "Task",
   priority: "minor",
   details: null,

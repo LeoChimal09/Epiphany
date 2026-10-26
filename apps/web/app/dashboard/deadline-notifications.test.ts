@@ -9,6 +9,7 @@ const timezone = "America/Chicago";
 const task = (id: string, dueAt = "2026-10-21T23:59:00-05:00"): DashboardTask => ({
   id,
   categoryId: "inbox",
+  taskType: "task",
   title: `Assignment ${id}`,
   priority: "minor",
   details: null,

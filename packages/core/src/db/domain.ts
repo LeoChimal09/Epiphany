@@ -163,6 +163,7 @@ export async function createCategory(db: Database, actor: Actor, name: string): 
 
 export interface NewTask {
   title: string;
+  taskType?: "task" | "todo";
   priority?: "minor" | "major";
   categoryId?: string;
   details?: string;
@@ -176,22 +177,27 @@ export interface NewTask {
 
 export async function createTask(db: Database, actor: Actor, input: NewTask): Promise<Task> {
   const id = newId();
+  const taskType =
+    input.taskType === "todo" || (!input.dueAt && input.estimatedMinutes === undefined)
+      ? "todo"
+      : "task";
   await db.transaction(async (tx) => {
     const categoryId = await resolveCategory(tx, actor.ownerId, input.categoryId);
     await tx.insert(tasks).values({
       id,
       ownerId: actor.ownerId,
       categoryId,
+      taskType,
       title: input.title,
-      priority: input.priority ?? "minor",
+      priority: taskType === "todo" ? "minor" : (input.priority ?? "minor"),
       details: input.details ?? null,
       sourceText: input.sourceText ?? null,
       sourceRef: input.sourceRef ?? null,
       reviewNote: input.reviewNote ?? null,
-      dueAt: input.dueAt ?? null,
-      dueDateOnly: input.dueDateOnly ?? false,
-      estimatedMinutes: input.estimatedMinutes ?? null,
-      remainingMinutes: input.estimatedMinutes ?? null,
+      dueAt: taskType === "todo" ? null : (input.dueAt ?? null),
+      dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
+      estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+      remainingMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
     });
     await record(tx, actor, {
       action: "task.create",
@@ -200,10 +206,11 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
       after: {
         title: input.title,
         categoryId,
-        priority: input.priority ?? "minor",
-        dueAt: input.dueAt?.toISOString() ?? null,
-        dueDateOnly: input.dueDateOnly ?? false,
-        estimatedMinutes: input.estimatedMinutes ?? null,
+        taskType,
+        priority: taskType === "todo" ? "minor" : (input.priority ?? "minor"),
+        dueAt: taskType === "todo" ? null : (input.dueAt?.toISOString() ?? null),
+        dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
+        estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
       },
     });
   });
