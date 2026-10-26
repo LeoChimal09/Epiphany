@@ -205,8 +205,8 @@ describe("overview rendering", () => {
       }),
     );
     expect(text).toContain("Priorities · 15 open");
-    expect(text).toContain("1. Overdue one (due Sun, Oct 11, 11:59 PM, 3d overdue)");
-    expect(text).toContain("2. Today one (due Wed, Oct 14, 11:59 PM, today)");
+    expect(text).toContain("1. Overdue one (minor, due Sun, Oct 11, 11:59 PM, 3d overdue)");
+    expect(text).toContain("2. Today one (minor, due Wed, Oct 14, 11:59 PM, today)");
     expect(text).not.toContain("Whenever");
     expect(text).toContain("…and 5 more open tasks");
   });

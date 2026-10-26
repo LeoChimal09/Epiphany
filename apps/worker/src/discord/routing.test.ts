@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  channelAnswerNotice,
   fitDiscordMessage,
+  responseViewForMessage,
   routeMessage,
   splitDiscordMessage,
   stripEpiMention,
@@ -77,6 +79,16 @@ describe("routing Discord messages", () => {
 });
 
 describe("message helpers", () => {
+  it("routes read-only planner questions to their matching private channel", () => {
+    expect(responseViewForMessage("what's my schedule today?")).toBe("schedule");
+    expect(responseViewForMessage("what are my priorities?")).toBe("priorities");
+    expect(responseViewForMessage("what reminders do I have today?")).toBe("check-ins");
+    expect(responseViewForMessage("hello epi")).toBeNull();
+    expect(channelAnswerNotice("schedule", "channel-1", "https://discord.com/jump")).toBe(
+      "I posted the details in your #schedule channel (<#channel-1>): https://discord.com/jump",
+    );
+  });
+
   it("delivers every character of a long review, including its approval instructions", () => {
     const text = `${Array.from({ length: 30 }, (_, i) => `${i + 1}. ${"assignment ".repeat(40)}`).join("\n")}\nReply yes to save these.`;
     const parts = splitDiscordMessage(text);

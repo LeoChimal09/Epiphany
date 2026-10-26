@@ -569,10 +569,23 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
         dueDate: "2026-10-20",
       }));
       const { reply } = await say(assistant, "lab report due the 20th");
-      expect(reply.text).toBe('Got it, I added "Lab report" to your list (due Tue, Oct 20).');
+      expect(reply.text).toBe(
+        'Got it, I added "Lab report" to your list (due Tue, Oct 20). Do you know how long it might take? That\'s optional; you can leave it as-is or add an estimate later.',
+      );
       const [row] = await taskRows();
       expect(row?.dueDateOnly).toBe(true);
       expect(row?.dueAt?.toISOString()).toBe("2026-10-20T00:00:00.000Z");
+    });
+
+    it("asks a fixed optional timing question when a task has no date or estimate", async () => {
+      const { assistant } = build(() => ({ kind: "create_task", title: "Read a book" }));
+      const { reply } = await say(assistant, "add read a book");
+
+      expect(reply.text).toContain(
+        "Do you know when it's due or how long it might take? That's optional",
+      );
+      expect(reply.text).toContain("you can leave it as-is");
+      expect(await taskRows()).toHaveLength(1);
     });
 
     it("reports a rejected change as not done", async () => {

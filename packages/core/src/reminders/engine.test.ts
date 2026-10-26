@@ -11,7 +11,7 @@ import { createServices, issueOwnerPrincipal, type Principal } from "../services
 import { MAX_LATE_INDIVIDUAL, runReminderCycle, type DeliveryResult } from "./engine";
 import { DEFAULT_REMINDER_SETTINGS, type ReminderSettings } from "./policy";
 import { syncReminders } from "./schedule";
-import { SENDING_STALE_MS, claimDue } from "./store";
+import { SENDING_STALE_MS, claimDue, scheduleReminder } from "./store";
 
 const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
 const TZ = "America/Chicago";
@@ -120,6 +120,42 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       expect(all.filter((reminder) => reminder.status === "scheduled")).toHaveLength(9);
     });
 
+    it("does not replay missed lead reminders for a task created shortly before its deadline", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Sister Pick up",
+        dueAt: "2026-10-26T19:30:00.000Z",
+        priority: "major",
+      });
+      const now = "2026-10-26T19:07:00.000Z";
+
+      expect(await sync(now)).toMatchObject({ created: 1, canceled: 0 });
+      const first = await rows();
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatchObject({
+        subjectId: task.id,
+        dedupeKey: `task:${task.id}:soon:1793043000000`,
+        dueAt: at(now),
+      });
+      expect(first[0]?.message).toContain("due at");
+      expect(first[0]?.message).not.toContain("tomorrow");
+
+      expect(await sync("2026-10-26T19:07:15.000Z")).toMatchObject({ created: 0, canceled: 0 });
+      expect((await rows()).filter((reminder) => reminder.status === "scheduled")).toHaveLength(1);
+    });
+
+    it("cancels pending leads for an overdue task instead of delivering them late", async () => {
+      const task = await addTask("Past task", "2026-10-16T22:00:00.000Z");
+      await sync("2026-10-15T20:00:00.000Z");
+
+      expect(await sync("2026-10-17T00:00:00.000Z")).toMatchObject({
+        created: 0,
+        canceled: 3,
+      });
+      const all = await rows();
+      expect(all.filter((reminder) => reminder.subjectId === task.id)).toHaveLength(3);
+      expect(all.every((reminder) => reminder.status === "canceled")).toBe(true);
+    });
+
     it("replaces the reminders when the deadline moves, and cancels them when the task is done", async () => {
       const task = await addTask();
       await sync("2026-10-14T15:00:00.000Z");
@@ -185,6 +221,36 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
   });
 
   describe("delivery", () => {
+    it("sends only the newest task alert when several lead reminders are overdue together", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Sister Pick up",
+        dueAt: "2026-10-16T22:00:00.000Z",
+        priority: "major",
+      });
+      for (const [lead, dueAt] of [
+        [24, "2026-10-15T22:00:00.000Z"],
+        [2, "2026-10-16T20:00:00.000Z"],
+        [1, "2026-10-16T21:00:00.000Z"],
+      ] as const) {
+        await scheduleReminder(handle.db, ownerId, {
+          kind: "task_deadline",
+          subjectType: "task",
+          subjectId: task.id,
+          dedupeKey: `task:${task.id}:lead${lead}h:${task.dueAt!.getTime()}`,
+          dueAt: at(dueAt),
+          message: `lead ${lead}`,
+        });
+      }
+
+      const report = await cycle("2026-10-16T21:30:00.000Z");
+
+      expect(report.sent).toBe(1);
+      expect(report.skipped).toBe(2);
+      expect(sent).toEqual(["(a little late) lead 1"]);
+      expect((await rows()).filter((reminder) => reminder.status === "sent")).toHaveLength(1);
+      expect((await rows()).filter((reminder) => reminder.status === "skipped")).toHaveLength(2);
+    });
+
     it("sends the one-hour warning at 60 minutes, once, without inferring completion from silence", async () => {
       const task = await addTask();
       const leads = { deadlineLeadHours: [1] };

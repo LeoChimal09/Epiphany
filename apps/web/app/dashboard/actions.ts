@@ -121,11 +121,33 @@ function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
 }
 
 export async function addDashboardTask(form: FormData): Promise<DashboardResult> {
-  const { principal, services } = await dashboardContext();
+  const { principal, services, timezone } = await dashboardContext();
+  const durationMode = textField(form, "durationMode") ?? "estimate";
+  if (durationMode !== "estimate" && durationMode !== "schedule") {
+    return { ok: false, error: "Choose estimated duration or a scheduled time." };
+  }
   let estimatedMinutes: number | undefined;
+  let dueAt: string | undefined;
   try {
-    estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
+    if (durationMode === "schedule") {
+      const { startsAt, endsAt } = scheduleWindow(form, timezone, false, "scheduleDate");
+      estimatedMinutes = Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000);
+      if (estimatedMinutes < 1) {
+        return { ok: false, error: "The scheduled time must be at least one minute long." };
+      }
+      dueAt = endsAt.toISOString();
+    } else {
+      estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
+      const enteredDueAt = textField(form, "dueAt");
+      dueAt = enteredDueAt || undefined;
+    }
   } catch {
+    if (durationMode === "schedule") {
+      return {
+        ok: false,
+        error: "Enter a valid date and a finish time after the start time.",
+      };
+    }
     return { ok: false, error: "Enter a whole number of minutes between 1 and 100,000." };
   }
   try {
@@ -133,7 +155,7 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
       title: textField(form, "title"),
       priority: priorityField(form) ?? "minor",
       details: textField(form, "details"),
-      dueAt: textField(form, "dueAt"),
+      dueAt,
       estimatedMinutes,
       categoryId: textField(form, "categoryId"),
     });
@@ -445,8 +467,13 @@ export type DashboardScheduleChangeResult =
 
 // The owner's form fields are local wall-clock values; they become instants here, in the
 // configured timezone, so the browser's own timezone never decides when something happens.
-function scheduleWindow(form: FormData, timezone: string, allowAllDay: boolean) {
-  const date = textField(form, "date");
+function scheduleWindow(
+  form: FormData,
+  timezone: string,
+  allowAllDay: boolean,
+  dateField = "date",
+) {
+  const date = textField(form, dateField);
   if (!date) throw new ValidationError(["date is required"]);
   try {
     parseDateKey(date);

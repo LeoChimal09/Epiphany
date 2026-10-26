@@ -162,8 +162,9 @@ school assignments.
   Epiphany calendars up to date. Live task-deadline/work-block writes, conflict, and
   disconnect acceptance remain pending.
 - 2026-10-23 follow-up: implemented idempotent task-deadline events on the dedicated
-  Epiphany calendar (date-only deadlines are all-day; timed deadlines are 15-minute
-  markers) and fixed narrow agenda text wrapping. Focused tests and the full automated
+Epiphany calendar (date-only deadlines are all-day; timed tasks with estimates span
+the estimate ending at the due time; unestimated timed tasks remain 15-minute markers)
+and fixed narrow agenda text wrapping. Focused tests and the full automated
   release gate passed; a real task event write still needs confirmation after deployment.
 - Deliver: OAuth consent, secure token storage, calendar selection, external
   event references, sync status, and a dedicated Epiphany calendar for writes.
@@ -284,11 +285,16 @@ school assignments.
 
 - [ ] Complete goal 21.
 - Deliver: selectable Epi voice, optional TTS audio attachments, accompanying
-  text, response preferences, and provider cost/failure handling.
+  text, response preferences, and provider cost/failure handling. Spoken output
+  reuses the already-generated text reply; speech synthesis must not trigger a
+  second conversational-model call.
 - Require: generated-audio retention and TTS budget enforcement with text fallback;
-  no silent paid-provider switch to bypass the configured spending limit.
+  no silent paid-provider switch to bypass the configured spending limit. Voice
+  output is opt-in or explicitly requested, and ordinary text replies remain
+  available without synthesis.
 - Done when: audio plays on supported Discord clients without joining voice;
-  disabling voice leaves text usable; synthesis failure falls back to text.
+  disabling voice leaves text usable; synthesis failure falls back to text; tests
+  verify that speech output uses the original reply without another conversation call.
 - Constraint: verify native voice-message support before promising that format.
 
 ### 22. Support Server Voice Conversations
@@ -469,13 +475,16 @@ memory-control and privacy gates still apply to those unchecked goals.
   service and planning tests with MySQL on a disposable database, 155 no-database tests, and
   `bun run check` pass; a browser check on synthetic fixture data confirmed exact block positions,
   overlap columns, week navigation, and no horizontal overflow at 1280 px and 390 px. Later the same
-  day the dashboard gained "Add event" (timed or all-day) and "Plan work" forms, and Cancel/Remove
-  controls on grid blocks and agenda rows, through validated actions that convert the owner's local
+  day the dashboard gained "Add event" and "Plan work" forms, plus Cancel/Remove controls on grid
+  blocks and agenda rows, through validated actions that convert the owner's local
   date and time to instants in the configured timezone on the server (cancel keeps the event record;
   removing a work block leaves its task untouched). A browser check on a disposable database confirmed
   create, overlap flagging, remove, validation errors, an all-day event, and a jump to the event's
-  week. Remaining: preparation milestones, sync-failure display (waits for Goal 11), and free-time
-  availability on the views (waits for stored preferences).
+  week. The Calendar page now uses the same "Add task" composer as Active tasks; its calendar timing
+  mode can estimate minutes or set an explicit start/end range, avoiding separate manual
+  event/work-session controls. Existing calendar events and work sessions remain visible and removable. Remaining:
+  preparation milestones, sync-failure display (waits for Goal 11), and free-time availability on
+  the views (waits for stored preferences).
 
 - 2026-10-15, Goal 07 (groundwork implemented; not checked off): `packages/core/src/assistant/`
   (`@epiphany/core/assistant`) turns a free-form owner message into one validated intent and then

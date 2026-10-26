@@ -8,13 +8,47 @@ import {
 } from "discord.js";
 import { loadOverviewData, marker, OVERVIEW_VIEWS, renderOverview } from "@epiphany/core/overview";
 import type { OverviewView } from "@epiphany/core/overview";
-import type { Database } from "@epiphany/core/db";
+import type { Database, ActionHistoryEntry } from "@epiphany/core/db";
 import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services";
 import { syncOverviews, type OverviewStore, type OverviewSurface } from "./overview-sync";
 import { WORKSPACE_CATEGORY_NAME } from "./workspace";
 
 const UNKNOWN_MESSAGE = 10008;
 const NO_MENTIONS = { parse: [] as never[] };
+
+interface AdditionCursor {
+  initialized: boolean;
+  through: number;
+  seen: Set<string>;
+}
+
+function addedItem(entry: ActionHistoryEntry): { kind: "task" | "event"; title: string } | null {
+  if (
+    (entry.action !== "task.create" && entry.action !== "event.create") ||
+    (entry.entityType !== "task" && entry.entityType !== "event") ||
+    !entry.after ||
+    typeof entry.after !== "object" ||
+    !("title" in entry.after) ||
+    typeof entry.after.title !== "string"
+  ) {
+    return null;
+  }
+  return {
+    kind: entry.entityType,
+    title: entry.after.title.replace(/\s+/g, " ").trim().slice(0, 300),
+  };
+}
+
+export function announcementText(entries: ActionHistoryEntry[]): string {
+  const lines = entries.flatMap((entry) => {
+    const item = addedItem(entry);
+    return item ? [`• ${item.kind === "task" ? "Task" : "Event"}: ${item.title}`] : [];
+  });
+  if (!lines.length) return "";
+  const shown = lines.slice(0, 8);
+  if (lines.length > shown.length) shown.push(`• And ${lines.length - shown.length} more`);
+  return `✨ Added to your planner:\n${shown.join("\n")}`;
+}
 
 // Overview messages go only into the workspace's own channels, and only while @everyone cannot see
 // them: a channel that is public, or sits outside the category, is never written to.
@@ -86,9 +120,8 @@ export interface OverviewSync {
   stop(): void;
 }
 
-// Keeps the Discord overviews in step with the database. The dashboard and Discord both write to
-// the same records, so one comparison (rendered text against what was last posted) covers a change
-// from either side; nothing is posted when nothing changed.
+// Keeps Discord overviews current and announces new tasks/events in the private #today channel.
+// Announcement text is a fixed template over persisted history; it does not call the AI provider.
 export function createOverviewSync(options: {
   client: Client;
   db: Database;
@@ -102,6 +135,7 @@ export function createOverviewSync(options: {
   let queued: { verify: boolean } | null = null;
   let timer: ReturnType<typeof setInterval> | undefined;
   const memberOf = new Set<string>();
+  const additionCursors = new Map<string, AdditionCursor>();
 
   async function once(verify: boolean): Promise<void> {
     const botUserId = client.user?.id;
@@ -117,6 +151,14 @@ export function createOverviewSync(options: {
       get: (guildId, view) => services.overviews.get(principal, guildId, view),
       save: (binding) => services.overviews.save(principal, binding),
     };
+    let recentAdditions: ActionHistoryEntry[] = [];
+    try {
+      recentAdditions = await services.history.additions(principal);
+    } catch (error) {
+      log("addition_notice_read_failed", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
 
     let contents: Record<OverviewView, string> | null = null;
     for (const guild of client.guilds.cache.values()) {
@@ -129,9 +171,8 @@ export function createOverviewSync(options: {
         }
       }
       const surface = guildSurface(guild, botUserId);
-      if (
-        !(await Promise.all(OVERVIEW_VIEWS.map((view) => surface.channelFor(view)))).some(Boolean)
-      ) {
+      const channels = await Promise.all(OVERVIEW_VIEWS.map((view) => surface.channelFor(view)));
+      if (!channels.some(Boolean)) {
         continue;
       }
       if (!contents) {
@@ -144,6 +185,59 @@ export function createOverviewSync(options: {
       const changed = Object.entries(results).filter(([, result]) => result !== "unchanged");
       if (changed.length > 0) {
         log("overview_sync", { guildId: guild.id, results: Object.fromEntries(changed) });
+      }
+      const todayChannel = channels[OVERVIEW_VIEWS.indexOf("today")];
+      if (todayChannel) {
+        await announceAdditions(guild.id, todayChannel, surface);
+      }
+    }
+
+    async function announceAdditions(
+      guildId: string,
+      channelId: string,
+      surface: OverviewSurface,
+    ): Promise<void> {
+      const newestFirst = recentAdditions.toSorted(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      const newestTimestamp = newestFirst[0]?.createdAt.getTime() ?? 0;
+      let cursor = additionCursors.get(guildId);
+      if (!cursor) {
+        cursor = { initialized: false, through: 0, seen: new Set() };
+        additionCursors.set(guildId, cursor);
+      }
+      if (!cursor.initialized) {
+        cursor.initialized = true;
+        cursor.through = newestTimestamp;
+        for (const entry of newestFirst) cursor.seen.add(entry.id);
+        return;
+      }
+      if (!recentAdditions.length) return;
+      const fresh = newestFirst
+        .filter(
+          (entry) => entry.createdAt.getTime() >= cursor!.through && !cursor!.seen.has(entry.id),
+        )
+        .toReversed();
+      if (!fresh.length) {
+        cursor.through = Math.max(cursor.through, newestTimestamp);
+        return;
+      }
+      const content = announcementText(fresh);
+      if (!content) return;
+      try {
+        await surface.post(channelId, content);
+        for (const entry of fresh) cursor.seen.add(entry.id);
+        cursor.through = Math.max(cursor.through, newestTimestamp);
+        if (cursor.seen.size > 200) {
+          const keep = new Set(newestFirst.map((entry) => entry.id));
+          cursor.seen = keep;
+        }
+      } catch (error) {
+        log("addition_notice_failed", {
+          guildId,
+          count: fresh.length,
+          error: error instanceof Error ? error.name : "unknown",
+        });
       }
     }
   }

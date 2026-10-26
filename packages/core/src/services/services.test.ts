@@ -83,6 +83,27 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
       expect((await services.tasks.get(owner, task.id)).title).toBe("Essay");
     });
 
+    it("lists only the current owner's newly created tasks and events for announcements", async () => {
+      const task = await services.tasks.create(owner, { title: "Study for finals" });
+      const event = await services.events.create(owner, {
+        title: "Office hours",
+        startsAt: "2026-10-14T20:00:00.000Z",
+        endsAt: "2026-10-14T21:00:00.000Z",
+        timezone: "America/Chicago",
+      });
+      await services.notes.create(owner, { body: "Private note" });
+      await services.tasks.create(strangerOwner, { title: "Someone else's task" });
+
+      const additions = await services.history.additions(owner);
+
+      expect(additions.map((entry) => entry.entityId).toSorted()).toEqual(
+        [task.id, event.id].toSorted(),
+      );
+      await expect(services.history.additions({ ownerId })).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+    });
+
     it("rejects a forged principal on every method and changes nothing", async () => {
       const task = await services.tasks.create(owner, { title: "Real task" });
       const forged = { ownerId, source: "dashboard", audience: "private", initiator: "owner" };

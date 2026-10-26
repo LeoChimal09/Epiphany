@@ -220,7 +220,7 @@ function priorities(data: OverviewData): string {
       countdown = days < 0 ? `, ${-days}d overdue` : days === 0 ? ", today" : `, in ${days}d`;
     }
     const category = data.categoryNames.get(task.categoryId);
-    return `${index + 1}. ${plain(task.title)} (${dueText(task, timezone)}${countdown}${category && category !== "Inbox" ? `, ${plain(category)}` : ""})${review(task)}`;
+    return `${index + 1}. ${plain(task.title)} (${task.priority}, ${dueText(task, timezone)}${countdown}${category && category !== "Inbox" ? `, ${plain(category)}` : ""})${review(task)}`;
   });
   if (ranked.length > 10) lines.push(`…and ${ranked.length - 10} more open tasks`);
   return assemble(

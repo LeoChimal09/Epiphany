@@ -863,7 +863,13 @@ function desiredWorkBlockBody(block: WorkBlock, title: string, zone: string): Go
 }
 
 function desiredDeadlineBody(
-  task: { id: string; title: string; dueAt: Date; dueDateOnly: boolean },
+  task: {
+    id: string;
+    title: string;
+    dueAt: Date;
+    dueDateOnly: boolean;
+    estimatedMinutes: number | null;
+  },
   zone: string,
   generation: number,
 ): GoogleEventBody {
@@ -872,21 +878,25 @@ function desiredDeadlineBody(
   const common = {
     id,
     summary: `Due: ${task.title}`.slice(0, 300),
-    description:
-      "Task deadline managed by Epiphany. Schedule a separate work block for planned work time.",
+    description: "Task deadline and estimated work time managed by Epiphany.",
     extendedProperties: { private: { [EPIPHANY_KEY_PROPERTY]: syncKey } },
   };
   if (task.dueDateOnly) {
     const date = task.dueAt.toISOString().slice(0, 10);
     return { ...common, start: { date }, end: { date: addDays(date, 1) } };
   }
+  const hasEstimate = task.estimatedMinutes !== null;
+  const durationMinutes = task.estimatedMinutes ?? 15;
+  const startsAt = hasEstimate
+    ? new Date(task.dueAt.getTime() - durationMinutes * 60_000)
+    : task.dueAt;
+  const endsAt = hasEstimate
+    ? task.dueAt
+    : new Date(task.dueAt.getTime() + durationMinutes * 60_000);
   return {
     ...common,
-    start: { dateTime: task.dueAt.toISOString(), timeZone: zone },
-    end: {
-      dateTime: new Date(task.dueAt.getTime() + 15 * 60_000).toISOString(),
-      timeZone: zone,
-    },
+    start: { dateTime: startsAt.toISOString(), timeZone: zone },
+    end: { dateTime: endsAt.toISOString(), timeZone: zone },
   };
 }
 
@@ -1260,6 +1270,7 @@ async function pushTaskDeadlines(ctx: Ctx): Promise<void> {
         title: tasks.title,
         dueAt: tasks.dueAt,
         dueDateOnly: tasks.dueDateOnly,
+        estimatedMinutes: tasks.estimatedMinutes,
         status: tasks.status,
         archivedAt: tasks.archivedAt,
         version: tasks.version,

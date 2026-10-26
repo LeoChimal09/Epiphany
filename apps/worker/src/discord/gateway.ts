@@ -20,7 +20,7 @@ import { connectDatabase } from "@epiphany/core/db";
 import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services";
 import { loadDiscordBotConfig } from "./config";
 import { createDiscordWorkspaceCapability, prepareServer } from "./guild-adapter";
-import { createOverviewSync } from "./overview-discord";
+import { createOverviewSync, guildSurface } from "./overview-discord";
 import {
   createElevenLabsSpeech,
   createOpenAiSpeech,
@@ -43,7 +43,9 @@ import {
 import { createReminderRunner } from "./reminders-discord";
 import {
   fitDiscordMessage,
+  channelAnswerNotice,
   routeMessage,
+  responseViewForMessage,
   SHARED_CHANNEL_REPLY,
   splitDiscordMessage,
   stripEpiMention,
@@ -449,6 +451,18 @@ export async function startDiscordGateway(
     conversations.set(message.channelId, result.state);
 
     let reply = result.reply.text;
+    if (!result.reply.changed && ["answered", "listed"].includes(result.reply.outcome)) {
+      const view = responseViewForMessage(text);
+      const fromAssistantChannel =
+        message.channel.type === ChannelType.GuildText &&
+        message.channel.name === "assistant" &&
+        message.channel.parent?.name.toLowerCase() === "epiphany";
+      if (view && fromAssistantChannel) {
+        reply =
+          (await postPlannerAnswer(message, view, result.reply.text, epiUserId)) ??
+          `I couldn't access your private #${view} channel, so here's the answer here:\n\n${result.reply.text}`;
+      }
+    }
     // Setup from a server channel: also prove a direct message reaches the owner, and say so if
     // it does not (DMs from server members can be switched off).
     if (result.reply.outcome === "created" && !message.channel.isDMBased()) {
@@ -464,7 +478,7 @@ export async function startDiscordGateway(
     for (const content of replies) {
       await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
     }
-    await speakIfEnabled(message, principal, result.reply.text);
+    await speakIfEnabled(message, principal, reply);
     // A change made here shows up in the overview channels straight away.
     if (result.reply.changed) void overviews.run();
   }
@@ -498,6 +512,51 @@ export async function startDiscordGateway(
       });
     } catch {
       log("spoken_reply_failed");
+    }
+  }
+
+  async function postPlannerAnswer(
+    message: Message,
+    view: "schedule" | "priorities" | "check-ins",
+    text: string,
+    epiUserId: string,
+  ): Promise<string | null> {
+    if (
+      message.channel.type !== ChannelType.GuildText ||
+      message.channel.name !== "assistant" ||
+      message.channel.parent?.name.toLowerCase() !== "epiphany" ||
+      !message.guild
+    ) {
+      return null;
+    }
+    try {
+      const surface = guildSurface(message.guild, epiUserId);
+      const channelId = await surface.channelFor(view);
+      if (!channelId) return null;
+      const channel = await message.guild.channels.fetch(channelId);
+      if (
+        !channel ||
+        channel.type !== ChannelType.GuildText ||
+        !channel.permissionsFor(message.author)?.has(PermissionFlagsBits.ViewChannel) ||
+        !channel.permissionsFor(client.user!)?.has(PermissionFlagsBits.SendMessages)
+      ) {
+        return null;
+      }
+      let jumpUrl = "";
+      for (const part of splitDiscordMessage(text)) {
+        const posted = await channel.send({
+          content: part,
+          allowedMentions: { parse: [] },
+        });
+        jumpUrl ||= posted.url;
+      }
+      return channelAnswerNotice(view, channelId, jumpUrl);
+    } catch (error) {
+      log("planner_answer_route_failed", {
+        view,
+        error: error instanceof Error ? error.name : "unknown",
+      });
+      return null;
     }
   }
 

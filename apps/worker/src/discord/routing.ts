@@ -60,6 +60,23 @@ export function stripEpiMention(content: string, epiUserId: string): string {
   return content.replace(new RegExp(`<@!?${epiUserId}>`, "g"), "").trim();
 }
 
+export type AnswerView = "schedule" | "priorities" | "check-ins";
+
+// Keep read-only planner answers in the private channel that already owns that information.
+export function responseViewForMessage(content: string): AnswerView | null {
+  const text = content.toLowerCase();
+  if (/\b(reminders?|check[\s-]?ins?)\b/.test(text)) return "check-ins";
+  if (/\b(schedule|calendar|free time|availability)\b/.test(text)) return "schedule";
+  if (/\b(priorit(?:y|ies)|tasks?|to[\s-]?dos?|assignments?|due)\b/.test(text)) {
+    return "priorities";
+  }
+  return null;
+}
+
+export function channelAnswerNotice(view: AnswerView, channelId: string, jumpUrl: string): string {
+  return `I posted the details in your #${view} channel (<#${channelId}>): ${jumpUrl}`;
+}
+
 // Said when the owner mentions Epi somewhere other people could read. No model call, no records.
 export const SHARED_CHANNEL_REPLY =
   "I keep your tasks private, so I only talk about them in a DM with me or in your private #assistant/#check-ins channels. Send me a DM and tell me you'd like your workspace set up, and I'll create it in this server.";

@@ -45,10 +45,8 @@ import type { OwnerProfile } from "@epiphany/core/services";
 import type { VoiceStatus } from "./voice-status";
 import {
   addDashboardCategory,
-  addDashboardEvent,
   addDashboardNote,
   addDashboardTask,
-  addDashboardWorkBlock,
   askEpi,
   cancelDashboardEvent,
   editDashboardNote,
@@ -87,7 +85,6 @@ import {
 import { CalendarView } from "./calendar-view";
 import { DeadlineNotifications } from "./deadline-notifications";
 import { IdeaBody } from "./idea-body";
-import { ScheduleComposer } from "./schedule-forms";
 import {
   formatDayLabel,
   todayKey,
@@ -144,7 +141,8 @@ export function DashboardShell({
   const [search, setSearch] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const deferredSearch = useDeferredValue(search);
-  const [composer, setComposer] = useState<"task" | "note" | "event" | "block" | null>(null);
+  const [composer, setComposer] = useState<"task" | "note" | null>(null);
+  const [taskDurationMode, setTaskDurationMode] = useState<"estimate" | "schedule">("estimate");
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
@@ -198,6 +196,7 @@ export function DashboardShell({
           const next = fresh.data;
           setData((current) => ({ ...current, ...next, capturedAt: new Date().toISOString() }));
         }
+
         if (week?.ok && requestedWeek.current === week.schedule.weekStart)
           setSchedule(week.schedule);
       } catch {
@@ -320,12 +319,22 @@ export function DashboardShell({
       () => addDashboardTask(fields),
       () => {
         form.reset();
+        setTaskDurationMode("estimate");
         setComposer(null);
-        setView("tasks");
-        setCategoryFilter(null);
-        setSearch("");
+        if (isSchedule) {
+          loadWeek(neededWeek);
+        } else {
+          setView("tasks");
+          setCategoryFilter(null);
+          setSearch("");
+        }
       },
     );
+  }
+
+  function openTaskComposer() {
+    setTaskDurationMode("estimate");
+    setComposer("task");
   }
 
   function submitNote(event: FormEvent<HTMLFormElement>) {
@@ -511,34 +520,6 @@ export function DashboardShell({
         });
       }
     });
-  }
-
-  function submitSchedule(kind: "event" | "block", formEvent: FormEvent<HTMLFormElement>) {
-    formEvent.preventDefault();
-    const form = formEvent.currentTarget;
-    const fields = new FormData(form);
-    const date = String(fields.get("date") ?? "");
-    // Show the week the record landed in; an invalid date is rejected by the action.
-    let week = neededWeek;
-    try {
-      week = weekStartOf(date);
-    } catch {
-      week = neededWeek;
-    }
-    changeSchedule(
-      () => (kind === "event" ? addDashboardEvent(fields) : addDashboardWorkBlock(fields)),
-      {
-        week,
-        onSuccess: () => {
-          form.reset();
-          setComposer(null);
-          if (week !== neededWeek || view === "tasks") {
-            setView("week");
-            setWeekStart(week);
-          }
-        },
-      },
-    );
   }
 
   function removeScheduleItem(item: TimelineItem) {
@@ -825,33 +806,22 @@ export function DashboardShell({
                 {pending ? "Working..." : view === "history" ? "Refresh history" : "Refresh"}
               </button>
               {isSchedule ? (
-                <>
-                  <button
-                    type="button"
-                    className={styles.primaryButton}
-                    disabled={pending}
-                    onClick={() => setComposer("event")}
-                  >
-                    <Plus size={16} aria-hidden="true" />
-                    Add event
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    disabled={pending}
-                    onClick={() => setComposer("block")}
-                  >
-                    <Timer size={16} aria-hidden="true" />
-                    Plan work
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  disabled={pending}
+                  onClick={openTaskComposer}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  Add task
+                </button>
               ) : view === "category" ? (
                 <>
                   <button
                     type="button"
                     className={styles.primaryButton}
                     disabled={pending}
-                    onClick={() => setComposer("task")}
+                    onClick={openTaskComposer}
                   >
                     <Plus size={16} aria-hidden="true" />
                     Add task
@@ -916,19 +886,7 @@ export function DashboardShell({
             </p>
           ) : null}
 
-          {composer === "event" || composer === "block" ? (
-            <ScheduleComposer
-              kind={composer}
-              timezone={data.timezone}
-              tasks={data.tasks}
-              defaultDate={
-                view === "week" ? (weekStart === weekStartOf(today) ? today : weekStart) : today
-              }
-              pending={pending}
-              onSubmit={(formEvent) => submitSchedule(composer, formEvent)}
-              onCancel={() => setComposer(null)}
-            />
-          ) : composer ? (
+          {composer ? (
             <section
               className={styles.composer}
               aria-label={composer === "task" ? "New task" : "New note"}
@@ -958,27 +916,80 @@ export function DashboardShell({
                         <option value="major">Major — extra advance reminders</option>
                       </select>
                     </label>
-                    <label>
-                      Due ({data.timezone})<input name="dueAt" type="datetime-local" />
+                    <label className={styles.fullWidth}>
+                      Calendar timing
+                      <select
+                        name="durationMode"
+                        value={taskDurationMode}
+                        onChange={(event) =>
+                          setTaskDurationMode(
+                            event.currentTarget.value === "schedule" ? "schedule" : "estimate",
+                          )
+                        }
+                      >
+                        <option value="estimate">Estimated minutes</option>
+                        <option value="schedule">Set start and end times</option>
+                      </select>
                     </label>
-                    <label>
-                      Estimated minutes
-                      <input name="estimatedMinutes" type="number" min={1} max={100000} step={1} />
-                    </label>
+                    {taskDurationMode === "estimate" ? (
+                      <>
+                        <label>
+                          Due ({data.timezone})
+                          <input name="dueAt" type="datetime-local" />
+                        </label>
+                        <label>
+                          Estimated minutes
+                          <input
+                            name="estimatedMinutes"
+                            type="number"
+                            min={1}
+                            max={100000}
+                            step={1}
+                          />
+                        </label>
+                        <p className={styles.fullWidth}>
+                          When a due time is set, the calendar time runs for this estimate and ends
+                          at the due time.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <label>
+                          Scheduled date ({data.timezone})
+                          <input name="scheduleDate" type="date" required />
+                        </label>
+                        <div className={`${styles.timeRange} ${styles.fullWidth}`}>
+                          <label>
+                            Start time
+                            <input name="startTime" type="time" required />
+                          </label>
+                          <label>
+                            End time
+                            <input name="endTime" type="time" required />
+                          </label>
+                        </div>
+                        <p className={styles.fullWidth}>
+                          The calendar shows this exact time range; the end time is also the task’s
+                          due time.
+                        </p>
+                      </>
+                    )}
                     <CategorySelect
                       categories={data.categories}
                       name="categoryId"
                       value={addCategoryId ?? ""}
                     />
-                    <label className={styles.inlineCheck}>
-                      <input name="dueDateOnly" type="checkbox" />
-                      <span>
-                        No specific due time
-                        <small className={styles.checkHelp}>
-                          Use the selected date only. Leave unchecked for an exact deadline.
-                        </small>
-                      </span>
-                    </label>
+                    {taskDurationMode === "estimate" ? (
+                      <label className={styles.inlineCheck}>
+                        <input name="dueDateOnly" type="checkbox" />
+                        <span>
+                          No specific due time
+                          <small className={styles.checkHelp}>
+                            Use the selected date only. Leave unchecked for an exact deadline.
+                          </small>
+                        </span>
+                      </label>
+                    ) : null}
                     <label className={styles.fullWidth}>
                       Details
                       <textarea name="details" rows={3} maxLength={10000} />

@@ -92,6 +92,30 @@ export async function runReminderCycle(options: {
   const claimed = await claimDue(db, ownerId, now);
   if (claimed.length === 0) return report;
 
+  const newestTaskReminder = new Map<string, Reminder>();
+  for (const reminder of claimed) {
+    if (reminder.kind !== "task_deadline" || !reminder.subjectId) continue;
+    const current = newestTaskReminder.get(reminder.subjectId);
+    if (!current || reminder.dueAt.getTime() > current.dueAt.getTime()) {
+      newestTaskReminder.set(reminder.subjectId, reminder);
+    }
+  }
+  const superseded = new Set(
+    claimed
+      .filter(
+        (reminder) =>
+          reminder.kind === "task_deadline" &&
+          reminder.subjectId !== null &&
+          newestTaskReminder.get(reminder.subjectId)?.id !== reminder.id,
+      )
+      .map((reminder) => reminder.id),
+  );
+  for (const reminder of claimed) {
+    if (!superseded.has(reminder.id)) continue;
+    await markSkipped(db, reminder.id, "superseded by a newer task reminder");
+    report.skipped++;
+  }
+
   const today = dateKeyOf(now, timezone);
   const dayStart = localWallToUtc(today, 0, timezone);
   const dayEnd = localWallToUtc(addDays(today, 1), 0, timezone);
@@ -99,6 +123,7 @@ export async function runReminderCycle(options: {
 
   const toSend: { reminder: Reminder; late: boolean }[] = [];
   for (const reminder of claimed) {
+    if (superseded.has(reminder.id)) continue;
     const decision = decideDelivery({
       reminder: {
         kind: reminder.kind,

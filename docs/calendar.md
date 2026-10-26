@@ -17,9 +17,12 @@ a real Google account yet; the live checks that remain are listed at the end.
   series ID. Cancelled or deleted events become canceled (kept, never deleted). Window: the past 30 and
   next 180 days, re-read in full weekly.
 - **Write**: tasks with due dates and planned work blocks are created, updated, and removed on the
-  "Epiphany" calendar only. Date-only task deadlines become all-day events; timed deadlines become
-  short 15-minute deadline markers at the specified time. A task without a due date is not exported.
-  Work blocks are separate events representing time planned to work. Events have stable IDs and
+  "Epiphany" calendar only. Date-only task deadlines become all-day events. For a timed task with an
+  estimate, the calendar interval ends at its due time and spans the estimated minutes; without an
+  estimate, the existing 15-minute deadline marker is retained. In the task form, choose estimated
+  minutes or set a scheduled start/end; a scheduled end becomes the task's due time, and the interval
+  is exported as one task event. A task without a due date is not exported. Work blocks are separate
+  events representing time planned to work. Events have stable IDs and
   private keys (`epiphanyKey`), so retries do not create duplicates and Epiphany recognizes its own
   events rather than importing them again.
 - **Conflicts**: if you edit or delete an Epiphany event in Google Calendar, the block is flagged

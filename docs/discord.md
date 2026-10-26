@@ -44,6 +44,9 @@ no to discard. For corrections, send the corrected list instead. Approval is mod
 rechecks current records for duplicates, and preserves the original task source message.
 An unrelated message discards the preview; it also expires after ten minutes and is lost
 when the worker restarts. Single-item requests retain immediate-save behavior.
+When a task is saved without a due date or estimate, Epi adds a fixed optional follow-up
+asking for the missing timing; the task is already saved, and no additional model call is
+used to compose that question.
 
 Complete pasted course cards can be interpreted in code without AI tokens; ambiguous
 or incomplete layouts still use language understanding. The numbered preview is always
@@ -62,6 +65,10 @@ there are handled privately like replies in `#assistant`.
   made in Discord or in the dashboard shows up: right away for changes made in Discord, and within
   about 15 seconds for dashboard changes (the worker compares the records with what it last posted).
   Nothing is sent when nothing changed.
+- Asking for your schedule, priorities/tasks, or reminders in the private `#assistant` channel posts
+  the full answer into `#schedule`, `#priorities`, or `#check-ins`, respectively. Epi replies in
+  `#assistant` with a Discord jump link to the new message; the destination must be private and
+  visible to you. Direct messages continue to receive their answer directly.
 - If someone **deletes an overview message**, Epi posts it again. Only the message is gone; no task,
   note, or event is touched.
 - A lost record of which message belongs to a view does not cause a duplicate: Epi finds its earlier

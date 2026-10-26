@@ -10,8 +10,10 @@ trigger a Discord notification. It never falls back to a public channel or DM.
   `sent`, `skipped`, `failed`, `unknown`, or `canceled`. A restart loses nothing.
 - **No duplicates.** Every job has a dedupe key built from what it is about and when (for example
   `task:<id>:lead24h:<deadline>`), so scheduling can run every 15 seconds and create only what is new.
-  If a deadline moves, the old jobs are canceled and new ones created. Finished tasks and canceled events
-  have their pending jobs canceled.
+  Missed lead times are canceled instead of replayed; if a timed task is created too close for any
+  configured lead, one immediate reminder replaces those missed warnings. When several task alerts
+  become due together, only the newest one is sent. If a deadline moves, old jobs are canceled and new
+  ones created. Finished tasks and canceled events have their pending jobs canceled.
 - **Sent at most once.** A job is *claimed* with a conditional update before it is sent, so two workers
   cannot both send it. If the worker dies after claiming and before recording the result, the job is
   marked `unknown` ("delivery not confirmed; not resent") rather than sent again, because it may already
@@ -33,8 +35,8 @@ Decided in one place (`packages/core/src/reminders/policy.ts`), in this order:
 4. Quiet hours (10 PM–7 AM local by default): an ordinary reminder is held until they end, unless that would make it
    stale, in which case it is dropped. Urgent reminders go through.
 5. Daily limit (12 ordinary reminders a day by default): extras are skipped.
-6. Late but relevant: sent with "(a little late)". If more than 3 are late at once, they are merged into
-   one short summary.
+6. Late but relevant: sent with "(a little late)". If more than 3 unrelated reminders are late at once,
+   they are merged into one short summary.
 
 ## Defaults and where to change them
 

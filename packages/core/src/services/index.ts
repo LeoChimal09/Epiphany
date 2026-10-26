@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
   cancelEvent,
@@ -575,6 +575,20 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           .where(eq(actionHistory.ownerId, p.ownerId))
           .orderBy(desc(actionHistory.createdAt))
           .limit(max);
+      },
+      async additions(principal: unknown): Promise<ActionHistoryEntry[]> {
+        const { principal: p } = gate(principal, "history.read");
+        return db
+          .select()
+          .from(actionHistory)
+          .where(
+            and(
+              eq(actionHistory.ownerId, p.ownerId),
+              inArray(actionHistory.action, ["task.create", "event.create"]),
+            ),
+          )
+          .orderBy(desc(actionHistory.createdAt))
+          .limit(100);
       },
     },
   };

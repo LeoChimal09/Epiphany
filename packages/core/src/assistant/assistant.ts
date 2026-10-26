@@ -1477,8 +1477,16 @@ export function createAssistant(options: AssistantOptions) {
         const why = learned
           ? ` I guessed the time from ${learned.source === "correction" ? "what you told me" : "how long similar ones took you"}.`
           : "";
+        const timingFollowUp =
+          !dueAt && !task.estimatedMinutes
+            ? " Do you know when it's due or how long it might take? That's optional; you can leave it as-is or add timing to the task later."
+            : !dueAt
+              ? " Do you know when it's due? That's optional; you can leave it as-is or add a due date later."
+              : !task.estimatedMinutes
+                ? " Do you know how long it might take? That's optional; you can leave it as-is or add an estimate later."
+                : "";
         return reply({
-          text: `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}`,
+          text: `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
           outcome: "created",
           changed: true,
         });

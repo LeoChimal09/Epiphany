@@ -843,6 +843,24 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
       expect(h.google.writes().at(-1)!.ifMatch).toBeTruthy();
     });
 
+    it("uses an estimated duration for the task's calendar time, ending at its deadline", async () => {
+      const task = await createTask(h.handle.db, h.actor(), {
+        title: "Study for chemistry",
+        dueAt: new Date("2026-10-23T21:00:00.000Z"),
+        estimatedMinutes: 360,
+      });
+
+      expect((await h.syncOnce()).pushed.created).toBe(1);
+      const event = [...epiphanyCalendar().events.values()].find(
+        (item) => item.summary === "Due: Study for chemistry",
+      )!;
+      expect(event).toMatchObject({
+        start: { dateTime: "2026-10-23T15:00:00.000Z", timeZone: "America/Chicago" },
+        end: { dateTime: "2026-10-23T21:00:00.000Z", timeZone: "America/Chicago" },
+      });
+      expect(task.estimatedMinutes).toBe(360);
+    });
+
     it("removes deadlines when completed and creates a fresh event if the deadline is restored", async () => {
       const task = await makeTask("Return library book", new Date("2026-10-24T15:00:00.000Z"));
       await h.syncOnce();
