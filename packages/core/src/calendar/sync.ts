@@ -868,7 +868,6 @@ function desiredDeadlineBody(
     title: string;
     dueAt: Date;
     dueDateOnly: boolean;
-    estimatedMinutes: number | null;
   },
   zone: string,
   generation: number,
@@ -885,18 +884,10 @@ function desiredDeadlineBody(
     const date = task.dueAt.toISOString().slice(0, 10);
     return { ...common, start: { date }, end: { date: addDays(date, 1) } };
   }
-  const hasEstimate = task.estimatedMinutes !== null;
-  const durationMinutes = task.estimatedMinutes ?? 15;
-  const startsAt = hasEstimate
-    ? new Date(task.dueAt.getTime() - durationMinutes * 60_000)
-    : task.dueAt;
-  const endsAt = hasEstimate
-    ? task.dueAt
-    : new Date(task.dueAt.getTime() + durationMinutes * 60_000);
   return {
     ...common,
-    start: { dateTime: startsAt.toISOString(), timeZone: zone },
-    end: { dateTime: endsAt.toISOString(), timeZone: zone },
+    start: { dateTime: task.dueAt.toISOString(), timeZone: zone },
+    end: { dateTime: new Date(task.dueAt.getTime() + 15 * 60_000).toISOString(), timeZone: zone },
   };
 }
 
@@ -1270,7 +1261,6 @@ async function pushTaskDeadlines(ctx: Ctx): Promise<void> {
         title: tasks.title,
         dueAt: tasks.dueAt,
         dueDateOnly: tasks.dueDateOnly,
-        estimatedMinutes: tasks.estimatedMinutes,
         status: tasks.status,
         archivedAt: tasks.archivedAt,
         version: tasks.version,

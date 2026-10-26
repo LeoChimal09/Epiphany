@@ -22,27 +22,104 @@ interface AdditionCursor {
   seen: Set<string>;
 }
 
-function addedItem(entry: ActionHistoryEntry): { kind: "task" | "event"; title: string } | null {
+function metadata(entry: ActionHistoryEntry): Record<string, unknown> {
+  return entry.after && typeof entry.after === "object"
+    ? (entry.after as Record<string, unknown>)
+    : {};
+}
+
+function dateLabel(value: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: timezone,
+  }).format(value);
+}
+
+function timeLabel(value: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).format(value);
+}
+
+function localDateKey(value: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone,
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function eventTiming(after: Record<string, unknown>, ownerTimezone: string): string | null {
+  if (typeof after.startsAt !== "string") return null;
+  const startsAt = new Date(after.startsAt);
+  if (Number.isNaN(startsAt.getTime())) return null;
+  const timezone = typeof after.timezone === "string" ? after.timezone : ownerTimezone;
+  if (after.allDay === true) return ` · ${dateLabel(startsAt, timezone)} (all day)`;
+  if (typeof after.endsAt !== "string")
+    return ` · ${dateLabel(startsAt, timezone)}, ${timeLabel(startsAt, timezone)}`;
+  const endsAt = new Date(after.endsAt);
+  if (Number.isNaN(endsAt.getTime())) return null;
+  const date = dateLabel(startsAt, timezone);
+  const endDate = dateLabel(endsAt, timezone);
+  return localDateKey(startsAt, timezone) === localDateKey(endsAt, timezone)
+    ? ` · ${date}, ${timeLabel(startsAt, timezone)}–${timeLabel(endsAt, timezone)}`
+    : ` · ${date}, ${timeLabel(startsAt, timezone)}–${endDate}, ${timeLabel(endsAt, timezone)}`;
+}
+
+function addedItem(
+  entry: ActionHistoryEntry,
+  ownerTimezone: string,
+): { kind: "task" | "event"; title: string; detail: string } | null {
+  const after = metadata(entry);
   if (
     (entry.action !== "task.create" && entry.action !== "event.create") ||
     (entry.entityType !== "task" && entry.entityType !== "event") ||
-    !entry.after ||
-    typeof entry.after !== "object" ||
-    !("title" in entry.after) ||
-    typeof entry.after.title !== "string"
+    typeof after.title !== "string"
   ) {
     return null;
   }
+  const details: string[] = [];
+  if (entry.entityType === "task") {
+    if (typeof after.dueAt === "string") {
+      const dueAt = new Date(after.dueAt);
+      if (!Number.isNaN(dueAt.getTime())) {
+        const due =
+          after.dueDateOnly === true
+            ? dateLabel(new Date(`${after.dueAt.slice(0, 10)}T12:00:00.000Z`), "UTC")
+            : `${dateLabel(dueAt, ownerTimezone)}, ${timeLabel(dueAt, ownerTimezone)}`;
+        details.push(`Due ${due}`);
+      }
+    }
+    if (typeof after.estimatedMinutes === "number" && Number.isFinite(after.estimatedMinutes)) {
+      details.push(`${after.estimatedMinutes} min`);
+    }
+    if (after.priority === "major") details.push("Major");
+    else if (after.priority === "minor") details.push("Minor");
+  } else {
+    const timing = eventTiming(after, ownerTimezone);
+    if (timing) details.push(timing.trim().replace(/^·\s*/, ""));
+  }
   return {
     kind: entry.entityType,
-    title: entry.after.title.replace(/\s+/g, " ").trim().slice(0, 300),
+    title: after.title.replace(/\s+/g, " ").trim().slice(0, 140),
+    detail: details.length ? ` (${details.join(" · ")})` : "",
   };
 }
 
-export function announcementText(entries: ActionHistoryEntry[]): string {
+export function announcementText(entries: ActionHistoryEntry[], timezone = "UTC"): string {
   const lines = entries.flatMap((entry) => {
-    const item = addedItem(entry);
-    return item ? [`• ${item.kind === "task" ? "Task" : "Event"}: ${item.title}`] : [];
+    const item = addedItem(entry, timezone);
+    return item
+      ? [`• ${item.kind === "task" ? "Task" : "Event"}: ${item.title}${item.detail}`]
+      : [];
   });
   if (!lines.length) return "";
   const shown = lines.slice(0, 8);
@@ -222,7 +299,7 @@ export function createOverviewSync(options: {
         cursor.through = Math.max(cursor.through, newestTimestamp);
         return;
       }
-      const content = announcementText(fresh);
+      const content = announcementText(fresh, timezone);
       if (!content) return;
       try {
         await surface.post(channelId, content);

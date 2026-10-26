@@ -31,6 +31,66 @@ describe("Discord planner addition notices", () => {
     ).toBe("✨ Added to your planner:\n• Task: Study for finals\n• Event: Office hours");
   });
 
+  it("includes task deadline, estimate, priority, and event time when recorded", () => {
+    expect(
+      announcementText(
+        [
+          entry({
+            after: {
+              title: "Study for finals",
+              dueAt: "2026-10-26T21:00:00.000Z",
+              dueDateOnly: false,
+              estimatedMinutes: 90,
+              priority: "major",
+            },
+          }),
+          entry({
+            id: "history-2",
+            action: "event.create",
+            entityType: "event",
+            after: {
+              title: "Office hours",
+              startsAt: "2026-10-26T15:00:00.000Z",
+              endsAt: "2026-10-26T16:00:00.000Z",
+              timezone: "America/Chicago",
+            },
+          }),
+        ],
+        "America/Chicago",
+      ),
+    ).toBe(
+      "✨ Added to your planner:\n• Task: Study for finals (Due Oct 26, 2026, 4:00 PM · 90 min · Major)\n• Event: Office hours (Oct 26, 2026, 10:00 AM–11:00 AM)",
+    );
+  });
+
+  it("formats date-only task deadlines and all-day events", () => {
+    expect(
+      announcementText([
+        entry({
+          after: {
+            title: "Submit application",
+            dueAt: "2026-10-27T00:00:00.000Z",
+            dueDateOnly: true,
+            priority: "minor",
+          },
+        }),
+        entry({
+          id: "history-2",
+          action: "event.create",
+          entityType: "event",
+          after: {
+            title: "Holiday",
+            startsAt: "2026-10-27T05:00:00.000Z",
+            timezone: "America/Chicago",
+            allDay: true,
+          },
+        }),
+      ]),
+    ).toBe(
+      "✨ Added to your planner:\n• Task: Submit application (Due Oct 27, 2026 · Minor)\n• Event: Holiday (Oct 27, 2026 (all day))",
+    );
+  });
+
   it("omits records without supported task/event creation history", () => {
     expect(
       announcementText([entry({ action: "task.update" }), entry({ after: { other: true } })]),

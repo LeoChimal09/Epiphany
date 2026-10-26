@@ -68,7 +68,10 @@ describe("Discord reminder worker wiring (offline)", () => {
         ownerId: "fixture-owner",
         now,
         timezone: "America/Chicago",
-        settings: expect.objectContaining({ deadlineLeadHours: [24, 2, 1] }),
+        settings: expect.objectContaining({
+          deadlineLeadHours: [1],
+          majorDeadlineLeadHours: [24, 2, 1],
+        }),
       }),
     );
     const cycle = vi.mocked(runReminderCycle).mock.calls[0]![0];

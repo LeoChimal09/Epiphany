@@ -49,7 +49,7 @@ conversation ("don't ping me between 10pm and 7am", "brief me at 7:30", "bedtime
 | `reminders.briefing_time`            | 08:00              |
 | `reminders.daily_limit`              | 12 (raising it asks first) |
 | `reminders.event_lead_minutes`       | 30                 |
-| `reminders.deadline_lead_hours`      | 24, 2 and 1 hour before |
+| `reminders.deadline_lead_hours`      | 1 hour before           |
 | `routine.bedtime`                    | off                |
 | `routine.workout`                    | off                |
 | `routine.awareness` (hourly prompts) | off                |
@@ -63,12 +63,13 @@ times, with multiple leads on the same day combined into one reminder. Same-day 
 their 30-minute warning; all-day events get one reminder at 9 AM local time (or immediately if first
 noticed later that day).
 
-Tasks can be marked **minor** or **major**. Major deadlines add reminders 14, 7, and 3 days ahead,
-in addition to the configured closer deadline reminders. **Minor is always the default**; Epi only
-sets major when the owner explicitly asks for major/high priority or extra advance reminders. Exams
-and other high-stakes tasks are not automatically promoted. These alerts remain ordinary reminders:
-quiet hours (10 PM–7 AM), pause settings, and the daily limit still apply. A morning briefing is
-separate and does not control deadline alerts.
+Tasks can be marked **minor** or **major**. Minor is always the default and gets the configured
+deadline reminder (one hour ahead by default). Major deadlines retain their existing 14-, 7-, and
+3-day advance reminders plus their configured closer deadline reminders. Epi only sets major when
+the owner explicitly asks for major/high priority or extra advance reminders. Exams and other
+high-stakes tasks are not automatically promoted. These alerts remain ordinary reminders: quiet
+hours (10 PM–7 AM), pause settings, and the daily limit still apply. A morning briefing is separate
+and does not control deadline alerts.
 
 The one-hour warning is included for owners without a confirmed lead-time preference.
 An existing confirmed preference replaces the defaults; it is not silently expanded.

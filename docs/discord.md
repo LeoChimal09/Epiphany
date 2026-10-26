@@ -61,6 +61,15 @@ Once the workspace exists, Epi keeps one message in each of `today`, `schedule`,
 Personal reminders are posted with an owner-only mention in the private `#check-ins` channel; replies
 there are handled privately like replies in `#assistant`.
 
+When adding something, Epi distinguishes a **task** (a due date/deadline, with an optional effort
+estimate) from an **event** (a calendar interval with a start and end). A task estimate never
+changes its deadline. Task reminders are one hour ahead by default; Major tasks retain their
+existing advance reminders. If you say an activity starts at a particular time and lasts a stated
+duration, Epi adds an event spanning that interval.
+
+- New-task notices include the deadline, estimated minutes, and priority when present. Event notices
+  include the date and time range (or all-day status). These are fixed-format messages built from
+  saved records; they do not use another AI call.
 - The message is **edited in place**, never reposted. It is rebuilt from the database, so a change
   made in Discord or in the dashboard shows up: right away for changes made in Discord, and within
   about 15 seconds for dashboard changes (the worker compares the records with what it last posted).

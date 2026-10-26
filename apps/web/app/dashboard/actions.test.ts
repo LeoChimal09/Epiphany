@@ -189,39 +189,23 @@ describe("dashboard mutations", () => {
     );
   });
 
-  it("saves an explicit task schedule as its due time and estimated duration", async () => {
+  it("keeps the task deadline unchanged when an effort estimate is also provided", async () => {
     mocks.taskCreate.mockResolvedValue(task);
     await addDashboardTask(
       form({
-        title: "Study session",
-        durationMode: "schedule",
-        scheduleDate: "2026-10-23",
-        startTime: "09:00",
-        endTime: "15:00",
+        title: "Head home",
+        dueAt: "2026-10-23T21:30:00.000Z",
+        estimatedMinutes: "30",
       }),
     );
-    expect(mocks.taskCreate).toHaveBeenCalledWith(principal, {
-      title: "Study session",
-      priority: "minor",
-      details: undefined,
-      dueAt: "2026-10-23T20:00:00.000Z",
-      estimatedMinutes: 360,
-      categoryId: undefined,
-    });
-  });
-
-  it("rejects a scheduled task whose end is not after its start", async () => {
-    const result = await addDashboardTask(
-      form({
-        title: "Study session",
-        durationMode: "schedule",
-        scheduleDate: "2026-10-23",
-        startTime: "15:00",
-        endTime: "09:00",
+    expect(mocks.taskCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        title: "Head home",
+        dueAt: "2026-10-23T21:30:00.000Z",
+        estimatedMinutes: 30,
       }),
     );
-    expect(result).toMatchObject({ ok: false });
-    expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
   it("does not write when authentication fails", async () => {
@@ -463,6 +447,30 @@ describe("dashboard schedule changes", () => {
       startsAt: new Date("2026-10-14T14:00:00.000Z"),
       endsAt: new Date("2026-10-14T15:30:00.000Z"),
     });
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("calculates an event end from its explicit duration", async () => {
+    mocks.eventCreate.mockResolvedValue({ id: "event-2" });
+    const result = await addDashboardEvent(
+      form({
+        title: "Dinner",
+        date: "2026-10-14",
+        startTime: "09:00",
+        eventTimingMode: "duration",
+        durationMinutes: "45",
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, message: "Event saved." });
+    expect(mocks.eventCreate).toHaveBeenCalledWith(principal, {
+      title: "Dinner",
+      location: undefined,
+      timezone: "America/Chicago",
+      allDay: false,
+      startsAt: new Date("2026-10-14T14:00:00.000Z"),
+      endsAt: new Date("2026-10-14T14:45:00.000Z"),
+    });
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
   it("saves an all-day event as whole local days", async () => {

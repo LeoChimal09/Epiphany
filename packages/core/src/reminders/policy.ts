@@ -34,6 +34,7 @@ export interface ReminderSettings {
   maxAttempts: number;
   backoffMinutes: number[];
   deadlineLeadHours: number[];
+  majorDeadlineLeadHours: number[];
   eventLeadMinutes: number;
 }
 
@@ -47,7 +48,8 @@ export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
   dailyLimit: 12,
   maxAttempts: 4,
   backoffMinutes: [1, 5, 15],
-  deadlineLeadHours: [24, 2, 1],
+  deadlineLeadHours: [1],
+  majorDeadlineLeadHours: [24, 2, 1],
   eventLeadMinutes: 30,
 };
 
@@ -78,6 +80,7 @@ export function parseReminderSettings(
     routines: { bedtime: null, workout: null, awareness: null },
     backoffMinutes: [...DEFAULT_REMINDER_SETTINGS.backoffMinutes],
     deadlineLeadHours: [...DEFAULT_REMINDER_SETTINGS.deadlineLeadHours],
+    majorDeadlineLeadHours: [...DEFAULT_REMINDER_SETTINGS.majorDeadlineLeadHours],
   };
   for (const preference of preferences) {
     if (preference.status !== "confirmed") continue;
@@ -182,6 +185,7 @@ export function parseReminderSettings(
             .filter((entry): entry is number => entry !== null);
           if (leads.length > 0)
             settings.deadlineLeadHours = [...new Set(leads)].toSorted((a, b) => b - a).slice(0, 5);
+          settings.majorDeadlineLeadHours = [...settings.deadlineLeadHours];
         }
         break;
       case "reminders.event_lead_minutes":

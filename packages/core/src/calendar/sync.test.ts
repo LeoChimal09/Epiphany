@@ -843,7 +843,7 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
       expect(h.google.writes().at(-1)!.ifMatch).toBeTruthy();
     });
 
-    it("uses an estimated duration for the task's calendar time, ending at its deadline", async () => {
+    it("keeps a task's estimated effort separate from its calendar deadline marker", async () => {
       const task = await createTask(h.handle.db, h.actor(), {
         title: "Study for chemistry",
         dueAt: new Date("2026-10-23T21:00:00.000Z"),
@@ -855,8 +855,8 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
         (item) => item.summary === "Due: Study for chemistry",
       )!;
       expect(event).toMatchObject({
-        start: { dateTime: "2026-10-23T15:00:00.000Z", timeZone: "America/Chicago" },
-        end: { dateTime: "2026-10-23T21:00:00.000Z", timeZone: "America/Chicago" },
+        start: { dateTime: "2026-10-23T21:00:00.000Z", timeZone: "America/Chicago" },
+        end: { dateTime: "2026-10-23T21:15:00.000Z", timeZone: "America/Chicago" },
       });
       expect(task.estimatedMinutes).toBe(360);
     });

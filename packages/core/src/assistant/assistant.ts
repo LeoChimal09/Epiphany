@@ -1457,7 +1457,7 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_task": {
-        const { dueAt, dueDateOnly } = dueFields(intent.dueDate, intent.dueTime);
+        const due = dueFields(intent.dueDate, intent.dueTime);
         // With learning on, a task with no stated effort gets an estimate from what the owner has
         // reported for similar work (or their own correction), and says so.
         const learned = intent.estimatedMinutes
@@ -1468,8 +1468,8 @@ export function createAssistant(options: AssistantOptions) {
           details: intent.details,
           sourceText: userText,
           sourceRef,
-          dueAt,
-          dueDateOnly,
+          dueAt: due.dueAt,
+          dueDateOnly: due.dueDateOnly,
           estimatedMinutes: intent.estimatedMinutes ?? learned?.minutes,
           priority: intent.priority,
         });
@@ -1478,15 +1478,39 @@ export function createAssistant(options: AssistantOptions) {
           ? ` I guessed the time from ${learned.source === "correction" ? "what you told me" : "how long similar ones took you"}.`
           : "";
         const timingFollowUp =
-          !dueAt && !task.estimatedMinutes
+          !due.dueAt && !task.estimatedMinutes
             ? " Do you know when it's due or how long it might take? That's optional; you can leave it as-is or add timing to the task later."
-            : !dueAt
+            : !due.dueAt
               ? " Do you know when it's due? That's optional; you can leave it as-is or add a due date later."
               : !task.estimatedMinutes
                 ? " Do you know how long it might take? That's optional; you can leave it as-is or add an estimate later."
                 : "";
         return reply({
           text: `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
+          outcome: "created",
+          changed: true,
+        });
+      }
+
+      case "create_event": {
+        const startsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.startTime), timezone);
+        const endsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.endTime), timezone);
+        const event = await services.events.create(principal, {
+          title: intent.title,
+          startsAt,
+          endsAt,
+          timezone,
+          location: intent.location,
+        });
+        const time = new Intl.DateTimeFormat("en-US", {
+          timeZone: timezone,
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const startTime = time.format(startsAt).replace(/\u202f/g, " ");
+        const endTime = time.format(endsAt).replace(/\u202f/g, " ");
+        return reply({
+          text: `I added "${event.title}" to your calendar for ${dayLabel(intent.date)} from ${startTime} to ${endTime}.`,
           outcome: "created",
           changed: true,
         });

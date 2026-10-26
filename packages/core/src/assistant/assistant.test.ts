@@ -562,6 +562,29 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(row?.estimatedMinutes).toBe(45);
     });
 
+    it("creates an event interval from its explicit start and end times", async () => {
+      const { assistant } = build(() => ({
+        kind: "create_event",
+        title: "Head home",
+        date: "2026-10-16",
+        startTime: "16:30",
+        endTime: "17:00",
+      }));
+      const { reply } = await say(assistant, "add head home to my calendar from 4:30 to 5");
+      expect(reply.text).toContain("Fri, Oct 16 from 4:30 PM to 5:00 PM");
+      const events = await services.events.list(assistantPrincipal, {
+        from: new Date("2026-10-16T00:00:00.000Z"),
+        to: new Date("2026-10-17T00:00:00.000Z"),
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        title: "Head home",
+        startsAt: new Date("2026-10-16T21:30:00.000Z"),
+        endsAt: new Date("2026-10-16T22:00:00.000Z"),
+      });
+      expect(await taskRows()).toHaveLength(0);
+    });
+
     it("creates a date-only deadline without inventing a time", async () => {
       const { assistant } = build(() => ({
         kind: "create_task",

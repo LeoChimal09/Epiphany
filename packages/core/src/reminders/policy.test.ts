@@ -64,9 +64,13 @@ describe("reminder settings", () => {
   });
 
   it("includes a one-hour warning by default but does not override the owner's chosen leads", () => {
-    expect(parseReminderSettings([]).deadlineLeadHours).toEqual([24, 2, 1]);
+    expect(parseReminderSettings([]).deadlineLeadHours).toEqual([1]);
+    expect(parseReminderSettings([]).majorDeadlineLeadHours).toEqual([24, 2, 1]);
     expect(
       parseReminderSettings([pref("reminders.deadline_lead_hours", [1])]).deadlineLeadHours,
+    ).toEqual([1]);
+    expect(
+      parseReminderSettings([pref("reminders.deadline_lead_hours", [1])]).majorDeadlineLeadHours,
     ).toEqual([1]);
     expect(
       parseReminderSettings([pref("reminders.deadline_lead_hours", [24, 2])]).deadlineLeadHours,

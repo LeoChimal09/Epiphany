@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { localParts, type DateKey } from "@epiphany/core/planning";
+import type { DateKey } from "@epiphany/core/planning";
 import { countdownLabel, type DashboardTask } from "./model";
 import {
   buildDay,
@@ -62,7 +62,8 @@ function EntryBlock({
   const { item } = entry;
   const height = Math.max(((entry.endMinute - entry.startMinute) / 60) * HOUR_PX, 20);
   const time = `${formatClock(item.start, timezone)} to ${formatClock(item.end, timezone)}`;
-  const label = `${item.title}, ${time}${item.conflict ? ", overlaps another item" : ""}`;
+  const kind = item.kind === "event" ? "Event" : "Work block";
+  const label = `${kind}: ${item.title}, ${time}${item.conflict ? ", conflict: overlaps another scheduled item" : ""}`;
   return (
     <div
       className={`${styles.slot} ${item.kind === "event" ? styles.slotEvent : styles.slotWork} ${
@@ -86,8 +87,9 @@ function EntryBlock({
         ) : (
           <Timer size={12} aria-hidden="true" />
         )}
-        {item.title}
+        {kind}: {item.title}
       </span>
+      {item.conflict ? <span className={styles.conflictBadge}>Conflict</span> : null}
       {height >= 38 ? <span className={styles.slotTime}>{time}</span> : null}
       <button
         type="button"
@@ -104,40 +106,45 @@ function EntryBlock({
 }
 
 function DeadlineBlock({
-  task,
+  entry,
   timezone,
   topMinute,
   gridHeight,
 }: {
-  task: DashboardTask;
+  entry: DayView["deadlineEntries"][number];
   timezone: string;
   topMinute: number;
   gridHeight: number;
 }) {
+  const { task } = entry;
   if (!task.dueAt || task.dueDateOnly) return null;
   const due = new Date(task.dueAt);
   if (Number.isNaN(due.getTime())) return null;
-  const { hour, minute } = localParts(due, timezone);
-  const dueMinute = hour * 60 + minute;
   const time = formatClock(due.getTime(), timezone);
-  const label = `Due at ${time}: ${task.title}`;
+  const label = `${entry.conflict ? "Nearby deadline conflict. " : ""}Due at ${time}: ${task.title}`;
   const height = 28;
   const top = Math.max(
     0,
-    Math.min(((dueMinute - topMinute) / 60) * HOUR_PX - height / 2, gridHeight - height),
+    Math.min(((entry.dueMinute - topMinute) / 60) * HOUR_PX - height / 2, gridHeight - height),
   );
   return (
     <div
-      className={styles.slotDeadline}
-      style={{ top, height }}
+      className={`${styles.slotDeadline} ${entry.conflict ? styles.slotConflict : ""}`}
+      style={{
+        top,
+        height,
+        left: `calc(${(entry.column / entry.columns) * 100}% + 2px)`,
+        width: `calc(${100 / entry.columns}% - 4px)`,
+      }}
       title={label}
       aria-label={label}
       role="note"
     >
       <Flag size={12} aria-hidden="true" />
       <span>
-        {time}: {task.title}
+        Due {time}: {task.title}
       </span>
+      {entry.conflict ? <span className={styles.conflictBadge}>Conflict</span> : null}
     </div>
   );
 }
@@ -257,10 +264,10 @@ function TimeGrid({
                   onRemove={onRemove}
                 />
               ))}
-              {day.deadlines.map((task) => (
+              {day.deadlineEntries.map((entry) => (
                 <DeadlineBlock
-                  key={`deadline:${task.id}`}
-                  task={task}
+                  key={`deadline:${entry.task.id}`}
+                  entry={entry}
                   timezone={timezone}
                   topMinute={topMinute}
                   gridHeight={gridHeight}

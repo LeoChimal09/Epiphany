@@ -1490,26 +1490,19 @@
 }
 .slotDeadline {
   position: absolute;
+  left: 4px;
   z-index: 2;
   display: flex;
   align-items: center;
   gap: 5px;
-  left: auto;
-  right: 4px;
-  width: fit-content;
-  max-width: calc(100% - 8px);
+  padding: 3px 6px;
   overflow: hidden;
-  padding: 3px 7px;
-  border: 1px solid rgba(93, 153, 255, 0.75);
   border-radius: 8px;
+  border: 1px solid rgba(45, 125, 255, 0.95);
   color: #e2edff;
   background: rgba(45, 125, 255, 0.82);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
   font-size: 11px;
-  line-height: 1.3;
-}
-.slotDeadline svg {
-  flex: 0 0 auto;
 }
 .slotDeadline span {
   overflow: hidden;
@@ -1517,9 +1510,26 @@
   white-space: nowrap;
 }
 .slotConflict {
-  color: #ffd2d4;
-  background: rgba(224, 71, 76, 0.2);
-  border-color: var(--danger);
+  color: #fff4f4;
+  background: rgba(170, 24, 35, 0.92);
+  border: 2px solid #ff454f;
+  box-shadow:
+    inset 4px 0 0 #ff454f,
+    0 0 0 2px rgba(255, 69, 79, 0.24);
+}
+.conflictBadge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid #ff8a90;
+  border-radius: 999px;
+  color: #fff;
+  background: #a91823;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 .majorTag {
   padding: 2px 7px;

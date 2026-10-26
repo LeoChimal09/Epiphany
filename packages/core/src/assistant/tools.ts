@@ -9,6 +9,7 @@ type Field = Exclude<keyof typeof intentWireSchema.shape, "kind" | "text">;
 const fields = {
   list_tasks: ["status", "from_date", "through_date", "search"],
   create_task: ["title", "details", "due_date", "due_time", "estimated_minutes", "priority"],
+  create_event: ["title", "event_date", "start_time", "end_time", "location"],
   create_note: ["title", "details", "note_kind"],
   develop_idea: ["reference", "target_id", "details"],
   resume_idea: ["reference", "target_id"],
@@ -42,6 +43,7 @@ const fields = {
 
 const required: Partial<Record<Action, Field[]>> = {
   create_task: ["title"],
+  create_event: ["title", "event_date", "start_time", "end_time"],
   create_note: ["details"],
   develop_idea: ["details"],
   capture: ["items"],

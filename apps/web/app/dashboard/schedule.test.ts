@@ -222,6 +222,53 @@ describe("a day's timeline", () => {
     expect(lone.entries[0]).toMatchObject({ column: 0, columns: 1 });
   });
 
+  it("keeps task deadlines separate from scheduled event duration and conflicts", () => {
+    const day = buildDay(
+      "2026-10-14",
+      timelineItems(
+        schedule({
+          events: [event("appointment", "2026-10-14T16:00", "2026-10-14T16:30")],
+        }),
+      ),
+      [task({ id: "due", dueAt: iso("2026-10-14T17:00"), estimatedMinutes: 90 })],
+      CHICAGO,
+    );
+    expect(day.deadlines.map((entry) => entry.id)).toEqual(["due"]);
+    expect(day.entries).toHaveLength(1);
+    expect(day.entries[0]).toMatchObject({ startMinute: 960, endMinute: 990 });
+    expect(day.conflictCount).toBe(0);
+  });
+
+  it("lays nearby deadline markers side by side and counts their deadline conflict", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [
+        task({ id: "first", dueAt: iso("2026-10-14T16:00") }),
+        task({ id: "second", dueAt: iso("2026-10-14T16:10") }),
+      ],
+      CHICAGO,
+    );
+    expect(day.deadlineEntries).toMatchObject([
+      { task: { id: "first" }, dueMinute: 960, column: 0, columns: 2, conflict: true },
+      { task: { id: "second" }, dueMinute: 970, column: 1, columns: 2, conflict: true },
+    ]);
+    expect(day.conflictCount).toBe(2);
+  });
+
+  it("does not mark deadline markers far apart as conflicts", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [
+        task({ id: "first", dueAt: iso("2026-10-14T16:00") }),
+        task({ id: "later", dueAt: iso("2026-10-14T18:00") }),
+      ],
+      CHICAGO,
+    );
+    expect(day.deadlineEntries.every((entry) => !entry.conflict)).toBe(true);
+  });
+
   it("counts conflicts, planned work, and due effort for the day", () => {
     expect(day.conflictCount).toBe(2);
     expect(day.plannedMinutes).toBe(60);

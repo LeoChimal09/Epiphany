@@ -8,6 +8,10 @@ const wire = (over: Record<string, unknown>) => ({
   details: null,
   due_date: null,
   due_time: null,
+  event_date: null,
+  start_time: null,
+  end_time: null,
+  location: null,
   estimated_minutes: null,
   priority: null,
   note_kind: null,
@@ -126,6 +130,25 @@ describe("intent parsing", () => {
       dueTime: "17:00",
       estimatedMinutes: 45,
       priority: "major",
+    });
+    expect(
+      toIntent(
+        wire({
+          kind: "create_event",
+          title: "Study group",
+          event_date: "2026-10-16",
+          start_time: "16:30",
+          end_time: "17:00",
+          location: "Library",
+        }),
+      ),
+    ).toEqual({
+      kind: "create_event",
+      title: "Study group",
+      date: "2026-10-16",
+      startTime: "16:30",
+      endTime: "17:00",
+      location: "Library",
     });
     expect(toIntent(wire({ kind: "create_task", title: "Exam next month" }))).toEqual({
       kind: "create_task",
@@ -293,6 +316,13 @@ describe("intent parsing", () => {
       wire({ kind: "create_task", title: "x", due_date: "2026-02-30" }),
       wire({ kind: "create_task", title: "x", due_time: "17:00" }),
       wire({ kind: "create_task", title: "x", due_date: "2026-10-16", due_time: "5pm" }),
+      wire({
+        kind: "create_event",
+        title: "Study group",
+        event_date: "2026-10-16",
+        start_time: "17:00",
+        end_time: "16:30",
+      }),
       wire({ kind: "list_tasks", from_date: "2026-10-18", through_date: "2026-10-12" }),
       wire({ kind: "create_task", title: "x", estimated_minutes: 0 }),
       { ...wire({ kind: "respond", text: "hi" }), sql: "DROP TABLE tasks" },

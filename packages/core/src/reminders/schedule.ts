@@ -104,9 +104,9 @@ export async function syncReminders(options: {
     const priorityLabel = task.priority === "major" ? "Major deadline: " : "";
     const deadlineLeads =
       task.priority === "major"
-        ? [...new Set([...MAJOR_DEADLINE_LEADS_HOURS, ...settings.deadlineLeadHours])].toSorted(
-            (a, b) => b - a,
-          )
+        ? [
+            ...new Set([...MAJOR_DEADLINE_LEADS_HOURS, ...settings.majorDeadlineLeadHours]),
+          ].toSorted((a, b) => b - a)
         : settings.deadlineLeadHours;
     const keep: string[] = [];
     if (task.dueDateOnly) {

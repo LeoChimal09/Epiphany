@@ -82,6 +82,28 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
     expect((await getWorkBlock(handle.db, actor.ownerId, block.id)).taskId).toBe(task.id);
     const [savedNote] = await handle.db.select().from(notes).where(eq(notes.id, note.id));
     expect(savedNote?.body).toBe("App idea");
+    expect(await history(task.id)).toMatchObject([
+      {
+        after: {
+          title: "Essay",
+          dueAt: "2026-10-16T04:59:59.123Z",
+          dueDateOnly: false,
+          estimatedMinutes: 90,
+          priority: "minor",
+        },
+      },
+    ]);
+    expect(await history(event.id)).toMatchObject([
+      {
+        after: {
+          title: "Chemistry lab",
+          startsAt: "2026-10-14T20:00:00.000Z",
+          endsAt: "2026-10-14T21:30:00.000Z",
+          timezone: "America/Chicago",
+          allDay: false,
+        },
+      },
+    ]);
 
     const [raw] = await handle.pool.query<RowDataPacket[]>(
       "SELECT DATE_FORMAT(due_at, '%Y-%m-%d %H:%i:%s.%f') AS due FROM tasks WHERE id = ?",

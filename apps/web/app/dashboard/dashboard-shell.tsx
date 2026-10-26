@@ -45,6 +45,7 @@ import type { OwnerProfile } from "@epiphany/core/services";
 import type { VoiceStatus } from "./voice-status";
 import {
   addDashboardCategory,
+  addDashboardEvent,
   addDashboardNote,
   addDashboardTask,
   askEpi,
@@ -142,7 +143,9 @@ export function DashboardShell({
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | null>(null);
-  const [taskDurationMode, setTaskDurationMode] = useState<"estimate" | "schedule">("estimate");
+  const [calendarEntryType, setCalendarEntryType] = useState<"task" | "event">("task");
+  const [eventAllDay, setEventAllDay] = useState(false);
+  const [eventTimingMode, setEventTimingMode] = useState<"end" | "duration">("end");
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
@@ -310,16 +313,28 @@ export function DashboardShell({
     return fields;
   }
 
-  function submitTask(event: FormEvent<HTMLFormElement>) {
+  function submitCalendarEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
+    if (calendarEntryType === "event") {
+      changeSchedule(() => addDashboardEvent(new FormData(form)), {
+        week: neededWeek,
+        onSuccess: () => {
+          form.reset();
+          setComposer(null);
+          setCalendarEntryType("task");
+          setEventAllDay(false);
+          setEventTimingMode("end");
+        },
+      });
+      return;
+    }
     const fields = prepareTaskForm(form, false);
     if (!fields) return;
     perform(
       () => addDashboardTask(fields),
       () => {
         form.reset();
-        setTaskDurationMode("estimate");
         setComposer(null);
         if (isSchedule) {
           loadWeek(neededWeek);
@@ -333,7 +348,9 @@ export function DashboardShell({
   }
 
   function openTaskComposer() {
-    setTaskDurationMode("estimate");
+    setCalendarEntryType("task");
+    setEventAllDay(false);
+    setEventTimingMode("end");
     setComposer("task");
   }
 
@@ -889,10 +906,16 @@ export function DashboardShell({
           {composer ? (
             <section
               className={styles.composer}
-              aria-label={composer === "task" ? "New task" : "New note"}
+              aria-label={composer === "task" ? "New task or event" : "New note"}
             >
               <div className={styles.composerHeading}>
-                <h2>{composer === "task" ? "New task" : "Capture a thought"}</h2>
+                <h2>
+                  {composer === "task"
+                    ? calendarEntryType === "task"
+                      ? "New task"
+                      : "New event"
+                    : "Capture a thought"}
+                </h2>
                 <button
                   type="button"
                   className={styles.textButton}
@@ -903,38 +926,40 @@ export function DashboardShell({
                 </button>
               </div>
               {composer === "task" ? (
-                <form onSubmit={submitTask}>
+                <form onSubmit={submitCalendarEntry}>
                   <fieldset disabled={pending} className={styles.fields}>
                     <label className={styles.fullWidth}>
                       Title
                       <input name="title" required maxLength={300} autoFocus />
                     </label>
-                    <label>
-                      Priority
-                      <select name="priority" defaultValue="minor">
-                        <option value="minor">Minor</option>
-                        <option value="major">Major — extra advance reminders</option>
-                      </select>
-                    </label>
                     <label className={styles.fullWidth}>
-                      Calendar timing
+                      Type
                       <select
-                        name="durationMode"
-                        value={taskDurationMode}
-                        onChange={(event) =>
-                          setTaskDurationMode(
-                            event.currentTarget.value === "schedule" ? "schedule" : "estimate",
-                          )
-                        }
+                        name="entryType"
+                        value={calendarEntryType}
+                        onChange={(event) => {
+                          setCalendarEntryType(
+                            event.currentTarget.value === "event" ? "event" : "task",
+                          );
+                          setEventAllDay(false);
+                          setEventTimingMode("end");
+                        }}
                       >
-                        <option value="estimate">Estimated minutes</option>
-                        <option value="schedule">Set start and end times</option>
+                        <option value="task">Task — due date or deadline</option>
+                        <option value="event">Event — start and end time</option>
                       </select>
                     </label>
-                    {taskDurationMode === "estimate" ? (
+                    {calendarEntryType === "task" ? (
                       <>
                         <label>
-                          Due ({data.timezone})
+                          Priority
+                          <select name="priority" defaultValue="minor">
+                            <option value="minor">Minor</option>
+                            <option value="major">Major — extra advance reminders</option>
+                          </select>
+                        </label>
+                        <label>
+                          Due date and time ({data.timezone})
                           <input name="dueAt" type="datetime-local" />
                         </label>
                         <label>
@@ -948,55 +973,103 @@ export function DashboardShell({
                           />
                         </label>
                         <p className={styles.fullWidth}>
-                          When a due time is set, the calendar time runs for this estimate and ends
-                          at the due time.
+                          A task is a deadline. An estimate is effort only; it does not reserve
+                          calendar time. Leave the due time blank if you do not know it. Deadline
+                          reminders default to one hour before; your reminder settings can change
+                          that. Major priorities keep their existing advance reminders.
                         </p>
+                        <CategorySelect
+                          categories={data.categories}
+                          name="categoryId"
+                          value={addCategoryId ?? ""}
+                        />
+                        <label className={styles.inlineCheck}>
+                          <input name="dueDateOnly" type="checkbox" />
+                          <span>
+                            No specific due time
+                            <small className={styles.checkHelp}>
+                              Use the selected date only. Leave unchecked for an exact deadline.
+                            </small>
+                          </span>
+                        </label>
+                        <label className={styles.fullWidth}>
+                          Details
+                          <textarea name="details" rows={3} maxLength={10000} />
+                        </label>
                       </>
                     ) : (
                       <>
                         <label>
-                          Scheduled date ({data.timezone})
-                          <input name="scheduleDate" type="date" required />
+                          Date ({data.timezone})
+                          <input name="date" type="date" required />
                         </label>
-                        <div className={`${styles.timeRange} ${styles.fullWidth}`}>
-                          <label>
-                            Start time
-                            <input name="startTime" type="time" required />
-                          </label>
-                          <label>
-                            End time
-                            <input name="endTime" type="time" required />
-                          </label>
-                        </div>
+                        <label className={styles.inlineCheck}>
+                          <input
+                            name="allDay"
+                            type="checkbox"
+                            checked={eventAllDay}
+                            onChange={(event) => setEventAllDay(event.currentTarget.checked)}
+                          />
+                          <span>All-day event</span>
+                        </label>
+                        {!eventAllDay ? (
+                          <>
+                            <label className={styles.fullWidth}>
+                              Event timing
+                              <select
+                                name="eventTimingMode"
+                                value={eventTimingMode}
+                                onChange={(event) =>
+                                  setEventTimingMode(
+                                    event.currentTarget.value === "duration" ? "duration" : "end",
+                                  )
+                                }
+                              >
+                                <option value="end">Start and end time</option>
+                                <option value="duration">Start time and duration</option>
+                              </select>
+                            </label>
+                            <div className={`${styles.timeRange} ${styles.fullWidth}`}>
+                              <label>
+                                Start time
+                                <input name="startTime" type="time" required />
+                              </label>
+                              {eventTimingMode === "end" ? (
+                                <label>
+                                  End time
+                                  <input name="endTime" type="time" required />
+                                </label>
+                              ) : (
+                                <label>
+                                  Duration (minutes)
+                                  <input
+                                    name="durationMinutes"
+                                    type="number"
+                                    min={1}
+                                    max={100000}
+                                    step={1}
+                                    required
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
+                        <label className={styles.fullWidth}>
+                          Location (optional)
+                          <input name="location" maxLength={300} />
+                        </label>
                         <p className={styles.fullWidth}>
-                          The calendar shows this exact time range; the end time is also the task’s
-                          due time.
+                          An event reserves calendar time from its start through its end. Use a task
+                          when you only need a due date.
                         </p>
                       </>
                     )}
-                    <CategorySelect
-                      categories={data.categories}
-                      name="categoryId"
-                      value={addCategoryId ?? ""}
-                    />
-                    {taskDurationMode === "estimate" ? (
-                      <label className={styles.inlineCheck}>
-                        <input name="dueDateOnly" type="checkbox" />
-                        <span>
-                          No specific due time
-                          <small className={styles.checkHelp}>
-                            Use the selected date only. Leave unchecked for an exact deadline.
-                          </small>
-                        </span>
-                      </label>
-                    ) : null}
-                    <label className={styles.fullWidth}>
-                      Details
-                      <textarea name="details" rows={3} maxLength={10000} />
-                    </label>
                     <div className={styles.formFooter}>
                       <button className={styles.primaryButton} type="submit">
-                        {pending ? "Saving..." : "Save task"}
+                        {pending
+                          ? "Saving..."
+                          : `Save ${calendarEntryType === "task" ? "task" : "event"}`}
                       </button>
                     </div>
                   </fieldset>

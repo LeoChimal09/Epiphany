@@ -121,32 +121,23 @@ function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
 }
 
 export async function addDashboardTask(form: FormData): Promise<DashboardResult> {
-  const { principal, services, timezone } = await dashboardContext();
-  const durationMode = textField(form, "durationMode") ?? "estimate";
-  if (durationMode !== "estimate" && durationMode !== "schedule") {
-    return { ok: false, error: "Choose estimated duration or a scheduled time." };
-  }
+  const { principal, services } = await dashboardContext();
   let estimatedMinutes: number | undefined;
   let dueAt: string | undefined;
+  const dueDateOnly = form.get("dueDateOnly") === "on";
   try {
-    if (durationMode === "schedule") {
-      const { startsAt, endsAt } = scheduleWindow(form, timezone, false, "scheduleDate");
-      estimatedMinutes = Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000);
-      if (estimatedMinutes < 1) {
-        return { ok: false, error: "The scheduled time must be at least one minute long." };
+    estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
+    const enteredDueAt = textField(form, "dueAt");
+    if (enteredDueAt) {
+      const deadline = new Date(enteredDueAt);
+      if (Number.isNaN(deadline.getTime())) {
+        throw new ValidationError(["enter a valid deadline"]);
       }
-      dueAt = endsAt.toISOString();
-    } else {
-      estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
-      const enteredDueAt = textField(form, "dueAt");
-      dueAt = enteredDueAt || undefined;
+      dueAt = deadline.toISOString();
     }
-  } catch {
-    if (durationMode === "schedule") {
-      return {
-        ok: false,
-        error: "Enter a valid date and a finish time after the start time.",
-      };
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      return { ok: false, error: error.issues.join(". ") };
     }
     return { ok: false, error: "Enter a whole number of minutes between 1 and 100,000." };
   }
@@ -157,6 +148,7 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
       details: textField(form, "details"),
       dueAt,
       estimatedMinutes,
+      ...(dueDateOnly ? { dueDateOnly: true } : {}),
       categoryId: textField(form, "categoryId"),
     });
     return { ok: true, message: "Task saved.", task: taskForDashboard(task) };
@@ -472,6 +464,7 @@ function scheduleWindow(
   timezone: string,
   allowAllDay: boolean,
   dateField = "date",
+  allowDuration = false,
 ) {
   const date = textField(form, dateField);
   if (!date) throw new ValidationError(["date is required"]);
@@ -495,11 +488,30 @@ function scheduleWindow(
     }
   };
   const start = minutes("startTime", "start");
+  const startsAt = localWallToUtc(date, start, timezone);
+  if (allowDuration) {
+    const timingMode = textField(form, "eventTimingMode") ?? "end";
+    if (timingMode !== "end" && timingMode !== "duration") {
+      throw new ValidationError(["choose an event end time or duration"]);
+    }
+    if (timingMode === "duration") {
+      const value = textField(form, "durationMinutes");
+      const duration = value ? Number(value) : Number.NaN;
+      if (!Number.isInteger(duration) || duration < 1 || duration > 100_000) {
+        throw new ValidationError(["duration must be between 1 and 100,000 whole minutes"]);
+      }
+      return {
+        allDay: false,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + duration * 60_000),
+      };
+    }
+  }
   const end = minutes("endTime", "end");
   if (end <= start) throw new ValidationError(["end time must be after the start time"]);
   return {
     allDay: false,
-    startsAt: localWallToUtc(date, start, timezone),
+    startsAt,
     endsAt: localWallToUtc(date, end, timezone),
   };
 }
@@ -511,7 +523,7 @@ export async function addDashboardEvent(form: FormData): Promise<DashboardSchedu
       title: textField(form, "title"),
       location: textField(form, "location"),
       timezone,
-      ...scheduleWindow(form, timezone, true),
+      ...scheduleWindow(form, timezone, true, "date", true),
     });
     return { ok: true, message: "Event saved." };
   } catch (error) {

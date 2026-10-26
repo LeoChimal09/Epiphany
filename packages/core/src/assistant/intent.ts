@@ -43,6 +43,14 @@ export type Intent =
       priority?: "minor" | "major";
     }
   | {
+      kind: "create_event";
+      title: string;
+      date: DateKey;
+      startTime: string;
+      endTime: string;
+      location?: string;
+    }
+  | {
       kind: "create_note";
       title?: string;
       body: string;
@@ -138,6 +146,7 @@ export const INTENT_KINDS = [
   "forget_insights",
   "set_preference",
   "show_schedule",
+  "create_event",
   "plan_work",
   "remember",
   "list_memory",
@@ -171,6 +180,10 @@ export const intentWireSchema = z
     details: z.string().max(10_000).nullable(),
     due_date: z.string().nullable(),
     due_time: z.string().nullable(),
+    event_date: z.string().nullable(),
+    start_time: z.string().nullable(),
+    end_time: z.string().nullable(),
+    location: z.string().max(300).nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
     priority: z.enum(["minor", "major"]).nullable(),
     note_kind: z.enum(["note", "idea"]).nullable().default(null),
@@ -291,6 +304,32 @@ export function toIntent(raw: unknown): Intent {
         ...(dueTime ? { dueTime } : {}),
         ...(wire.estimated_minutes ? { estimatedMinutes: wire.estimated_minutes } : {}),
         ...(wire.priority ? { priority: wire.priority } : {}),
+      };
+    }
+    case "create_event": {
+      const eventDate = date(wire.event_date, "event_date");
+      if (!eventDate) throw new IntentError("event_date is required");
+      const startTime = need(wire.start_time, "start_time");
+      const endTime = need(wire.end_time, "end_time");
+      let startMinutes: number;
+      let endMinutes: number;
+      try {
+        startMinutes = parseTimeOfDay(startTime);
+        endMinutes = parseTimeOfDay(endTime);
+      } catch {
+        throw new IntentError("event times must be valid 24-hour times");
+      }
+      if (endMinutes <= startMinutes) {
+        throw new IntentError("event end_time must be after start_time");
+      }
+      const location = present(wire.location);
+      return {
+        kind: "create_event",
+        title: need(wire.title, "title"),
+        date: eventDate,
+        startTime,
+        endTime,
+        ...(location ? { location } : {}),
       };
     }
     case "create_note":

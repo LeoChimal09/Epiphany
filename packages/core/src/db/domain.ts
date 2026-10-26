@@ -197,7 +197,14 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
       action: "task.create",
       entityType: "task",
       entityId: id,
-      after: { title: input.title, categoryId },
+      after: {
+        title: input.title,
+        categoryId,
+        priority: input.priority ?? "minor",
+        dueAt: input.dueAt?.toISOString() ?? null,
+        dueDateOnly: input.dueDateOnly ?? false,
+        estimatedMinutes: input.estimatedMinutes ?? null,
+      },
     });
   });
   return getTask(db, actor.ownerId, id);
@@ -279,7 +286,13 @@ export async function createEvent(
       action: "event.create",
       entityType: "event",
       entityId: id,
-      after: { title: input.title, startsAt: input.startsAt.toISOString() },
+      after: {
+        title: input.title,
+        startsAt: input.startsAt.toISOString(),
+        endsAt: input.endsAt.toISOString(),
+        timezone: input.timezone,
+        allDay: input.allDay ?? false,
+      },
     });
   });
   return getEvent(db, actor.ownerId, id);
