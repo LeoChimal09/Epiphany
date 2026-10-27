@@ -41,7 +41,9 @@ Decided in one place (`packages/core/src/reminders/policy.ts`), in this order:
 ## Defaults and where to change them
 
 These defaults were chosen for Goal 15 and are the owner's to change, by simply saying so in
-conversation ("don't ping me between 10pm and 7am", "brief me at 7:30", "bedtime is 10:30"):
+conversation ("don't ping me between 10pm and 7am", "brief me at 7:30", "bedtime is 10:30") or
+from **Dashboard → Scheduling preferences → Morning briefing**. The briefing control uses the
+owner's configured timezone and can turn delivery off:
 
 | Setting (preference key)             | Default            |
 | ------------------------------------ | ------------------ |
@@ -53,6 +55,9 @@ conversation ("don't ping me between 10pm and 7am", "brief me at 7:30", "bedtime
 | `routine.bedtime`                    | off                |
 | `routine.workout`                    | off                |
 | `routine.awareness` (hourly prompts) | off                |
+
+The morning briefing defaults to 08:00 local time. Change its delivery time from the dashboard or
+in conversation; uncheck **Send morning briefing** there to disable it.
 
 One-time requests such as "remind me at 2 PM to go grocery shopping" notify at 1:30 PM, 30 minutes
 before the stated target. If the target is less than 30 minutes away, the reminder is sent as soon

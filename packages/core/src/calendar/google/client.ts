@@ -48,6 +48,7 @@ export interface GoogleCalendarEntry {
 export interface GoogleEventBody {
   summary: string;
   description?: string;
+  location?: string;
   start: GoogleEventTime;
   end: GoogleEventTime;
   id?: string;

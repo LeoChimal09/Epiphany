@@ -10,12 +10,13 @@ import {
   tasks,
   workBlocks,
   type CalendarAccount,
+  type CalendarEvent,
   type CalendarEventRef,
   type CalendarRefState,
   type SyncedCalendar,
   type WorkBlock,
 } from "../db/schema";
-import { addDays, localWallToUtc } from "../planning/time";
+import { addDays, dateKeyOf, localWallToUtc } from "../planning/time";
 import { getAccessToken, markNeedsReauth, runtimeNow, type CalendarRuntime } from "./access";
 import {
   createGoogleCalendarClient,
@@ -51,6 +52,11 @@ const BLOCK_DESCRIPTION =
 
 export const syncKeyFor = (blockId: string) => `wb:${blockId}`;
 const DEADLINE_SYNC_PREFIX = "deadline:";
+const EVENT_SYNC_PREFIX = "event:";
+const eventSyncKeyFor = (eventId: string) => `${EVENT_SYNC_PREFIX}${eventId}`;
+const eventIdFromSyncKey = (key: string | null) =>
+  key?.startsWith(EVENT_SYNC_PREFIX) ? key.slice(EVENT_SYNC_PREFIX.length) : null;
+const calendarEventIdFor = (eventId: string) => `epie${eventId.replaceAll("-", "").toLowerCase()}`;
 const deadlineSyncKeyFor = (taskId: string, version: number) =>
   `${DEADLINE_SYNC_PREFIX}${taskId}:v${version}`;
 const deadlineEventIdFor = (taskId: string, version: number) =>
@@ -195,6 +201,7 @@ export async function syncAccount(
       const writeCtx = { ...ctx, account: fresh };
       await pushWorkBlocks(writeCtx);
       await pushTaskDeadlines(writeCtx);
+      await pushScheduledEvents(writeCtx);
     }
     if (report.errors.length === 0) {
       await rt.db
@@ -801,13 +808,17 @@ async function cancelMissing(
 
 // An event Epiphany owns was seen at the provider. If its version differs from the one Epiphany
 // last wrote, someone edited it elsewhere: flag it, never overwrite. If it was deleted there, keep
-// the work block and say so.
+// the local item and say so.
 async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent): Promise<void> {
   const { rt, report, now } = ctx;
   if (["removed", "detached", "conflict", "remote_deleted", "uncertain"].includes(ref.syncState)) {
     return;
   }
-  const entityLabel = ref.syncKey?.startsWith("deadline:") ? "task deadline" : "work block";
+  const entityLabel = ref.syncKey?.startsWith(EVENT_SYNC_PREFIX)
+    ? "event"
+    : ref.syncKey?.startsWith(DEADLINE_SYNC_PREFIX)
+      ? "task deadline"
+      : "work block";
   if (ev.status === "cancelled") {
     await rt.db
       .update(calendarEventRefs)
@@ -818,6 +829,10 @@ async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent):
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
+    if (entityLabel !== "work block")
+      report.errors.push(
+        `Deleted in Google Calendar. The ${entityLabel} is still active in Epiphany.`,
+      );
     return;
   }
   if (ref.etag && ev.etag && ev.etag !== ref.etag) {
@@ -830,6 +845,10 @@ async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent):
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
+    if (entityLabel !== "work block")
+      report.errors.push(
+        `Changed in Google Calendar since Epiphany last wrote it. The ${entityLabel} was not overwritten.`,
+      );
   }
 }
 
@@ -891,6 +910,29 @@ function desiredDeadlineBody(
   };
 }
 
+function desiredScheduledEventBody(event: CalendarEvent): GoogleEventBody {
+  const common = {
+    id: calendarEventIdFor(event.id),
+    summary: event.title.slice(0, 300),
+    ...(event.location ? { location: event.location } : {}),
+    extendedProperties: {
+      private: { [EPIPHANY_KEY_PROPERTY]: eventSyncKeyFor(event.id) },
+    },
+  };
+  if (event.allDay) {
+    return {
+      ...common,
+      start: { date: dateKeyOf(event.startsAt, event.timezone) },
+      end: { date: dateKeyOf(event.endsAt, event.timezone) },
+    };
+  }
+  return {
+    ...common,
+    start: { dateTime: event.startsAt.toISOString(), timeZone: event.timezone },
+    end: { dateTime: event.endsAt.toISOString(), timeZone: event.timezone },
+  };
+}
+
 function sameContent(found: GoogleEvent, desired: GoogleEventBody): boolean {
   const sameTime = (actual: GoogleEvent["start"], expected: GoogleEventBody["start"]) => {
     if (actual?.date && expected.date) return actual.date === expected.date;
@@ -900,6 +942,7 @@ function sameContent(found: GoogleEvent, desired: GoogleEventBody): boolean {
   };
   return (
     (found.summary ?? "") === desired.summary &&
+    (found.location ?? "") === (desired.location ?? "") &&
     sameTime(found.start, desired.start) &&
     sameTime(found.end, desired.end)
   );
@@ -1097,7 +1140,7 @@ async function syncOwnedEvent(
       });
       if (!input.removing) {
         report.conflicts++;
-        if (input.entityLabel === "task deadline") report.errors.push(message);
+        if (input.entityLabel !== "work block") report.errors.push(message);
       }
       return;
     }
@@ -1109,7 +1152,7 @@ async function syncOwnedEvent(
         });
         if (!input.removing) {
           report.conflicts++;
-          if (input.entityLabel === "task deadline") report.errors.push(message);
+          if (input.entityLabel !== "work block") report.errors.push(message);
         }
         return;
       }
@@ -1146,7 +1189,7 @@ async function syncOwnedEvent(
   };
   const conflict = (message: string) => {
     report.conflicts++;
-    if (input.entityLabel === "task deadline") report.errors.push(message);
+    if (input.entityLabel !== "work block") report.errors.push(message);
     return setRef(ctx, live, "conflict", { lastError: message });
   };
   const adopt = (ev: GoogleEvent) =>
@@ -1201,7 +1244,7 @@ async function syncOwnedEvent(
     } else if (error instanceof GoogleNotFoundError || error instanceof GoogleGoneError) {
       report.conflicts++;
       const message = `Deleted in Google Calendar. The ${input.entityLabel} is still active in Epiphany.`;
-      if (input.entityLabel === "task deadline") report.errors.push(message);
+      if (input.entityLabel !== "work block") report.errors.push(message);
       await setRef(ctx, live, "remote_deleted", {
         lastError: message,
       });
@@ -1227,6 +1270,110 @@ async function syncBlock(
     removing,
     workBlockId: block.id,
   });
+}
+
+async function syncScheduledEvent(
+  ctx: PushCtx,
+  event: CalendarEvent,
+  existing: CalendarEventRef | null,
+  removing: boolean,
+): Promise<void> {
+  const syncKey = eventSyncKeyFor(event.id);
+  await syncOwnedEvent(ctx, {
+    externalId: existing?.externalId ?? calendarEventIdFor(event.id),
+    syncKey,
+    desired: desiredScheduledEventBody(event),
+    version: event.version,
+    entityLabel: "event",
+    existing,
+    removing,
+  });
+}
+
+async function pushScheduledEvents(ctx: Ctx): Promise<void> {
+  const { rt, account } = ctx;
+  const [calendar] = await rt.db
+    .select()
+    .from(syncedCalendars)
+    .where(
+      and(
+        eq(syncedCalendars.accountId, account.id),
+        eq(syncedCalendars.kind, "epiphany"),
+        eq(syncedCalendars.externalId, account.epiphanyCalendarId ?? ""),
+      ),
+    );
+  if (!calendar) return;
+
+  const pctx: PushCtx = { ...ctx, calendar };
+  const [refs, ownerEvents] = await Promise.all([
+    rt.db
+      .select()
+      .from(calendarEventRefs)
+      .where(
+        and(
+          eq(calendarEventRefs.ownerId, account.ownerId),
+          eq(calendarEventRefs.calendarId, calendar.id),
+          eq(calendarEventRefs.ownership, "epiphany"),
+        ),
+      ),
+    rt.db
+      .select()
+      .from(events)
+      .where(eq(events.ownerId, account.ownerId))
+      .orderBy(asc(events.startsAt)),
+  ]);
+  const eventRefs = refs.filter((ref) => eventIdFromSyncKey(ref.syncKey) !== null);
+  const refByEventId = new Map(
+    eventRefs.flatMap((ref) => {
+      const eventId = eventIdFromSyncKey(ref.syncKey);
+      return eventId ? [[eventId, ref] as const] : [];
+    }),
+  );
+  const eventById = new Map(ownerEvents.map((event) => [event.id, event]));
+  const activeEvents = ownerEvents.filter((event) => event.status === "scheduled");
+  const activeEventIds = new Set(activeEvents.map((event) => event.id));
+  const pending: Array<{ event: CalendarEvent; ref: CalendarEventRef | null; removing: boolean }> =
+    [];
+
+  for (const event of activeEvents) {
+    const ref = refByEventId.get(event.id) ?? null;
+    if (ref && ["conflict", "remote_deleted", "detached", "removed"].includes(ref.syncState))
+      continue;
+    if (ref?.syncState === "synced" && ref.syncedVersion === event.version) continue;
+    pending.push({ event, ref, removing: false });
+  }
+  for (const ref of eventRefs) {
+    const eventId = eventIdFromSyncKey(ref.syncKey);
+    if (
+      !eventId ||
+      activeEventIds.has(eventId) ||
+      !["synced", "pending", "uncertain"].includes(ref.syncState)
+    )
+      continue;
+    const event = eventById.get(eventId);
+    if (event) pending.push({ event, ref, removing: true });
+  }
+
+  let budget = MAX_PUSHES_PER_RUN;
+  for (const item of pending) {
+    if (budget-- <= 0) break;
+    try {
+      await syncScheduledEvent(pctx, item.event, item.ref, item.removing);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      const message = describeSyncError(error);
+      ctx.report.errors.push(message);
+      await rt.db
+        .update(calendarEventRefs)
+        .set({ lastError: message.slice(0, 300) })
+        .where(
+          and(
+            eq(calendarEventRefs.calendarId, calendar.id),
+            eq(calendarEventRefs.syncKey, eventSyncKeyFor(item.event.id)),
+          ),
+        );
+    }
+  }
 }
 
 async function pushTaskDeadlines(ctx: Ctx): Promise<void> {

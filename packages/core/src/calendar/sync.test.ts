@@ -2,8 +2,10 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   completeTask,
+  cancelEvent,
   connectDatabase,
   createOwner,
+  createEvent,
   createTask,
   createWorkBlock,
   removeWorkBlock,
@@ -786,6 +788,63 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
           (await loadCalendarOverview(h.handle.db, h.ownerId, h.clock.current)).blocks,
         ).toEqual([]);
       });
+    });
+  });
+
+  describe("pushing scheduled events", () => {
+    it("creates timed and all-day events, updates them in place, and removes canceled events", async () => {
+      const timedEvent = await createEvent(h.handle.db, h.actor(), {
+        title: "Doctor appointment",
+        location: "Clinic",
+        startsAt: new Date("2026-10-21T15:00:00.000Z"),
+        endsAt: new Date("2026-10-21T16:00:00.000Z"),
+        timezone: "America/Chicago",
+      });
+      const allDayEvent = await createEvent(h.handle.db, h.actor(), {
+        title: "Conference",
+        allDay: true,
+        startsAt: new Date("2026-10-22T05:00:00.000Z"),
+        endsAt: new Date("2026-10-23T05:00:00.000Z"),
+        timezone: "America/Chicago",
+      });
+
+      const created = await h.syncOnce();
+      const calendar = epiphanyCalendar();
+      const googleEventId = `epie${timedEvent.id.replaceAll("-", "").toLowerCase()}`;
+      expect(created.pushed.created).toBe(2);
+      expect(calendar.events.get(googleEventId)).toMatchObject({
+        summary: "Doctor appointment",
+        location: "Clinic",
+        start: { dateTime: timedEvent.startsAt.toISOString(), timeZone: "America/Chicago" },
+        end: { dateTime: timedEvent.endsAt.toISOString(), timeZone: "America/Chicago" },
+      });
+      expect(
+        calendar.events.get(`epie${allDayEvent.id.replaceAll("-", "").toLowerCase()}`),
+      ).toMatchObject({
+        start: { date: "2026-10-22" },
+        end: { date: "2026-10-23" },
+      });
+
+      h.google.clearCalls();
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      expect((await h.syncOnce({ force: true })).pushed.created).toBe(0);
+      expect(h.google.writes()).toHaveLength(0);
+
+      await h.query(
+        "UPDATE events SET title = 'Doctor follow-up', version = version + 1 WHERE id = ?",
+        [timedEvent.id],
+      );
+      h.clock.current = new Date(T0.getTime() + 12 * 60_000);
+      expect((await h.syncOnce()).pushed.updated).toBe(1);
+      expect(calendar.events.get(googleEventId)!.summary).toBe("Doctor follow-up");
+
+      await cancelEvent(h.handle.db, h.actor(), timedEvent.id);
+      h.clock.current = new Date(T0.getTime() + 18 * 60_000);
+      expect((await h.syncOnce()).pushed.removed).toBe(1);
+      expect(calendar.events.get(googleEventId)!.status).toBe("cancelled");
+      expect(
+        (await refs()).filter((ref) => String(ref.sync_key).startsWith("event:")),
+      ).toHaveLength(2);
     });
   });
 

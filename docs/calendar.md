@@ -27,15 +27,16 @@ a real Google account yet; the live checks that remain are listed at the end.
   time plus estimated duration; both create the same actual calendar interval. Work blocks also
   occupy their actual start-to-end interval. Events have stable IDs and
   private keys (`epiphanyKey`), so retries do not create duplicates and Epiphany recognizes its own
-  events rather than importing them again.
+  events rather than importing them again. Editing an Epiphany Event updates the same Google entry;
+  canceling it removes that entry from the dedicated calendar.
 - **Dashboard timeline**: task deadlines remain compact deadline markers; only events and work
   blocks occupy duration-sized blocks. Overlapping scheduled intervals share side-by-side lanes and
   are highlighted red; the day agenda remains available for reading every item.
-- **Conflicts**: if you edit or delete an Epiphany event in Google Calendar, the block is flagged
-  ("Changed in Google" / "Deleted in Google") instead of being overwritten, and the Calendars page
-  offers "Keep Google's version" (stop mirroring that block) or "Overwrite with Epiphany's" (the next
-  sync writes Epiphany's version, still conditional on Google's current version). A deleted event can
-  only be kept as is. Deleting a Google event never deletes the work block or its task.
+- **Conflicts**: if you edit or delete an Epiphany item in Google Calendar, it is flagged instead of
+  being overwritten. The Calendars page offers work blocks "Keep Google's version" (stop mirroring
+  that block) or "Overwrite with Epiphany's" (the next sync writes Epiphany's version, still
+  conditional on Google's current version). A deleted item remains in Epiphany; deleting a Google
+  entry never deletes its corresponding Epiphany Event, work block, or task.
 - **Uncertain writes**: if a create or update times out, Epiphany does not retry blindly. The next run
   looks the event up by its private key; only if it is not there is it created again.
 - **Visible state**: each calendar shows up to date / out of date (no successful sync in 20 minutes) /
@@ -93,8 +94,9 @@ Setting only some of them is reported; setting none keeps calendars off silently
 ## Limits
 
 - One Google account per owner. Microsoft/Outlook is a later goal.
-- Polling, not push: changes in Google show up within about 5 minutes. Task deadlines and work blocks
-  changed in Epiphany are written to Google on the worker's next pass, usually within 15 seconds.
+- Polling, not push: changes in Google show up within about 5 minutes. Task deadlines, scheduled
+  Events, and work blocks changed in Epiphany are written to Google on the worker's next pass,
+  usually within 15 seconds.
 - External events are read-only in Epiphany; changing an external appointment or a recurring series
   from Epiphany is not implemented.
 - `workingLocation` entries are not imported. Events with an ID over 255 characters are skipped.
@@ -124,7 +126,8 @@ made tests fail, then was reverted): removing `If-Match` on updates (3 tests fai
 
 1. The consent screen and token exchange with real credentials (including the unverified-app warning).
 2. Your events appear after the first sync; the "Epiphany" calendar is created once and reused.
-3. A test work block appears on the Epiphany calendar, updates in place, and is removed without duplicates.
+3. A test Event and work block appear on the Epiphany calendar, update in place, and are removed
+   without duplicates.
 4. An edit made in the Google Calendar app shows as a conflict and is not overwritten.
 5. Disconnect: Epiphany disappears from <https://myaccount.google.com/permissions> and syncing stops;
    revoking it there instead shows "needs to be connected again" on the next sync.
