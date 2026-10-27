@@ -182,6 +182,33 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
         dueDateOnly: true,
       });
       expect(withDate.task.dueDateOnly).toBe(true);
+      await expect(
+        services.tasks.update(owner, task.id, { dueAt: null, dueDateOnly: true }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(await taskRow(task.id)).toEqual(withDate.task);
+    });
+
+    it("clears task-only fields when converting a dated task to a todo", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Buy a snack",
+        dueAt: "2026-10-20T00:00:00.000Z",
+        estimatedMinutes: 30,
+        priority: "major",
+      });
+
+      const { task: todo } = await services.tasks.update(owner, task.id, {
+        taskType: "todo",
+        dueDateOnly: true,
+      });
+      expect(todo).toEqual(await taskRow(task.id));
+      expect(todo).toMatchObject({
+        taskType: "todo",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+        remainingMinutes: null,
+        priority: "minor",
+      });
     });
 
     it("keeps remaining work in step with an untouched estimate, but not after progress", async () => {

@@ -61,6 +61,13 @@ export async function updateTask(
       throw new VersionConflictError("Task", current.version);
     }
 
+    if (
+      patch.dueDateOnly === true &&
+      (patch.dueAt === undefined ? current.dueAt : patch.dueAt) === null
+    ) {
+      throw new InvalidChangeError("dueDateOnly needs a deadline");
+    }
+
     const next = {
       taskType: patch.taskType ?? current.taskType,
       title: patch.title ?? current.title,
@@ -111,9 +118,6 @@ export async function updateTask(
 
     // A date-only deadline needs a deadline; clearing the deadline clears the flag.
     if (next.dueAt === null) {
-      if (patch.dueDateOnly === true) {
-        throw new InvalidChangeError("dueDateOnly needs a deadline");
-      }
       next.dueDateOnly = false;
     }
 
