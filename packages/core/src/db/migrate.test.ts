@@ -202,11 +202,11 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
   });
 
   // A copy of the real migrations containing only the first `count` journal entries.
-  // Columns that later migrations add to existing tables. Seeded rows must read them as NULL after
-  // the upgrade; every other value must be untouched.
+  // Columns later migrations add to existing tables. Seeded rows must receive the migration's
+  // defined defaults/backfills; every earlier value must be untouched.
   const ADDED_COLUMNS: Record<string, string[]> = {
     owners: ["avatar_hash"],
-    tasks: ["review_note"],
+    tasks: ["review_note", "priority", "task_type"],
   };
 
   function withoutAddedColumns(
@@ -221,7 +221,15 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
       out[table] = rows.map((row) => {
         const copy = { ...(row as Record<string, unknown>) };
         for (const column of added) {
-          expect(copy[column], `${table}.${column} should be NULL for an upgraded row`).toBeNull();
+          const expected =
+            column === "priority"
+              ? "minor"
+              : column === "task_type"
+                ? copy.due_at !== null || copy.estimated_minutes !== null
+                  ? "task"
+                  : "todo"
+                : null;
+          expect(copy[column], `${table}.${column} should be migrated correctly`).toBe(expected);
           delete copy[column];
         }
         return copy;
@@ -303,19 +311,19 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
 
     const upgraded = folderWith([
       {
-        tag: "9000_add_task_priority",
-        sql: "ALTER TABLE `tasks` ADD `priority` int unsigned;--> statement-breakpoint\nUPDATE `tasks` SET `priority` = 3;",
+        tag: "9000_test_backfill",
+        sql: "ALTER TABLE `tasks` ADD `test_value` int;--> statement-breakpoint\nUPDATE `tasks` SET `test_value` = 3;",
       },
     ]);
-    expect((await getMigrationStatus(pool, upgraded)).pending).toEqual(["9000_add_task_priority"]);
+    expect((await getMigrationStatus(pool, upgraded)).pending).toEqual(["9000_test_backfill"]);
     const result = await runMigrations(pool, upgraded);
-    expect(result.applied).toEqual(["9000_add_task_priority"]);
+    expect(result.applied).toEqual(["9000_test_backfill"]);
 
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT title, priority FROM tasks WHERE id = 'task-fixture'",
+      "SELECT title, test_value FROM tasks WHERE id = 'task-fixture'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ title: "Keep me", priority: 3 });
+    expect(rows[0]).toMatchObject({ title: "Keep me", test_value: 3 });
     expect((await runMigrations(pool, upgraded)).applied).toEqual([]);
   });
 

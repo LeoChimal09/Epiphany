@@ -111,7 +111,7 @@ export async function updateTask(
 
     // A date-only deadline needs a deadline; clearing the deadline clears the flag.
     if (next.dueAt === null) {
-      if (next.taskType !== "todo" && patch.dueDateOnly === true) {
+      if (patch.dueDateOnly === true) {
         throw new InvalidChangeError("dueDateOnly needs a deadline");
       }
       next.dueDateOnly = false;

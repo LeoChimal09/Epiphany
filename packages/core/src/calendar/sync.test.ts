@@ -445,6 +445,7 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
         ...timed("2026-10-21T14:00:00-05:00", "2026-10-21T15:00:00-05:00"),
       });
       await h.syncOnce();
+      expect(epiphanyCalendar().events.size).toBe(0);
       await selectCalendars(h.handle.db, h.actor(), []);
       expect((await events())[0]).toMatchObject({ status: "canceled" });
       h.google.clearCalls();
@@ -792,6 +793,41 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
   });
 
   describe("pushing scheduled events", () => {
+    it.each(["edited", "deleted"] as const)(
+      "surfaces a Google-%s event as one conflict without overwriting it",
+      async (change) => {
+        await createEvent(h.handle.db, h.actor(), {
+          title: "Doctor appointment",
+          startsAt: new Date("2026-10-21T15:00:00.000Z"),
+          endsAt: new Date("2026-10-21T16:00:00.000Z"),
+          timezone: "America/Chicago",
+        });
+        await h.syncOnce();
+        const calendar = epiphanyCalendar();
+        const remote = [...calendar.events.values()][0]!;
+        h.google.editEvent(
+          calendar.id,
+          remote.id,
+          change === "edited" ? { summary: "Edited in Google" } : { status: "cancelled" },
+        );
+        h.google.clearCalls();
+
+        h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+        const report = await h.syncOnce();
+        expect(report.conflicts).toBe(1);
+        expect(report.errors).toEqual([
+          change === "edited"
+            ? "Changed in Google Calendar since Epiphany last wrote it. The event was not overwritten."
+            : "Deleted in Google Calendar. The event is still active in Epiphany.",
+        ]);
+        expect(h.google.writes()).toHaveLength(0);
+        expect((await events())[0]).toMatchObject({ status: "scheduled" });
+        expect((await refs())[0]).toMatchObject({
+          sync_state: change === "edited" ? "conflict" : "remote_deleted",
+        });
+      },
+    );
+
     it("creates timed and all-day events, updates them in place, and removes canceled events", async () => {
       const timedEvent = await createEvent(h.handle.db, h.actor(), {
         title: "Doctor appointment",
@@ -985,6 +1021,25 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
       ]);
       expect(calendar.events.get(deadline.id)!.summary).toBe("Edited in Google");
       expect((await refs())[0]).toMatchObject({ sync_state: "conflict" });
+    });
+
+    it("reports a Google-deleted deadline once and keeps the task active", async () => {
+      await makeTask("Renew library card", new Date("2026-10-24T15:00:00.000Z"));
+      await h.syncOnce();
+      const calendar = epiphanyCalendar();
+      const deadline = [...calendar.events.values()][0]!;
+      h.google.editEvent(calendar.id, deadline.id, { status: "cancelled" });
+      h.google.clearCalls();
+
+      h.clock.current = new Date(T0.getTime() + 6 * 60_000);
+      const report = await h.syncOnce();
+      expect(report.conflicts).toBe(1);
+      expect(report.errors).toEqual([
+        "Deleted in Google Calendar. The task deadline is still active in Epiphany.",
+      ]);
+      expect(h.google.writes()).toHaveLength(0);
+      expect((await h.query("SELECT status FROM tasks"))[0]).toMatchObject({ status: "open" });
+      expect((await refs())[0]).toMatchObject({ sync_state: "remote_deleted" });
     });
 
     it("writes a task deadline only to its owner's dedicated calendar", async () => {

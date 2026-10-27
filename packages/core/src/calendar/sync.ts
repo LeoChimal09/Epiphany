@@ -829,7 +829,7 @@ async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent):
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
-    if (entityLabel !== "work block")
+    if (entityLabel === "event")
       report.errors.push(
         `Deleted in Google Calendar. The ${entityLabel} is still active in Epiphany.`,
       );
@@ -845,7 +845,7 @@ async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent):
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
-    if (entityLabel !== "work block")
+    if (entityLabel === "event")
       report.errors.push(
         `Changed in Google Calendar since Epiphany last wrote it. The ${entityLabel} was not overwritten.`,
       );
@@ -1305,7 +1305,7 @@ async function pushScheduledEvents(ctx: Ctx): Promise<void> {
   if (!calendar) return;
 
   const pctx: PushCtx = { ...ctx, calendar };
-  const [refs, ownerEvents] = await Promise.all([
+  const [refs, externalRefs, ownerEvents] = await Promise.all([
     rt.db
       .select()
       .from(calendarEventRefs)
@@ -1314,6 +1314,16 @@ async function pushScheduledEvents(ctx: Ctx): Promise<void> {
           eq(calendarEventRefs.ownerId, account.ownerId),
           eq(calendarEventRefs.calendarId, calendar.id),
           eq(calendarEventRefs.ownership, "epiphany"),
+        ),
+      ),
+    rt.db
+      .select({ eventId: calendarEventRefs.eventId })
+      .from(calendarEventRefs)
+      .where(
+        and(
+          eq(calendarEventRefs.ownerId, account.ownerId),
+          eq(calendarEventRefs.ownership, "external"),
+          isNotNull(calendarEventRefs.eventId),
         ),
       ),
     rt.db
@@ -1330,12 +1340,16 @@ async function pushScheduledEvents(ctx: Ctx): Promise<void> {
     }),
   );
   const eventById = new Map(ownerEvents.map((event) => [event.id, event]));
+  const importedEventIds = new Set(
+    externalRefs.flatMap((ref) => (ref.eventId ? [ref.eventId] : [])),
+  );
   const activeEvents = ownerEvents.filter((event) => event.status === "scheduled");
   const activeEventIds = new Set(activeEvents.map((event) => event.id));
   const pending: Array<{ event: CalendarEvent; ref: CalendarEventRef | null; removing: boolean }> =
     [];
 
   for (const event of activeEvents) {
+    if (importedEventIds.has(event.id)) continue;
     const ref = refByEventId.get(event.id) ?? null;
     if (ref && ["conflict", "remote_deleted", "detached", "removed"].includes(ref.syncState))
       continue;

@@ -100,6 +100,7 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     it("keeps a review flag until a deadline is set, can set or clear it directly, and logs only the field name", async () => {
       const task = await services.tasks.create(owner, {
         title: "Read chapter 7",
+        estimatedMinutes: 30,
         reviewNote: "no due date given",
       });
       expect((await taskRow(task.id)).reviewNote).toBe("no due date given");
@@ -161,7 +162,17 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     });
 
     it("refuses a date-only deadline when there is no deadline, and changes nothing", async () => {
-      const task = await services.tasks.create(owner, { title: "No deadline" });
+      const todo = await services.tasks.create(owner, { title: "No deadline" });
+      expect(todo.taskType).toBe("todo");
+      await expect(
+        services.tasks.update(owner, todo.id, { dueDateOnly: true }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect((await taskRow(todo.id)).version).toBe(1);
+
+      const task = await services.tasks.create(owner, {
+        title: "No deadline task",
+        estimatedMinutes: 30,
+      });
       await expect(
         services.tasks.update(owner, task.id, { dueDateOnly: true }),
       ).rejects.toBeInstanceOf(ValidationError);
