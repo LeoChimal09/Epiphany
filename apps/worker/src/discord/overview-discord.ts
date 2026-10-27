@@ -12,6 +12,7 @@ import type { Database, ActionHistoryEntry } from "@epiphany/core/db";
 import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services";
 import { syncOverviews, type OverviewStore, type OverviewSurface } from "./overview-sync";
 import { WORKSPACE_CATEGORY_NAME } from "./workspace";
+import { errorDetails } from "../error-details";
 
 const UNKNOWN_MESSAGE = 10008;
 const NO_MENTIONS = { parse: [] as never[] };
@@ -332,7 +333,7 @@ export function createOverviewSync(options: {
         try {
           await once(next.verify);
         } catch (error) {
-          log("overview_sync_failed", { error: error instanceof Error ? error.name : "unknown" });
+          log("overview_sync_failed", errorDetails(error));
         }
         next = queued;
       }

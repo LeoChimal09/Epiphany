@@ -102,6 +102,9 @@ describe("loadMigrationFiles", () => {
       expect(entry.statements.length).toBeGreaterThan(0);
       expect(entry.statements.every((statement) => statement.length > 0)).toBe(true);
     }
+    expect(
+      files.find((entry) => entry.tag === "0011_nebulous_outlaw_kid")?.statements,
+    ).toHaveLength(2);
   });
 });
 

@@ -103,6 +103,30 @@ describe("Discord reminder worker wiring (offline)", () => {
     runner.stop();
   });
 
+  it("logs safe error details when a reminder cycle fails", async () => {
+    mocks.preferences.mockRejectedValue(
+      Object.assign(new Error("Database unavailable"), { code: "ECONNREFUSED" }),
+    );
+    const output = vi.spyOn(console, "log").mockImplementation(() => {});
+    const runner = createReminderRunner({
+      client,
+      db,
+      ownerUserId: "fixture-owner-discord",
+      timezone: "America/Chicago",
+      clock: () => now,
+    });
+
+    await runner.run();
+
+    expect(JSON.parse(output.mock.calls[0]![0] as string)).toMatchObject({
+      event: "reminder_cycle_failed",
+      errorName: "Error",
+      errorCode: "ECONNREFUSED",
+      errorMessage: "Database unavailable",
+    });
+    runner.stop();
+  });
+
   it("delivers to the private Epiphany check-ins channel and returns its id for reply context", async () => {
     const everyone = { id: "everyone" };
     const bot = { id: "fixture-bot" };

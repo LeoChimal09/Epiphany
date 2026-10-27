@@ -10,6 +10,7 @@ import {
   type DeliveryResult,
   type ReminderDelivery,
 } from "@epiphany/core/reminders";
+import { errorDetails } from "../error-details";
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(
@@ -136,7 +137,7 @@ export function createReminderRunner(options: {
         });
       }
     } catch (error) {
-      log("reminder_cycle_failed", { error: error instanceof Error ? error.name : "unknown" });
+      log("reminder_cycle_failed", errorDetails(error));
     } finally {
       running = false;
     }
