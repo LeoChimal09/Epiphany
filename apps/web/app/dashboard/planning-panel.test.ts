@@ -56,20 +56,25 @@ describe("planning UI", () => {
     expect(incomplete).toContain("cannot be calculated");
     expect(incomplete).not.toContain("<h3>Available windows");
   });
-  it("renders compact, separately saved controls without presenting defaults as personal facts", () => {
+  it("renders compact, separately saved controls using 12-hour time fields", () => {
     const html = renderToStaticMarkup(
       createElement(PlanningSettings, {
         preferences: schedule.planningPreferences!,
         versions: {},
       }),
     );
-    expect(html.match(/<details/g)).toHaveLength(8);
-    expect(html).toContain("Preferred hours");
+    expect(html.match(/<details/g)).toHaveLength(10);
+    expect(html).toContain("Work hours");
+    expect(html).toContain("Daily routine");
+    expect(html).toContain("More planning options");
     expect(html).toContain("Protect sleep every day");
     expect(html).toContain("Protected time");
     expect(html).toContain("Travel before events");
     expect(html).toContain("Minimum usable minutes");
-    expect(html).toContain("Save preferred hours");
+    expect(html).toContain("Save work hours");
+    expect(html).toContain("Start (AM/PM)");
+    expect(html).toContain("End (AM/PM)");
+    expect(html).toContain('aria-label="End time"');
     expect(html).not.toContain("<details open");
   });
 });

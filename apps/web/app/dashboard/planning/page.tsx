@@ -22,12 +22,7 @@ export default async function PlanningPage() {
         </Link>
         <h1>Scheduling preferences</h1>
       </header>
-      <p className={styles.muted}>
-        Times are in {timezone}. These rules guide availability and Epi&apos;s scheduling. They
-        never move existing appointments or book time automatically. Each section loads existing
-        settings or conservative defaults. Defaults are not assumed facts about you; changes take
-        effect only when you save that section.
-      </p>
+      <p className={styles.muted}>Times use AM/PM in {timezone}.</p>
       <BriefingSettings
         briefingTime={briefingTime}
         timezone={timezone}

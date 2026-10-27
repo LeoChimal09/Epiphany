@@ -20,6 +20,8 @@ describe("morning briefing settings UI", () => {
     expect(html).toContain('value="07:30"');
     expect(html).toContain("Send morning briefing");
     expect(html).toContain("Save briefing settings");
+    expect(html).toContain("Delivery time (AM/PM)");
+    expect(html).toContain("If today&#x27;s was already sent");
   });
 
   it("shows the briefing as disabled when its saved preference is off", () => {

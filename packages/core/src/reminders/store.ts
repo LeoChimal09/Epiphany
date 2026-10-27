@@ -37,6 +37,79 @@ export async function scheduleReminder(
   return result.affectedRows === 1;
 }
 
+// A briefing is scheduled once per local date. If its configured time changes while it is still
+// pending, move that job instead of letting the unique daily key preserve the old time.
+export async function scheduleBriefing(
+  db: Database,
+  ownerId: string,
+  input: { dedupeKey: string; dueAt: Date; message: string },
+): Promise<boolean> {
+  const inserted = await scheduleReminder(db, ownerId, { ...input, kind: "briefing" });
+  if (inserted) return true;
+
+  const [existing] = await db
+    .select({
+      id: reminders.id,
+      status: reminders.status,
+      dueAt: reminders.dueAt,
+      message: reminders.message,
+      nextAttemptAt: reminders.nextAttemptAt,
+      detail: reminders.detail,
+    })
+    .from(reminders)
+    .where(and(eq(reminders.ownerId, ownerId), eq(reminders.dedupeKey, input.dedupeKey)));
+  if (!existing) return false;
+
+  const wasDisabled = existing.status === "canceled" && existing.detail === "briefing disabled";
+  if (existing.status !== "scheduled" && !wasDisabled) return false;
+  if (
+    !wasDisabled &&
+    existing.dueAt.getTime() === input.dueAt.getTime() &&
+    existing.message === input.message &&
+    existing.nextAttemptAt === null &&
+    existing.detail === null
+  ) {
+    return false;
+  }
+
+  const conditions = [
+    eq(reminders.id, existing.id),
+    eq(reminders.status, existing.status),
+    ...(wasDisabled ? [eq(reminders.detail, "briefing disabled")] : []),
+  ];
+  await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(and(...conditions));
+  return false;
+}
+
+export async function cancelScheduledBriefings(db: Database, ownerId: string): Promise<number> {
+  const [result] = await db
+    .update(reminders)
+    .set({
+      status: "canceled",
+      detail: "briefing disabled",
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.kind, "briefing"),
+        eq(reminders.status, "scheduled"),
+      ),
+    );
+  return result.affectedRows;
+}
+
 // Cancels scheduled reminders for a subject whose reminder set changed (for example a new deadline).
 export async function cancelOtherReminders(
   db: Database,

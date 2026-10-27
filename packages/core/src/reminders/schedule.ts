@@ -3,7 +3,13 @@ import type { Database } from "../db/client";
 import { events, reminders, tasks, type CalendarEvent, type Task } from "../db/schema";
 import { addDays, dateKeyOf, localWallToUtc, parseTimeOfDay, weekdayOf } from "../planning/time";
 import { maxLatenessMs, type ReminderSettings } from "./policy";
-import { cancelObsoleteReminders, cancelOtherReminders, scheduleReminder } from "./store";
+import {
+  cancelObsoleteReminders,
+  cancelOtherReminders,
+  cancelScheduledBriefings,
+  scheduleBriefing,
+  scheduleReminder,
+} from "./store";
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
@@ -300,6 +306,7 @@ async function syncDailyReminders(options: {
   const { db, ownerId, now, timezone, settings } = options;
   const today = dateKeyOf(now, timezone);
   let created = 0;
+  if (!settings.briefingTime) await cancelScheduledBriefings(db, ownerId);
 
   async function plan(
     kind: "briefing" | "wind_down" | "check_in",
@@ -317,13 +324,18 @@ async function syncDailyReminders(options: {
     const key = addDays(today, offset);
     const { briefingTime, routines } = settings;
     if (briefingTime) {
-      await plan(
-        "briefing",
-        key,
-        briefingTime,
-        `briefing:${key}`,
-        "Good morning! Here is your day.",
-      );
+      const at = localWallToUtc(key, parseTimeOfDay(briefingTime), timezone);
+      if (at.getTime() + maxLatenessMs("briefing", settings) > now.getTime()) {
+        if (
+          await scheduleBriefing(db, ownerId, {
+            dedupeKey: `briefing:${key}`,
+            dueAt: at,
+            message: "Good morning! Here is your day.",
+          })
+        ) {
+          created++;
+        }
+      }
     }
     if (routines.bedtime) {
       await plan(

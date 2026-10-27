@@ -459,6 +459,38 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       expect(composed).toHaveLength(1);
     });
 
+    it("moves pending briefings when the owner changes the saved time", async () => {
+      await sync("2026-10-14T11:00:00.000Z", { briefingTime: "08:00" });
+
+      expect((await sync("2026-10-14T16:02:00.000Z", { briefingTime: "12:03" })).created).toBe(0);
+      const briefings = (await rows()).filter((reminder) => reminder.kind === "briefing");
+      expect(briefings).toHaveLength(2);
+      expect(briefings.map((reminder) => reminder.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-14T17:03:00.000Z",
+        "2026-10-15T17:03:00.000Z",
+      ]);
+
+      expect((await cycle("2026-10-14T17:03:30.000Z")).sent).toBe(1);
+      expect(sent).toHaveLength(1);
+    });
+
+    it("cancels a pending briefing when disabled and can re-enable it that day", async () => {
+      await sync("2026-10-14T11:00:00.000Z", { briefingTime: "08:00" });
+      await sync("2026-10-14T11:05:00.000Z", { briefingTime: null });
+      expect((await rows()).filter((reminder) => reminder.kind === "briefing")).toEqual(
+        expect.arrayContaining([expect.objectContaining({ status: "canceled" })]),
+      );
+
+      await sync("2026-10-14T11:10:00.000Z", { briefingTime: "09:30" });
+      const briefings = (await rows()).filter((reminder) => reminder.kind === "briefing");
+      expect(briefings).toHaveLength(2);
+      expect(briefings.every((reminder) => reminder.status === "scheduled")).toBe(true);
+      expect(briefings.map((reminder) => reminder.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-14T14:30:00.000Z",
+        "2026-10-15T14:30:00.000Z",
+      ]);
+    });
+
     it("can turn the briefing off, and drops one that is hours late", async () => {
       expect((await sync("2026-10-14T11:00:00.000Z", { briefingTime: null })).created).toBe(0);
       await sync("2026-10-14T11:00:00.000Z", { briefingTime: "08:00" });

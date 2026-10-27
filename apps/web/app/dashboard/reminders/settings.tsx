@@ -42,7 +42,11 @@ export function BriefingSettings({
         }}
       >
         <fieldset disabled={pending} className={styles.fields}>
-          <p>Choose when your morning briefing is delivered. Times use {timezone}.</p>
+          <p>Choose when your morning briefing arrives. Times use {timezone}.</p>
+          <p>
+            A saved change updates pending briefings. If today&apos;s was already sent, it starts
+            tomorrow.
+          </p>
           <label>
             <input
               type="checkbox"
@@ -53,7 +57,7 @@ export function BriefingSettings({
           </label>
           {enabled ? (
             <label>
-              Delivery time{" "}
+              Delivery time (AM/PM){" "}
               <input
                 type="time"
                 required
