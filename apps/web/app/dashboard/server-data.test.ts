@@ -79,6 +79,7 @@ describe("legacy task type mapping", () => {
       completedAt: null,
       archivedAt: null,
       version: 1,
+      splitReminderCount: 5,
       createdAt: now,
       updatedAt: now,
     });
@@ -88,6 +89,7 @@ describe("legacy task type mapping", () => {
       priority: "minor",
       dueAt: null,
       estimatedMinutes: null,
+      splitReminderCount: 5,
     });
   });
 });

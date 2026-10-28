@@ -13,15 +13,11 @@ import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services
 import { syncOverviews, type OverviewStore, type OverviewSurface } from "./overview-sync";
 import { WORKSPACE_CATEGORY_NAME } from "./workspace";
 import { errorDetails } from "../error-details";
+import { plain } from "@epiphany/core/overview";
+import { parseUpdateCursor, publishPlannerUpdates } from "./planner-updates";
 
 const UNKNOWN_MESSAGE = 10008;
 const NO_MENTIONS = { parse: [] as never[] };
-
-interface AdditionCursor {
-  initialized: boolean;
-  through: number;
-  seen: Set<string>;
-}
 
 function metadata(entry: ActionHistoryEntry): Record<string, unknown> {
   return entry.after && typeof entry.after === "object"
@@ -78,7 +74,7 @@ function eventTiming(after: Record<string, unknown>, ownerTimezone: string): str
 function addedItem(
   entry: ActionHistoryEntry,
   ownerTimezone: string,
-): { kind: "task" | "event"; title: string; detail: string } | null {
+): { kind: "task" | "todo" | "event"; title: string; detail: string } | null {
   const after = metadata(entry);
   if (
     (entry.action !== "task.create" && entry.action !== "event.create") ||
@@ -102,35 +98,80 @@ function addedItem(
     if (typeof after.estimatedMinutes === "number" && Number.isFinite(after.estimatedMinutes)) {
       details.push(`${after.estimatedMinutes} min`);
     }
-    if (after.priority === "major") details.push("Major");
-    else if (after.priority === "minor") details.push("Minor");
+    if (after.taskType !== "todo") {
+      if (after.priority === "major") details.push("Major");
+      else if (after.priority === "minor") details.push("Minor");
+    }
   } else {
     const timing = eventTiming(after, ownerTimezone);
     if (timing) details.push(timing.trim().replace(/^·\s*/, ""));
   }
   return {
-    kind: entry.entityType,
-    title: after.title.replace(/\s+/g, " ").trim().slice(0, 140),
+    kind: entry.entityType === "task" && after.taskType === "todo" ? "todo" : entry.entityType,
+    title: plain(after.title.replace(/\s+/g, " ").trim().slice(0, 140)),
     detail: details.length ? ` (${details.join(" · ")})` : "",
   };
 }
 
 export function announcementText(entries: ActionHistoryEntry[], timezone = "UTC"): string {
+  const onlyAdditions = entries.every((entry) =>
+    ["task.create", "event.create"].includes(entry.action),
+  );
   const lines = entries.flatMap((entry) => {
     const item = addedItem(entry, timezone);
-    return item
-      ? [`• ${item.kind === "task" ? "Task" : "Event"}: ${item.title}${item.detail}`]
+    if (item)
+      return [
+        `• ${item.kind === "task" ? "Task" : item.kind === "todo" ? "To-do" : "Event"}: ${item.title}${item.detail}`,
+      ];
+    const verbs: Record<string, string> = {
+      "task.update": "Updated",
+      "task.complete": "Completed",
+      "task.reopen": "Reopened",
+      "event.cancel": "Canceled",
+      "event.acknowledge": "Check-ins stopped for",
+      "note.create": "Saved",
+      "note.update": "Updated",
+      "note.delete": "Deleted",
+      "work_block.create": "Scheduled",
+      "work_block.remove": "Removed",
+    };
+    const verb = verbs[entry.action];
+    if (!verb) return [];
+    const after = metadata(entry);
+    const title =
+      typeof after.title === "string"
+        ? plain(after.title.slice(0, 140))
+        : entry.entityType.replaceAll("_", " ");
+    const fields = Array.isArray(after.fields)
+      ? after.fields.filter((field): field is string => typeof field === "string")
       : [];
+    const fieldDetail = fields.length
+      ? ` (${fields.map((field) => plain(field.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`))).join(", ")})`
+      : "";
+    const timing =
+      entry.action === "task.update"
+        ? (addedItem({ ...entry, action: "task.create" }, timezone)?.detail ?? "")
+        : "";
+    return [
+      `• ${verb} ${after.taskType === "todo" ? "to-do" : entry.entityType.replaceAll("_", " ")}: ${title}${fieldDetail}${timing}`,
+    ];
   });
   if (!lines.length) return "";
   const shown = lines.slice(0, 8);
   if (lines.length > shown.length) shown.push(`• And ${lines.length - shown.length} more`);
-  return `✨ Added to your planner:\n${shown.join("\n")}`;
+  return `✨ ${onlyAdditions ? "Added to your planner" : "Planner updates"}:\n${shown.join("\n")}`.slice(
+    0,
+    1850,
+  );
 }
 
 // Overview messages go only into the workspace's own channels, and only while @everyone cannot see
 // them: a channel that is public, or sits outside the category, is never written to.
-export function guildSurface(guild: Guild, botUserId: string): OverviewSurface {
+export function guildSurface(
+  guild: Guild,
+  botUserId: string,
+  ownerUserId?: string,
+): OverviewSurface {
   const channelOf = (view: OverviewView): TextChannel | null => {
     const channel = guild.channels.cache.find(
       (candidate): candidate is TextChannel =>
@@ -142,6 +183,8 @@ export function guildSurface(guild: Guild, botUserId: string): OverviewSurface {
     const everyoneCanView = channel
       .permissionsFor(guild.roles.everyone)
       ?.has(PermissionFlagsBits.ViewChannel);
+    if (ownerUserId && !channel.permissionsFor(ownerUserId)?.has(PermissionFlagsBits.ViewChannel))
+      return null;
     return everyoneCanView === false ? channel : null;
   };
   const byId = (channelId: string): TextChannel => {
@@ -155,8 +198,12 @@ export function guildSurface(guild: Guild, botUserId: string): OverviewSurface {
     async channelFor(view) {
       return channelOf(view)?.id ?? null;
     },
-    async post(channelId, content) {
-      const message = await byId(channelId).send({ content, allowedMentions: NO_MENTIONS });
+    async post(channelId, content, options) {
+      const message = await byId(channelId).send({
+        content: options ? `<@${options.notifyUserId}> ${content}` : content,
+        allowedMentions: options ? { parse: [], users: [options.notifyUserId] } : NO_MENTIONS,
+        ...(options ? { nonce: options.nonce, enforceNonce: true } : {}),
+      });
       return message.id;
     },
     async edit(channelId, messageId, content) {
@@ -213,7 +260,6 @@ export function createOverviewSync(options: {
   let queued: { verify: boolean } | null = null;
   let timer: ReturnType<typeof setInterval> | undefined;
   const memberOf = new Set<string>();
-  const additionCursors = new Map<string, AdditionCursor>();
 
   async function once(verify: boolean): Promise<void> {
     const botUserId = client.user?.id;
@@ -229,15 +275,6 @@ export function createOverviewSync(options: {
       get: (guildId, view) => services.overviews.get(principal, guildId, view),
       save: (binding) => services.overviews.save(principal, binding),
     };
-    let recentAdditions: ActionHistoryEntry[] = [];
-    try {
-      recentAdditions = await services.history.additions(principal);
-    } catch (error) {
-      log("addition_notice_read_failed", {
-        error: error instanceof Error ? error.name : "unknown",
-      });
-    }
-
     let contents: Record<OverviewView, string> | null = null;
     for (const guild of client.guilds.cache.values()) {
       if (!memberOf.has(guild.id)) {
@@ -248,7 +285,7 @@ export function createOverviewSync(options: {
           continue;
         }
       }
-      const surface = guildSurface(guild, botUserId);
+      const surface = guildSurface(guild, botUserId, ownerUserId);
       const channels = await Promise.all(OVERVIEW_VIEWS.map((view) => surface.channelFor(view)));
       if (!channels.some(Boolean)) {
         continue;
@@ -266,56 +303,73 @@ export function createOverviewSync(options: {
       }
       const todayChannel = channels[OVERVIEW_VIEWS.indexOf("today")];
       if (todayChannel) {
-        await announceAdditions(guild.id, todayChannel, surface);
-      }
-    }
-
-    async function announceAdditions(
-      guildId: string,
-      channelId: string,
-      surface: OverviewSurface,
-    ): Promise<void> {
-      const newestFirst = recentAdditions.toSorted(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-      );
-      const newestTimestamp = newestFirst[0]?.createdAt.getTime() ?? 0;
-      let cursor = additionCursors.get(guildId);
-      if (!cursor) {
-        cursor = { initialized: false, through: 0, seen: new Set() };
-        additionCursors.set(guildId, cursor);
-      }
-      if (!cursor.initialized) {
-        cursor.initialized = true;
-        cursor.through = newestTimestamp;
-        for (const entry of newestFirst) cursor.seen.add(entry.id);
-        return;
-      }
-      if (!recentAdditions.length) return;
-      const fresh = newestFirst
-        .filter(
-          (entry) => entry.createdAt.getTime() >= cursor!.through && !cursor!.seen.has(entry.id),
-        )
-        .toReversed();
-      if (!fresh.length) {
-        cursor.through = Math.max(cursor.through, newestTimestamp);
-        return;
-      }
-      const content = announcementText(fresh, timezone);
-      if (!content) return;
-      try {
-        await surface.post(channelId, content);
-        for (const entry of fresh) cursor.seen.add(entry.id);
-        cursor.through = Math.max(cursor.through, newestTimestamp);
-        if (cursor.seen.size > 200) {
-          const keep = new Set(newestFirst.map((entry) => entry.id));
-          cursor.seen = keep;
+        try {
+          const key = `discord.updates.${guild.id}`;
+          const cursor = parseUpdateCursor((await services.preferences.get(principal, key))?.value);
+          await publishPlannerUpdates({
+            cursor,
+            now: clock(),
+            read: (since, seen) => services.history.changes(principal, since, seen),
+            render: async (entries) => {
+              const hydrated = await Promise.all(
+                entries.map(async (entry) => {
+                  let record;
+                  try {
+                    record =
+                      entry.entityType === "task"
+                        ? await services.tasks.get(principal, entry.entityId!)
+                        : entry.entityType === "event"
+                          ? await services.events.get(principal, entry.entityId!)
+                          : entry.entityType === "note"
+                            ? await services.notes.get(principal, entry.entityId!)
+                            : entry.entityType === "work_block"
+                              ? await services.workBlocks.get(principal, entry.entityId!)
+                              : null;
+                  } catch (error) {
+                    if (!(error instanceof Error) || error.name !== "NotFoundError") throw error;
+                  }
+                  return {
+                    ...entry,
+                    after: {
+                      ...metadata(entry),
+                      ...(record
+                        ? {
+                            title: record.title ?? "Untitled",
+                            ...("taskType" in record
+                              ? {
+                                  taskType: record.taskType,
+                                  priority: record.priority,
+                                  dueAt: record.dueAt?.toISOString() ?? null,
+                                  dueDateOnly: record.dueDateOnly,
+                                  estimatedMinutes: record.estimatedMinutes,
+                                }
+                              : {}),
+                            ...("timezone" in record
+                              ? {
+                                  startsAt: record.startsAt.toISOString(),
+                                  endsAt: record.endsAt.toISOString(),
+                                  timezone: record.timezone,
+                                  allDay: record.allDay,
+                                }
+                              : {}),
+                          }
+                        : {}),
+                    },
+                  };
+                }),
+              );
+              return announcementText(hydrated, timezone);
+            },
+            post: async (content, nonce) => {
+              await surface.post(todayChannel, content, { notifyUserId: ownerUserId, nonce });
+            },
+            save: async (value) => {
+              await services.preferences.set(principal, { key, value, status: "confirmed" });
+            },
+          });
+        } catch (error) {
+          log("planner_notice_failed", { guildId: guild.id, ...errorDetails(error) });
         }
-      } catch (error) {
-        log("addition_notice_failed", {
-          guildId,
-          count: fresh.length,
-          error: error instanceof Error ? error.name : "unknown",
-        });
       }
     }
   }

@@ -65,6 +65,41 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     (await handle.db.select().from(notes).where(eq(notes.id, id)))[0]!;
 
   describe("tasks.update", () => {
+    it("persists per-item split counts atomically, enforces ownership/version and logs edits", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Assignment",
+        dueAt: "2026-10-20T04:59:00Z",
+        splitReminderCount: 5,
+      });
+      expect((await taskRow(task.id)).splitReminderCount).toBe(5);
+      await expect(
+        services.tasks.update(stranger, task.id, { splitReminderCount: 2 }),
+      ).rejects.toThrow(NOT_FOUND);
+      const updated = await services.tasks.update(owner, task.id, {
+        expectedVersion: task.version,
+        splitReminderCount: 2,
+      });
+      expect(updated.task.splitReminderCount).toBe(2);
+      expect((await history(task.id)).at(-1)?.after).toMatchObject({
+        fields: ["splitReminderCount"],
+      });
+      await expect(
+        services.tasks.update(owner, task.id, {
+          expectedVersion: task.version,
+          splitReminderCount: 0,
+        }),
+      ).rejects.toBeInstanceOf(VersionConflictError);
+      for (const count of [0, null]) {
+        await services.tasks.update(owner, task.id, { splitReminderCount: count });
+        expect((await taskRow(task.id)).splitReminderCount).toBe(count);
+      }
+      for (const count of [-1, 101, 2.5]) {
+        await expect(
+          services.tasks.update(owner, task.id, { splitReminderCount: count }),
+        ).rejects.toBeInstanceOf(ValidationError);
+      }
+    });
+
     it("edits fields, bumps the version, returns the stored row, and logs only what changed", async () => {
       const task = await services.tasks.create(owner, {
         title: "Draft essay",

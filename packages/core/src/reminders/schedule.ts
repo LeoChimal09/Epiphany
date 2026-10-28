@@ -3,12 +3,15 @@ import type { Database } from "../db/client";
 import { events, reminders, tasks, type CalendarEvent, type Task } from "../db/schema";
 import { addDays, dateKeyOf, localWallToUtc, parseTimeOfDay, weekdayOf } from "../planning/time";
 import { maxLatenessMs, type ReminderSettings } from "./policy";
+import { splitReminderTimes, splitReminderWindow } from "./split";
 import {
   cancelObsoleteReminders,
   cancelOtherReminders,
   cancelScheduledBriefings,
   scheduleBriefing,
   scheduleReminder,
+  scheduleSplitReminder,
+  eventAcknowledged,
 } from "./store";
 
 const HOUR = 3_600_000;
@@ -195,6 +198,31 @@ export async function syncReminders(options: {
         }
       }
     }
+    const splitCount =
+      task.splitReminderCount ??
+      (settings.splitReminders.enabled ? settings.splitReminders.count : 0);
+    if (splitCount > 0 && due > now) {
+      const window = splitReminderWindow(due, task.createdAt, timezone, settings);
+      if (window) {
+        const times = splitReminderTimes(window.start, window.end, splitCount);
+        for (const [index, at] of times.entries()) {
+          const key = `task:${task.id}:split:${splitCount}:${index}:${due.getTime()}:${window.end.getTime()}:${at.getTime()}`;
+          keep.push(key);
+          if (at < now) continue;
+          if (
+            await scheduleSplitReminder(db, ownerId, {
+              kind: "task_deadline",
+              subjectType: "task",
+              subjectId: task.id,
+              dedupeKey: key,
+              dueAt: at,
+              message: `Heads up: ${priorityLabel}"${clean(task.title)}" is due ${dueClock(due, timezone)}. This is a split-day check-in; tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
+            })
+          )
+            report.created++;
+        }
+      }
+    }
     report.canceled += await cancelOtherReminders(
       db,
       ownerId,
@@ -218,7 +246,30 @@ export async function syncReminders(options: {
     );
 
   for (const event of upcoming) {
+    if (await eventAcknowledged(db, ownerId, event.id, event.version)) continue;
     const keep: string[] = [];
+    if ((event.splitReminderCount ?? 0) > 0 && event.startsAt > now) {
+      const window = splitReminderWindow(event.startsAt, event.createdAt, timezone, settings);
+      if (window) {
+        const count = event.splitReminderCount!;
+        for (const [index, at] of splitReminderTimes(window.start, window.end, count).entries()) {
+          const key = `event:${event.id}:split:${count}:${index}:${event.startsAt.getTime()}:${window.end.getTime()}:${at.getTime()}`;
+          keep.push(key);
+          if (at < now) continue;
+          if (
+            await scheduleSplitReminder(db, ownerId, {
+              kind: "event",
+              subjectType: "event",
+              subjectId: event.id,
+              dedupeKey: key,
+              dueAt: at,
+              message: `Heads up: "${clean(event.title)}" starts ${dueClock(event.startsAt, timezone)}. This is a split-day reminder; your original event alerts are unchanged.`,
+            })
+          )
+            report.created++;
+        }
+      }
+    }
     if (event.allDay) {
       const eventDay = dateKeyOf(event.startsAt, event.timezone);
       const key = `event:${event.id}:all-day:${event.startsAt.getTime()}`;

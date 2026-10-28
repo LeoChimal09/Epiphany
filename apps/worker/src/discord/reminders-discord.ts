@@ -22,7 +22,7 @@ function log(event: string, fields: Record<string, unknown> = {}): void {
 // public/look-alike channel or DM, so personal reminders cannot leak across destinations.
 export function serverChannelDelivery(client: Client, ownerUserId: string): ReminderDelivery {
   return {
-    async send(text): Promise<DeliveryResult> {
+    async send(text, reminders): Promise<DeliveryResult> {
       try {
         const botUser = client.user;
         if (!botUser) return { ok: false, reason: "error" };
@@ -53,8 +53,9 @@ export function serverChannelDelivery(client: Client, ownerUserId: string): Remi
             throw error;
           }
           if (!owner.permissionsIn(channel).has(PermissionFlagsBits.ViewChannel)) continue;
+          const marker = reminders?.length === 1 ? `\n-# epi:reminder:${reminders[0]!.id}` : "";
           const message = await channel.send({
-            content: `<@${ownerUserId}> ${text}`.slice(0, 2000),
+            content: `<@${ownerUserId}> ${text}`.slice(0, 2000 - marker.length) + marker,
             allowedMentions: { parse: [], users: [ownerUserId] },
           });
           return { ok: true, channelId: message.channelId };

@@ -5,6 +5,7 @@ import { DashboardShell } from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
+vi.mock("./reminders/actions", () => ({}));
 vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("./voice-actions", () => ({}));
 

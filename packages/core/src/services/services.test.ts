@@ -136,6 +136,32 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
       );
     });
 
+    it("reads owner-scoped planner changes after a persisted checkpoint, including edits and completions", async () => {
+      const task = await services.tasks.create(owner, { title: "Repair drone" });
+      await services.tasks.update(owner, task.id, { title: "Repair camera" });
+      await services.tasks.complete(owner, task.id);
+      await services.tasks.create(strangerOwner, { title: "Private other task" });
+      const since = "2026-01-01T00:00:00.000Z";
+      const changes = await services.history.changes(owner, since);
+      expect(changes.map((entry) => entry.action).toSorted()).toEqual(
+        ["task.create", "task.update", "task.complete"].toSorted(),
+      );
+      expect(changes.every((entry) => entry.entityId === task.id)).toBe(true);
+      expect(
+        await services.history.changes(
+          owner,
+          since,
+          changes.map((entry) => entry.id),
+        ),
+      ).toEqual([]);
+      await expect(services.history.changes({ ownerId }, since)).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+      await expect(
+        services.history.changes(await principalFor(ownerId, { audience: "shared" }), since),
+      ).rejects.toBeInstanceOf(AccessDeniedError);
+    });
+
     it("rejects a forged principal on every method and changes nothing", async () => {
       const task = await services.tasks.create(owner, { title: "Real task" });
       const forged = { ownerId, source: "dashboard", audience: "private", initiator: "owner" };

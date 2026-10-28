@@ -104,7 +104,10 @@ describe("loadMigrationFiles", () => {
     }
     expect(
       files.find((entry) => entry.tag === "0011_nebulous_outlaw_kid")?.statements,
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(files.find((entry) => entry.tag === "0011_nebulous_outlaw_kid")?.hash).toBe(
+      "242300bca7673f5399a360ad8ba0682f048d3db4d39d5e14c9dc8a793a733de3",
+    );
   });
 });
 
@@ -190,6 +193,30 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
     }
   });
 
+  it("upgrades the original applied 0011 checksum and backfills task types only in the corrective migration", async () => {
+    const all = loadMigrationFiles(realFolder);
+    const installed = all.findIndex((file) => file.tag === "0011_nebulous_outlaw_kid") + 1;
+    await runMigrations(pool, folderUpTo(installed));
+    for (const statement of UPGRADE_SEEDS["0010_task_priority"]!) await pool.query(statement);
+    const [before] = await pool.query<RowDataPacket[]>(
+      "SELECT task_type FROM tasks WHERE id = 'task-done'",
+    );
+    expect(before[0]?.task_type).toBe("task");
+    const status = await getMigrationStatus(pool, realFolder);
+    expect(status.problems).toEqual([]);
+    expect(status.pending).toEqual(["0012_simple_patriot", "0013_backfill_task_types"]);
+    await runMigrations(pool, realFolder);
+    const [after] = await pool.query<RowDataPacket[]>(
+      "SELECT task_type, priority, split_reminder_count FROM tasks WHERE id = 'task-done'",
+    );
+    expect(after[0]).toMatchObject({
+      task_type: "todo",
+      priority: "minor",
+      split_reminder_count: null,
+    });
+    expect((await runMigrations(pool, realFolder)).applied).toEqual([]);
+  });
+
   it("refuses to run when an applied migration file was modified", async () => {
     await runMigrations(pool, realFolder);
     await pool.query(
@@ -206,7 +233,8 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
   // defined defaults/backfills; every earlier value must be untouched.
   const ADDED_COLUMNS: Record<string, string[]> = {
     owners: ["avatar_hash"],
-    tasks: ["review_note", "priority", "task_type"],
+    tasks: ["review_note", "priority", "task_type", "split_reminder_count"],
+    events: ["split_reminder_count"],
   };
 
   function withoutAddedColumns(
@@ -288,6 +316,15 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
         const result = await runMigrations(upgradePool, realFolder);
         expect(result.applied).toEqual(all.slice(installed).map((file) => file.tag));
         expect(withoutAddedColumns(await read(), before)).toEqual(before);
+        const [taskSplits] = await upgradePool.query<RowDataPacket[]>(
+          "SELECT split_reminder_count FROM tasks",
+        );
+        const [eventSplits] = await upgradePool.query<RowDataPacket[]>(
+          "SELECT split_reminder_count FROM events",
+        );
+        expect(
+          [...taskSplits, ...eventSplits].every((row) => row.split_reminder_count === null),
+        ).toBe(true);
         expect((await getMigrationStatus(upgradePool, realFolder)).pending).toEqual([]);
         expect((await runMigrations(upgradePool, realFolder)).applied).toEqual([]);
       } finally {

@@ -87,6 +87,7 @@ import {
 } from "./model";
 import { CalendarView } from "./calendar-view";
 import { DeadlineNotifications } from "./deadline-notifications";
+import { SplitReminderFields } from "./reminders/settings";
 import { IdeaBody } from "./idea-body";
 import {
   formatDayLabel,
@@ -1144,10 +1145,14 @@ export function DashboardShell({
                         </label>
                         <p className={styles.fullWidth}>
                           An event reserves calendar time from its start through its end. Use a task
-                          when you only need a due date.
+                          when you only need a due date. Events already receive a warning 30 minutes
+                          before by default and a check-in 30 minutes after starting.
                         </p>
                       </>
                     )}
+                    <div className={styles.fullWidth}>
+                      <SplitReminderFields key={calendarEntryType} />
+                    </div>
                     <div className={styles.formFooter}>
                       <button className={styles.primaryButton} type="submit">
                         {pending ? "Saving..." : `Save ${calendarEntryType}`}
@@ -1971,6 +1976,9 @@ function TaskRow({
             Details
             <textarea name="details" rows={3} maxLength={10000} defaultValue={task.details ?? ""} />
           </label>
+          <div className={styles.fullWidth}>
+            <SplitReminderFields count={task.splitReminderCount ?? null} />
+          </div>
           <div className={styles.rowActions}>
             <button className={styles.primaryButton} disabled={pending} type="submit">
               Save

@@ -6,6 +6,7 @@ export {
   parseReminderSettings,
   quietHoursEnd,
   retryDelayMs,
+  splitReminderSchema,
   type Decision,
   type ReminderSettings,
 } from "./policy";

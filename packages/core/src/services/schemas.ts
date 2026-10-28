@@ -35,6 +35,7 @@ export const createTaskInput = z
     dueAt: instant.optional(),
     dueDateOnly: z.boolean().optional(),
     estimatedMinutes: z.number().int().min(1).max(100_000).optional(),
+    splitReminderCount: z.number().int().min(0).max(100).nullable().optional(),
   })
   .strict();
 
@@ -56,6 +57,7 @@ export const createEventInput = z
     timezone,
     allDay: z.boolean().optional(),
     location: z.string().trim().max(300).optional(),
+    splitReminderCount: z.number().int().min(0).max(100).nullable().optional(),
   })
   .strict()
   .refine((value) => value.endsAt.getTime() >= value.startsAt.getTime(), {
@@ -98,6 +100,7 @@ export const updateTaskInput = z
     estimatedMinutes: z.number().int().min(1).max(100_000).nullable().optional(),
     categoryId: id.optional(),
     reviewNote: clearableText(300).optional(),
+    splitReminderCount: z.number().int().min(0).max(100).nullable().optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).some((key) => key !== "expectedVersion"), {

@@ -27,6 +27,7 @@ const task = (over: Partial<Task>): Task => ({
   reviewNote: null,
   dueAt: null,
   dueDateOnly: false,
+  splitReminderCount: null,
   estimatedMinutes: null,
   remainingMinutes: null,
   status: "open",
@@ -45,6 +46,7 @@ const event = (over: Partial<CalendarEvent>): CalendarEvent => ({
   startsAt: at("2026-10-14T20:00:00.000Z"),
   endsAt: at("2026-10-14T21:30:00.000Z"),
   allDay: false,
+  splitReminderCount: null,
   timezone: TZ,
   status: "scheduled",
   canceledAt: null,
@@ -107,6 +109,13 @@ const data = (over: Partial<OverviewData> = {}): OverviewData => ({
 });
 
 describe("overview rendering", () => {
+  it("keeps simple to-dos visible today without inventing task deadlines or priority", () => {
+    const fixture = data({ openTasks: [task({ title: "Repair drone", taskType: "todo" })] });
+    expect(renderOverview("today", fixture)).toContain("__To-dos__\n• Repair drone (to-do)");
+    expect(renderOverview("today", fixture)).not.toContain("Nothing due");
+    expect(renderOverview("priorities", fixture)).toContain("Repair drone (to-do)");
+    expect(renderOverview("priorities", fixture)).not.toContain("minor");
+  });
   it("shows overdue, due-today, events and planned work for today, in the owner's timezone", () => {
     const text = renderOverview(
       "today",

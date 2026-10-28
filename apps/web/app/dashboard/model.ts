@@ -1,4 +1,5 @@
 export interface DashboardTask {
+  splitReminderCount?: number | null;
   id: string;
   categoryId: string;
   taskType: "task" | "todo";

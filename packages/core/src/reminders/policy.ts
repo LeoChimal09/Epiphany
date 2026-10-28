@@ -8,6 +8,12 @@ import {
   type Weekday,
 } from "../planning/time";
 import type { Preference } from "../db/schema";
+import { z } from "zod";
+import { parsePlanningPreferences } from "../planning/preferences";
+
+export const splitReminderSchema = z
+  .object({ enabled: z.boolean(), count: z.number().int().min(1).max(100) })
+  .strict();
 
 // Reminder behavior the owner can change. Defaults (chosen for Goal 15, see docs/reminders.md):
 // a time-sensitive reminder (an event, a check-in, a wind-down) is only worth sending for 30
@@ -36,6 +42,8 @@ export interface ReminderSettings {
   deadlineLeadHours: number[];
   majorDeadlineLeadHours: number[];
   eventLeadMinutes: number;
+  splitReminders: { enabled: boolean; count: number };
+  sleepHours: { start: string; end: string } | null;
 }
 
 export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
@@ -51,6 +59,8 @@ export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
   deadlineLeadHours: [1],
   majorDeadlineLeadHours: [24, 2, 1],
   eventLeadMinutes: 30,
+  splitReminders: { enabled: false, count: 2 },
+  sleepHours: { start: "23:00", end: "07:00" },
 };
 
 const TIME = /^\d{2}:\d{2}$/;
@@ -81,11 +91,17 @@ export function parseReminderSettings(
     backoffMinutes: [...DEFAULT_REMINDER_SETTINGS.backoffMinutes],
     deadlineLeadHours: [...DEFAULT_REMINDER_SETTINGS.deadlineLeadHours],
     majorDeadlineLeadHours: [...DEFAULT_REMINDER_SETTINGS.majorDeadlineLeadHours],
+    sleepHours: parsePlanningPreferences(preferences, "UTC").sleep ?? null,
   };
   for (const preference of preferences) {
     if (preference.status !== "confirmed") continue;
     const value = preference.value as unknown;
     switch (preference.key) {
+      case "reminders.split": {
+        const parsed = splitReminderSchema.safeParse(value);
+        if (parsed.success) settings.splitReminders = parsed.data;
+        break;
+      }
       case "reminders.paused":
         if (typeof value === "boolean") settings.paused = value;
         break;

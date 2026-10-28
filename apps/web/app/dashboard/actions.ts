@@ -110,6 +110,17 @@ function priorityField(form: FormData): "minor" | "major" | undefined {
   throw new ValidationError(["priority must be minor or major"]);
 }
 
+function splitReminderField(form: FormData): number | null | undefined {
+  const mode = textField(form, "splitReminderMode");
+  if (mode === undefined) return undefined;
+  if (mode === "default") return null;
+  if (mode === "off") return 0;
+  const count = Number(textField(form, "splitReminderCount"));
+  if (mode !== "custom" || !Number.isInteger(count) || count < 1 || count > 100)
+    throw new ValidationError(["choose a split reminder count from 1 to 100"]);
+  return count;
+}
+
 function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
   if (error instanceof ValidationError) return { ok: false, error: error.issues.join(". ") };
   if (error instanceof VersionConflictError) {
@@ -164,6 +175,7 @@ export async function addDashboardTask(form: FormData): Promise<DashboardResult>
       estimatedMinutes,
       ...(dueDateOnly ? { dueDateOnly: true } : {}),
       categoryId: textField(form, "categoryId"),
+      splitReminderCount: splitReminderField(form),
     });
     return { ok: true, message: "Task saved.", task: taskForDashboard(task) };
   } catch (error) {
@@ -222,6 +234,7 @@ export async function editDashboardTask(taskId: string, form: FormData): Promise
       dueDateOnly: effectiveType === "todo" ? false : form.get("dueDateOnly") === "on",
       estimatedMinutes: effectiveType === "todo" ? null : estimatedMinutes,
       categoryId: textField(form, "categoryId"),
+      splitReminderCount: splitReminderField(form),
     });
     return {
       ok: true,
@@ -588,6 +601,7 @@ export async function addDashboardEvent(form: FormData): Promise<DashboardSchedu
       location: textField(form, "location"),
       timezone,
       ...scheduleWindow(form, timezone, true, "date", true),
+      splitReminderCount: splitReminderField(form),
     });
     return { ok: true, message: "Event saved." };
   } catch (error) {

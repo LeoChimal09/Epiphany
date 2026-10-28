@@ -93,7 +93,7 @@ describe("Discord planner addition notices", () => {
 
   it("omits records without supported task/event creation history", () => {
     expect(
-      announcementText([entry({ action: "task.update" }), entry({ after: { other: true } })]),
+      announcementText([entry({ action: "unknown" }), entry({ after: { other: true } })]),
     ).toBe("");
   });
 
@@ -103,5 +103,27 @@ describe("Discord planner addition notices", () => {
     );
     expect(announcementText(entries)).toContain("• And 2 more");
     expect(announcementText(entries).split("\n")).toHaveLength(10);
+  });
+
+  it("announces to-dos, edits and completions as fresh planner updates", () => {
+    const text = announcementText([
+      entry({ after: { title: "Get drone fixed", taskType: "todo", priority: "minor" } }),
+      entry({
+        action: "task.update",
+        after: { title: "Repair camera", fields: ["title", "dueAt"] },
+      }),
+      entry({ action: "task.complete", after: { title: "Eat" } }),
+    ]);
+    expect(text).toContain("Planner updates:");
+    expect(text).toContain("To-do: Get drone fixed");
+    expect(text).not.toContain("Minor");
+    expect(text).toContain("Updated task: Repair camera (title, due at)");
+    expect(text).toContain("Completed task: Eat");
+  });
+
+  it("escapes user-supplied mentions and markdown in notices", () => {
+    expect(announcementText([entry({ after: { title: "@everyone **urgent**" } })])).toContain(
+      "@\u200beveryone \\*\\*urgent\\*\\*",
+    );
   });
 });

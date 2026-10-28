@@ -1,7 +1,28 @@
 import { and, asc, desc, eq, gt, inArray, lt, lte, notInArray, or, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { newId } from "../db/domain";
-import { events, reminders, tasks, type Reminder } from "../db/schema";
+import { actionHistory, events, reminders, tasks, type Reminder } from "../db/schema";
+
+export async function eventAcknowledged(
+  db: Database,
+  ownerId: string,
+  eventId: string,
+  version: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: actionHistory.id })
+    .from(actionHistory)
+    .where(
+      and(
+        eq(actionHistory.ownerId, ownerId),
+        eq(actionHistory.entityId, eventId),
+        eq(actionHistory.action, "event.acknowledge"),
+        sql`JSON_EXTRACT(${actionHistory.after}, '$.version') = ${version}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
 
 export interface NewReminder {
   kind: Reminder["kind"];
@@ -34,6 +55,34 @@ export async function scheduleReminder(
       urgency: input.urgency ?? "normal",
       dueAt: input.dueAt,
     });
+  return result.affectedRows === 1;
+}
+
+export async function scheduleSplitReminder(
+  db: Database,
+  ownerId: string,
+  input: NewReminder,
+): Promise<boolean> {
+  if (await scheduleReminder(db, ownerId, input)) return true;
+  // Re-enabling a canceled future slot must not replay a sent or uncertain delivery.
+  const [result] = await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      attempts: 0,
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.dedupeKey, input.dedupeKey),
+        eq(reminders.status, "canceled"),
+      ),
+    );
   return result.affectedRows === 1;
 }
 

@@ -162,6 +162,7 @@ export async function createCategory(db: Database, actor: Actor, name: string): 
 }
 
 export interface NewTask {
+  splitReminderCount?: number | null;
   title: string;
   taskType?: "task" | "todo";
   priority?: "minor" | "major";
@@ -198,6 +199,7 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
       dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
       estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
       remainingMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+      splitReminderCount: input.splitReminderCount ?? null,
     });
     await record(tx, actor, {
       action: "task.create",
@@ -211,6 +213,7 @@ export async function createTask(db: Database, actor: Actor, input: NewTask): Pr
         dueAt: taskType === "todo" ? null : (input.dueAt?.toISOString() ?? null),
         dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
         estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+        splitReminderCount: input.splitReminderCount ?? null,
       },
     });
   });
@@ -264,6 +267,7 @@ export async function completeTask(
 }
 
 export interface NewEvent {
+  splitReminderCount?: number | null;
   title: string;
   startsAt: Date;
   endsAt: Date;
@@ -288,6 +292,7 @@ export async function createEvent(
       timezone: input.timezone,
       allDay: input.allDay ?? false,
       location: input.location ?? null,
+      splitReminderCount: input.splitReminderCount ?? null,
     });
     await record(tx, actor, {
       action: "event.create",
@@ -299,6 +304,7 @@ export async function createEvent(
         endsAt: input.endsAt.toISOString(),
         timezone: input.timezone,
         allDay: input.allDay ?? false,
+        splitReminderCount: input.splitReminderCount ?? null,
       },
     });
   });

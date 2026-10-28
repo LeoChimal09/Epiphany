@@ -31,6 +31,16 @@ const SEED_0009_VOICE_USAGE_OBSERVATIONS: string[] = [
 ];
 
 export const UPGRADE_SEEDS: Record<string, string[]> = {
+  "0012_simple_patriot": [
+    ...SEED_0009_VOICE_USAGE_OBSERVATIONS,
+    "UPDATE tasks SET task_type = 'todo', priority = 'minor' WHERE id = 'task-done'",
+    "UPDATE tasks SET task_type = 'task', priority = 'major' WHERE id = 'task-open'",
+  ],
+  "0011_nebulous_outlaw_kid": [
+    ...SEED_0009_VOICE_USAGE_OBSERVATIONS,
+    "UPDATE tasks SET task_type = 'todo', priority = 'minor' WHERE id = 'task-done'",
+    "UPDATE tasks SET task_type = 'task', priority = 'major' WHERE id = 'task-open'",
+  ],
   "0000_initial_schema": EARLIER_SEED_0000,
   // Schema after 0001 adds confirmations; it carries the earlier rows plus a confirmation.
   "0001_confirmations": [

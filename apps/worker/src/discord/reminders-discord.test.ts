@@ -160,14 +160,17 @@ describe("Discord reminder worker wiring (offline)", () => {
     } as unknown as Client;
 
     expect(
-      await serverChannelDelivery(serverClient, "fixture-owner-discord").send("Reminder"),
+      await serverChannelDelivery(serverClient, "fixture-owner-discord").send("Reminder", [
+        { id: "00000000-0000-4000-8000-000000000001" } as Reminder,
+      ]),
     ).toEqual({
       ok: true,
       channelId: "private-check-ins",
     });
     expect(guild.members.fetch).toHaveBeenCalledExactlyOnceWith("fixture-owner-discord");
     expect(send).toHaveBeenCalledExactlyOnceWith({
-      content: "<@fixture-owner-discord> Reminder",
+      content:
+        "<@fixture-owner-discord> Reminder\n-# epi:reminder:00000000-0000-4000-8000-000000000001",
       allowedMentions: { parse: [], users: ["fixture-owner-discord"] },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();

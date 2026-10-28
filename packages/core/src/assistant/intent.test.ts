@@ -28,6 +28,34 @@ const wire = (over: Record<string, unknown>) => ({
 });
 
 describe("intent parsing", () => {
+  it("accepts configurable split reminder counts and rejects invalid settings", () => {
+    expect(
+      toIntent(
+        wire({
+          kind: "set_preference",
+          search: "reminders.split",
+          details: '{"enabled":true,"count":5}',
+          title: "five split reminders",
+        }),
+      ),
+    ).toMatchObject({
+      kind: "set_preference",
+      key: "reminders.split",
+      value: { enabled: true, count: 5 },
+    });
+    for (const count of [0, -1, 2.5, 101]) {
+      expect(() =>
+        toIntent(
+          wire({
+            kind: "set_preference",
+            search: "reminders.split",
+            details: JSON.stringify({ enabled: true, count }),
+            title: "split reminders",
+          }),
+        ),
+      ).toThrow(IntentError);
+    }
+  });
   it("resumes an idea without requiring new points or saving anything", () => {
     expect(
       toIntent(wire({ kind: "resume_idea", reference: "tool library", details: null })),

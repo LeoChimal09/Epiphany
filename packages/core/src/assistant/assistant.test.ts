@@ -20,6 +20,7 @@ import { createAssistant, emptyConversation, type Assistant } from "./assistant"
 import { parseConversationState } from "./state";
 import { COURSE_LIST_PASTE } from "./course-list.fixture";
 import { dateKeyOf } from "../planning/time";
+import { parseReminderSettings, runReminderCycle, syncReminders } from "../reminders";
 import { createBudget, createMemoryUsageStore, type UsageStore } from "./budget";
 import type { Intent } from "./intent";
 import type { WorkspaceSetupResult } from "./workspace";
@@ -496,8 +497,9 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(reply.outcome).toBe("listed");
       expect(reply.changed).toBe(false);
       expect(reply.text).toContain("Open tasks (4):");
-      expect(reply.text).toContain("Chemistry lab report (due Fri, Oct 16, 5:00 PM)");
-      expect(reply.text).toContain("History essay draft (due Wed, Oct 14, 11:59 PM)");
+      expect(reply.text).toContain("Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)");
+      expect(reply.text).toContain("History essay draft (minor, due Wed, Oct 14, 11:59 PM)");
+      expect(reply.text).toContain("Biology reading (to-do)");
       expect(state.listed).toHaveLength(4);
       expect((await taskRows()).every((t) => t.status === "open")).toBe(true);
     });
@@ -510,7 +512,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
           : { kind: "list_tasks", status: "open", dueFrom: "2026-10-16", dueThrough: "2026-10-16" },
       );
       expect((await say(assistant, "anything chem?")).reply.text).toBe(
-        "Open tasks (1):\n1. Chemistry lab report (due Fri, Oct 16, 5:00 PM)\nWant me to check any of these off?",
+        "Open tasks (1):\n1. Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)\nWant me to check any of these off?",
       );
       const dated = await say(assistant, "what's due Friday");
       expect(dated.reply.text).toContain("Chemistry lab report");
@@ -1560,6 +1562,161 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
         initiator: "owner",
       });
 
+    it("never completes an unrelated to-do from a stale task list after an event reminder", async () => {
+      const owner = await ownerPrincipal();
+      const todo = await services.tasks.create(owner, { title: "Get drone fixed" });
+      const event = await services.events.create(owner, {
+        title: "gym time",
+        startsAt: "2026-10-14T15:45:00Z",
+        endsAt: "2026-10-14T17:00:00Z",
+        timezone: TZ,
+      });
+      for (const reference of ["it", "gym time", "Get drone fixed"]) {
+        const { assistant, provider } = build(() => ({
+          kind: "complete_task",
+          reference,
+          targetId: todo.id,
+        }));
+        const result = await say(assistant, "Already here cross it off", {
+          ...emptyConversation(),
+          listed: [{ id: todo.id, title: todo.title, due: null }],
+          lastReminder: {
+            reminderId: "00000000-0000-4000-8000-000000000001",
+            kind: "event",
+            subjectType: "event",
+            subjectId: event.id,
+            title: event.title,
+          },
+        });
+        expect(result.reply.changed).toBe(false);
+        expect((await services.tasks.get(owner, todo.id)).status).toBe("open");
+        expect(provider.calls[0]?.lastReminder?.subjectId).toBe(event.id);
+        expect(provider.calls[0]?.events).toEqual([
+          expect.objectContaining({ id: event.id, title: "gym time" }),
+        ]);
+      }
+    });
+
+    it("acknowledges event attendance without canceling it, and suppresses future check-ins persistently", async () => {
+      const owner = await ownerPrincipal();
+      const event = await services.events.create(owner, {
+        title: "gym time",
+        startsAt: "2026-10-14T15:45:00Z",
+        endsAt: "2026-10-14T17:00:00Z",
+        timezone: TZ,
+      });
+      const settings = { ...parseReminderSettings([], now), briefingTime: null };
+      await syncReminders({ db: handle.db, ownerId, now, timezone: TZ, settings });
+      const { assistant } = build(() => ({ kind: "acknowledge_event", reference: "gym time" }));
+      const result = await say(assistant, "Got done with gym time");
+      expect(result.reply.changed).toBe(true);
+      expect(result.reply.text).toContain("haven't canceled");
+      expect((await services.events.get(owner, event.id)).status).toBe("scheduled");
+      expect(
+        (await services.reminders.recent(owner)).filter((item) => item.status === "scheduled"),
+      ).toEqual([]);
+      expect(
+        (
+          await syncReminders({
+            db: handle.db,
+            ownerId,
+            now,
+            timezone: TZ,
+            settings: { ...settings, eventLeadMinutes: 10 },
+          })
+        ).created,
+      ).toBe(0);
+      expect((await say(assistant, "Finished gym time")).reply.changed).toBe(false);
+      const delivery = { send: vi.fn().mockResolvedValue({ ok: true }) };
+      await runReminderCycle({
+        db: handle.db,
+        ownerId,
+        now: new Date("2026-10-14T16:15:00Z"),
+        timezone: TZ,
+        settings,
+        delivery,
+      });
+      expect(delivery.send).not.toHaveBeenCalled();
+      await expect(
+        services.events.acknowledge(await principalFor(strangerId), event.id),
+      ).rejects.toThrow(/not found/);
+      await expect(
+        services.events.acknowledge(await principalFor(ownerId, "shared"), event.id),
+      ).rejects.toBeInstanceOf(AccessDeniedError);
+    });
+
+    it("creates simple to-dos without timing questions and filters them separately from tasks", async () => {
+      const owner = await ownerPrincipal();
+      await services.tasks.create(owner, {
+        title: "Chemistry assignment",
+        taskType: "task",
+        estimatedMinutes: 45,
+      });
+      const create = build(() => ({
+        kind: "create_task",
+        title: "Repair drone",
+        taskType: "todo",
+      }));
+      const saved = await say(create.assistant, "Add Repair drone as a to-do");
+      expect(saved.reply).toMatchObject({ outcome: "created", changed: true });
+      expect(saved.reply.text).toBe('Got it, I added "Repair drone" as a to-do.');
+      expect(
+        (await services.tasks.list(owner)).find((task) => task.taskType === "todo"),
+      ).toMatchObject({
+        title: "Repair drone",
+        taskType: "todo",
+        dueAt: null,
+        estimatedMinutes: null,
+      });
+
+      const list = build(() => ({ kind: "list_tasks", status: "open", taskType: "todo" }));
+      const listed = await say(list.assistant, "Show my to-dos");
+      expect(listed.reply.text).toContain("Open to-dos (1)");
+      expect(listed.reply.text).toContain("Repair drone (to-do)");
+      expect(listed.reply.text).not.toContain("Chemistry assignment");
+      expect(listed.state.listed).toHaveLength(1);
+    });
+
+    it("uses current dashboard task fields and supports to-do promotion, updates and reopening", async () => {
+      const owner = await ownerPrincipal();
+      const todo = await services.tasks.create(owner, {
+        title: "Get drone fixed",
+        taskType: "todo",
+      });
+      const update = build(() => ({
+        kind: "update_task",
+        reference: "Get drone fixed",
+        dueDate: "2026-10-16",
+        estimatedMinutes: 45,
+        priority: "major",
+      }));
+      const result = await say(
+        update.assistant,
+        "Make Get drone fixed a major task due Friday, 45 minutes",
+      );
+      expect(result.reply.changed).toBe(true);
+      expect(await services.tasks.get(owner, todo.id)).toMatchObject({
+        taskType: "task",
+        priority: "major",
+        estimatedMinutes: 45,
+      });
+      await services.tasks.update(owner, todo.id, { title: "Repair drone" });
+      const read = build(() => ({ kind: "list_tasks", status: "open", taskType: "todo" }));
+      await say(read.assistant, "show my todos");
+      expect(read.provider.calls[0]?.openTasks).toEqual([
+        expect.objectContaining({
+          title: "Repair drone",
+          taskType: "task",
+          priority: "major",
+          estimatedMinutes: 45,
+        }),
+      ]);
+      await services.tasks.complete(owner, todo.id);
+      const reopen = build(() => ({ kind: "reopen_task", reference: "Repair drone" }));
+      expect((await say(reopen.assistant, "reopen Repair drone")).reply.changed).toBe(true);
+      expect((await services.tasks.get(owner, todo.id)).status).toBe("open");
+    });
+
     it("understands 'finished it' as the task the reminder was about, and 'snooze' as that reminder", async () => {
       await seed();
       const task = (await taskRows()).find((t) => t.title === "Chemistry lab report")!;
@@ -1935,6 +2092,43 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
         summary: "up to 5 reminders a day",
       }));
       expect((await say(lower.assistant, "only 5 a day")).reply.outcome).toBe("created");
+    });
+
+    it("confirms extra split reminders and can disable them without touching original alerts", async () => {
+      const owner = await ownerPrincipal();
+      const set = build((request) =>
+        request.message === "yes"
+          ? { kind: "confirm" }
+          : {
+              kind: "set_preference",
+              key: "reminders.split",
+              value: { enabled: true, count: 5 },
+              summary: "five split reminders per due task",
+            },
+      );
+      const asked = await say(set.assistant, "Add five split reminders for my assignments");
+      expect(asked.reply.outcome).toBe("confirmation_needed");
+      expect(await services.preferences.get(owner, "reminders.split")).toBeNull();
+      expect((await say(set.assistant, "yes", asked.state)).reply.changed).toBe(true);
+      expect((await services.preferences.get(owner, "reminders.split"))?.value).toEqual({
+        enabled: true,
+        count: 5,
+      });
+      expect(await services.preferences.get(owner, "reminders.deadline_lead_hours")).toBeNull();
+      expect(await services.preferences.get(owner, "reminders.daily_limit")).toBeNull();
+      const disable = build(() => ({
+        kind: "set_preference",
+        key: "reminders.split",
+        value: { enabled: false, count: 5 },
+        summary: "split reminders are off",
+      }));
+      expect(
+        (await say(disable.assistant, "Turn the extra split reminders off")).reply.changed,
+      ).toBe(true);
+      expect(parseReminderSettings(await services.preferences.list(owner)).splitReminders).toEqual({
+        enabled: false,
+        count: 5,
+      });
     });
 
     it("refuses schedules and settings in a shared channel", async () => {

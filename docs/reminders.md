@@ -4,6 +4,12 @@ The reminder service runs in the `worker` and uses **no AI call**, so reminders 
 model provider is down. It mentions the owner in their private Epiphany `#check-ins` channel to
 trigger a Discord notification. It never falls back to a public channel or DM.
 
+Reminders are optional fields on tasks and events, **not an item type**. In the add-item
+form, use **Split reminders (optional)** to inherit the workspace default, turn splits off
+for this item, or choose a custom count (preselected to 2). The fields save with **Save task**
+or **Save event**, in the same transaction as the item. Existing tasks also expose the fields
+when editing. A todo can retain a split preference, but needs a deadline before it can run.
+
 ## How it works
 
 - **Persistent jobs.** Every reminder is a row in `reminders` with a status: `scheduled`, `sending`,
@@ -52,6 +58,7 @@ the owner's configured timezone. Delivery can also be turned off:
 | `reminders.daily_limit`              | 12 (raising it asks first) |
 | `reminders.event_lead_minutes`       | 30                 |
 | `reminders.deadline_lead_hours`      | 1 hour before           |
+| `reminders.split`                   | off; count 2 when enabled |
 | `routine.bedtime`                    | off                |
 | `routine.workout`                    | off                |
 | `routine.awareness` (hourly prompts) | off                |
@@ -60,6 +67,45 @@ The morning briefing defaults to 08:00 local time. Change its delivery time from
 in conversation; pending briefings are moved to the new time. If today's briefing was already sent,
 the new time applies to the next scheduled briefing. Uncheck **Send morning briefing** in the
 dashboard to disable delivery.
+
+### Optional split-day reminders
+
+Enable **Dashboard → Scheduling preferences → Optional split-day reminders**, or ask Epi
+to add split reminders in conversation. The count is editable (1–100), with **2** preselected;
+it is not a fixed choice between two or three. Enabling or increasing it conversationally
+asks for confirmation. Disabling it removes only pending split alerts, not your original
+deadline/event warnings, morning briefing, or saved count.
+
+The scheduling-preferences page sets the workspace default for tasks. The add/edit item form
+sets an override for **only that item** and does not change the workspace preference.
+An event can also opt into its own split count; its split window ends at the event start
+(or the earlier awake cutoff), without changing the existing warning/check-in. Events do not
+inherit the task workspace default. All-day event splits use their calendar start, so their
+window normally falls on the preceding awake day.
+
+The nullable `split_reminder_count` on `tasks`/`events` stores this atomically with the record:
+null uses the workspace default (off for events), 0 disables, and 1–100 chooses a count.
+Migration `0012_simple_patriot` adds these columns without changing existing records.
+
+These are **additional check-ins per unfinished task on its due day**, including date-only
+deadlines. The usable window starts at the morning briefing time (8 AM if briefing delivery
+is off), or task creation if later. It ends at the earlier of the deadline and the first
+quiet-hours, protected-sleep, or bedtime boundary. Early-morning deadlines use the preceding
+awake day. With an 8 AM start, 9 PM bedtime, and 11:59 PM deadline, two reminders arrive at
+**2:30 PM and 5:45 PM**. The brief itself does not count toward the split count.
+
+For count N, the window is divided into N+2 equal parts; alerts occupy boundaries 2 through
+N+1. Two therefore use 2/4 and 3/4; five use 2/7 through 6/7. Times are rounded down to
+whole minutes, and duplicate minute slots are combined. Very short or already-ended windows
+may not fit the requested count. Missed slots aren't created retroactively when you enable
+the feature; late delivery retries expire after the configured grace period (30 minutes by
+default), at the awake cutoff, or when quiet hours begin, instead of moving to next morning.
+
+Changing the count, briefing time, deadline, or sleep/quiet settings recomputes pending split
+alerts. Completed/archived tasks cancel their pending alerts. Splits still obey pause settings
+and the **existing daily limit of 12 ordinary reminders across all tasks and reminder types**.
+Selecting five splits does not silently raise that limit or guarantee five deliveries.
+Original fixed-lead warnings keep their existing timing and quiet-hour behavior.
 
 One-time requests such as "remind me at 2 PM to go grocery shopping" notify at 1:30 PM, 30 minutes
 before the stated target. If the target is less than 30 minutes away, the reminder is sent as soon

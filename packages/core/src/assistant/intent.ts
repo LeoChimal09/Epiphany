@@ -32,6 +32,7 @@ export type Intent =
       dueFrom?: DateKey;
       dueThrough?: DateKey;
       search?: string;
+      taskType?: "task" | "todo";
     }
   | {
       kind: "create_task";
@@ -41,7 +42,21 @@ export type Intent =
       dueTime?: string;
       estimatedMinutes?: number;
       priority?: "minor" | "major";
+      taskType?: "task" | "todo";
     }
+  | {
+      kind: "update_task";
+      reference: string;
+      targetId?: string;
+      title?: string;
+      taskType?: "task" | "todo";
+      dueDate?: DateKey;
+      dueTime?: string;
+      estimatedMinutes?: number;
+      priority?: "minor" | "major";
+    }
+  | { kind: "reopen_task"; reference: string; targetId?: string }
+  | { kind: "acknowledge_event"; reference: string; targetId?: string }
   | {
       kind: "create_event";
       title: string;
@@ -131,6 +146,9 @@ export const INTENT_KINDS = [
   "capture",
   "recategorize",
   "complete_task",
+  "update_task",
+  "reopen_task",
+  "acknowledge_event",
   "delete_note",
   "setup_workspace",
   "snooze",
@@ -186,6 +204,7 @@ export const intentWireSchema = z
     location: z.string().max(300).nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
     priority: z.enum(["minor", "major"]).nullable(),
+    task_type: z.enum(["task", "todo"]).nullable().default(null),
     note_kind: z.enum(["note", "idea"]).nullable().default(null),
     status: z.enum(["open", "completed", "all"]).nullable(),
     from_date: z.string().nullable(),
@@ -282,9 +301,11 @@ export function toIntent(raw: unknown): Intent {
         ...(dueFrom ? { dueFrom } : {}),
         ...(dueThrough ? { dueThrough } : {}),
         ...(search ? { search } : {}),
+        ...(wire.task_type ? { taskType: wire.task_type } : {}),
       };
     }
-    case "create_task": {
+    case "create_task":
+    case "update_task": {
       const dueDate = date(wire.due_date, "due_date");
       const dueTime = present(wire.due_time);
       if (dueTime !== undefined) {
@@ -296,15 +317,29 @@ export function toIntent(raw: unknown): Intent {
         }
       }
       const details = present(wire.details);
-      return {
-        kind: "create_task",
-        title: need(wire.title, "title"),
+      const fields = {
+        ...(wire.kind === "create_task"
+          ? { title: need(wire.title, "title") }
+          : present(wire.title)
+            ? { title: present(wire.title) }
+            : {}),
         ...(details ? { details } : {}),
         ...(dueDate ? { dueDate } : {}),
         ...(dueTime ? { dueTime } : {}),
         ...(wire.estimated_minutes ? { estimatedMinutes: wire.estimated_minutes } : {}),
         ...(wire.priority ? { priority: wire.priority } : {}),
+        ...(wire.task_type ? { taskType: wire.task_type } : {}),
       };
+      if (wire.kind === "update_task") {
+        if (!Object.keys(fields).length) throw new IntentError("update_task needs a change");
+        return {
+          kind: "update_task",
+          reference: present(wire.reference) ?? "",
+          ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+          ...fields,
+        };
+      }
+      return { kind: "create_task", ...fields, title: need(wire.title, "title") };
     }
     case "create_event": {
       const eventDate = date(wire.event_date, "event_date");
@@ -389,6 +424,8 @@ export function toIntent(raw: unknown): Intent {
       };
     }
     case "complete_task":
+    case "reopen_task":
+    case "acknowledge_event":
     case "delete_note": {
       const targetId = present(wire.target_id);
       return {

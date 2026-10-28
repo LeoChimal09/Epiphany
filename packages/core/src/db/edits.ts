@@ -13,6 +13,7 @@ import {
 import { categories, notes, tasks, type Category, type Note, type Task } from "./schema";
 
 export interface TaskPatch {
+  splitReminderCount?: number | null;
   taskType?: "task" | "todo";
   title?: string;
   priority?: "minor" | "major";
@@ -69,6 +70,10 @@ export async function updateTask(
     }
 
     const next = {
+      splitReminderCount:
+        patch.splitReminderCount === undefined
+          ? current.splitReminderCount
+          : patch.splitReminderCount,
       taskType: patch.taskType ?? current.taskType,
       title: patch.title ?? current.title,
       priority:
@@ -132,6 +137,10 @@ export async function updateTask(
 
     const fields: string[] = [];
     const values: Record<string, unknown> = {};
+    if (next.splitReminderCount !== current.splitReminderCount) {
+      fields.push("splitReminderCount");
+      values.splitReminderCount = { from: current.splitReminderCount, to: next.splitReminderCount };
+    }
     if (next.taskType !== current.taskType) {
       fields.push("taskType");
       values.taskType = { from: current.taskType, to: next.taskType };

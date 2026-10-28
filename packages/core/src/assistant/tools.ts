@@ -7,8 +7,28 @@ type Field = Exclude<keyof typeof intentWireSchema.shape, "kind" | "text">;
 // Only action-specific arguments travel over the wire. The legacy envelope remains internal
 // so scripted providers and the existing semantic validation/dispatch stay unchanged.
 const fields = {
-  list_tasks: ["status", "from_date", "through_date", "search"],
-  create_task: ["title", "details", "due_date", "due_time", "estimated_minutes", "priority"],
+  list_tasks: ["status", "from_date", "through_date", "search", "task_type"],
+  create_task: [
+    "title",
+    "details",
+    "due_date",
+    "due_time",
+    "estimated_minutes",
+    "priority",
+    "task_type",
+  ],
+  update_task: [
+    "reference",
+    "target_id",
+    "title",
+    "due_date",
+    "due_time",
+    "estimated_minutes",
+    "priority",
+    "task_type",
+  ],
+  reopen_task: ["reference", "target_id"],
+  acknowledge_event: ["reference", "target_id"],
   create_event: ["title", "event_date", "start_time", "end_time", "location"],
   create_note: ["title", "details", "note_kind"],
   develop_idea: ["reference", "target_id", "details"],

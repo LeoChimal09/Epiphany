@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
   cancelEvent,
@@ -22,6 +22,7 @@ import {
   actionHistory,
   discordOverviews,
   events,
+  reminders,
   notes,
   owners,
   preferences,
@@ -366,6 +367,59 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     },
 
     events: {
+      // Attendance/completion stops check-ins, not the calendar appointment itself.
+      async acknowledge(principal: unknown, eventId: unknown) {
+        const { principal: p, actor } = gate(principal, "event.acknowledge");
+        const id = parseInput(idInput, eventId);
+        const changed = await db.transaction(async (tx) => {
+          const [event] = await tx
+            .select()
+            .from(events)
+            .where(and(eq(events.id, id), eq(events.ownerId, p.ownerId)))
+            .for("update");
+          if (!event || event.status !== "scheduled") throw new NotFoundError("Event");
+          const [existing] = await tx
+            .select()
+            .from(actionHistory)
+            .where(
+              and(
+                eq(actionHistory.ownerId, p.ownerId),
+                eq(actionHistory.entityId, id),
+                eq(actionHistory.action, "event.acknowledge"),
+                sql`JSON_EXTRACT(${actionHistory.after}, '$.version') = ${event.version}`,
+              ),
+            )
+            .limit(1);
+          if (existing) return false;
+          await tx
+            .update(reminders)
+            .set({
+              status: "canceled",
+              detail: "event acknowledged",
+              version: sql`${reminders.version} + 1`,
+            })
+            .where(
+              and(
+                eq(reminders.ownerId, p.ownerId),
+                eq(reminders.subjectType, "event"),
+                eq(reminders.subjectId, id),
+                eq(reminders.status, "scheduled"),
+              ),
+            );
+          await tx.insert(actionHistory).values({
+            id: newId(),
+            ownerId: p.ownerId,
+            source: actor.source,
+            action: "event.acknowledge",
+            entityType: "event",
+            entityId: id,
+            after: { version: event.version },
+            createdAt: actor.now,
+          });
+          return true;
+        });
+        return { event: await getEvent(db, p.ownerId, id), changed };
+      },
       // Events overlapping [from, to), earliest first. Canceled events only with includeInactive.
       async list(principal: unknown, input: unknown): Promise<CalendarEvent[]> {
         const { principal: p } = gate(principal, "event.read");
@@ -477,6 +531,14 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     },
 
     reminders: {
+      async get(principal: unknown, id: unknown): Promise<Reminder | null> {
+        const { principal: p } = gate(principal, "reminder.read");
+        const [row] = await db
+          .select()
+          .from(reminders)
+          .where(and(eq(reminders.ownerId, p.ownerId), eq(reminders.id, parseInput(idInput, id))));
+        return row ?? null;
+      },
       // Upcoming and recent reminder jobs, newest first, including ones that failed or were skipped.
       async recent(principal: unknown, limit: unknown = 20): Promise<Reminder[]> {
         const { principal: p } = gate(principal, "reminder.read");
@@ -566,6 +628,44 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     calendar: createCalendarService(db, clock, options.calendar),
 
     history: {
+      async changes(
+        principal: unknown,
+        since: unknown,
+        seen: unknown = [],
+      ): Promise<ActionHistoryEntry[]> {
+        const { principal: p } = gate(principal, "history.read");
+        const from = parseInput(
+          z.iso.datetime().transform((value) => new Date(value)),
+          since,
+        );
+        const ids = parseInput(z.array(z.uuid()).max(10_000), seen);
+        return db
+          .select()
+          .from(actionHistory)
+          .where(
+            and(
+              eq(actionHistory.ownerId, p.ownerId),
+              gte(actionHistory.createdAt, from),
+              ...(ids.length ? [notInArray(actionHistory.id, ids)] : []),
+              inArray(actionHistory.action, [
+                "task.create",
+                "task.update",
+                "task.complete",
+                "task.reopen",
+                "event.create",
+                "event.cancel",
+                "event.acknowledge",
+                "note.create",
+                "note.update",
+                "note.delete",
+                "work_block.create",
+                "work_block.remove",
+              ]),
+            ),
+          )
+          .orderBy(asc(actionHistory.createdAt), asc(actionHistory.id))
+          .limit(200);
+      },
       async list(principal: unknown, limit: unknown = 50): Promise<ActionHistoryEntry[]> {
         const { principal: p } = gate(principal, "history.read");
         const max = parseInput(z.number().int().min(1).max(200), limit);

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectDatabase, type DatabaseHandle } from "../db/client";
 import { createOwner } from "../db/domain";
 import { runMigrations } from "../db/migrate";
-import { reminders, tasks } from "../db/schema";
+import { events, reminders, tasks } from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
 import { createServices, issueOwnerPrincipal, type Principal } from "../services";
 import { MAX_LATE_INDIVIDUAL, runReminderCycle, type DeliveryResult } from "./engine";
@@ -76,8 +76,85 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
   const addTask = (title = "Chemistry lab report", dueAt = DUE) =>
     services.tasks.create(owner, { title, dueAt });
+  const backdateTask = (id: string) =>
+    handle.db
+      .update(tasks)
+      .set({ createdAt: at("2026-10-14T12:00:00Z") })
+      .where(eq(tasks.id, id));
 
   describe("scheduling", () => {
+    it("uses each task's split count independently without enabling workspace-wide splits", async () => {
+      const a = await services.tasks.create(owner, {
+        title: "Five splits",
+        dueAt: DUE,
+        splitReminderCount: 5,
+      });
+      const b = await services.tasks.create(owner, {
+        title: "Two splits",
+        dueAt: DUE,
+        splitReminderCount: 2,
+      });
+      const c = await services.tasks.create(owner, {
+        title: "No splits",
+        dueAt: DUE,
+        splitReminderCount: 0,
+      });
+      for (const task of [a, b, c]) await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z");
+      const all = await rows();
+      expect(
+        all.filter((r) => r.subjectId === a.id && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(5);
+      expect(
+        all.filter((r) => r.subjectId === b.id && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(2);
+      expect(all.filter((r) => r.subjectId === c.id)).toHaveLength(1);
+      expect(await cycle("2026-10-16T20:45:00Z")).toMatchObject({ sent: 1 });
+      expect(sent.some((text) => text.includes("split-day"))).toBe(true);
+    });
+
+    it("honors item opt-out even when workspace splits are enabled", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Original only",
+        dueAt: DUE,
+        splitReminderCount: 0,
+      });
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 5 } });
+      expect(await rows()).toEqual([
+        expect.objectContaining({ dedupeKey: expect.stringContaining(":lead1h:") }),
+      ]);
+    });
+
+    it("adds event-specific splits before the start without replacing the original warning/check-in", async () => {
+      const event = await services.events.create(owner, {
+        title: "Gym",
+        startsAt: "2026-10-16T23:00:00Z",
+        endsAt: "2026-10-17T01:00:00Z",
+        timezone: TZ,
+        splitReminderCount: 2,
+      });
+      await handle.db
+        .update(events)
+        .set({ createdAt: at("2026-10-14T12:00:00Z") })
+        .where(eq(events.id, event.id));
+      await sync("2026-10-16T12:00:00Z");
+      const all = await rows();
+      expect(
+        all
+          .filter((r) => r.dedupeKey.includes(":split:"))
+          .map((r) => r.dueAt.toISOString())
+          .toSorted(),
+      ).toEqual(["2026-10-16T18:00:00.000Z", "2026-10-16T20:30:00.000Z"]);
+      expect(all.filter((r) => !r.dedupeKey.includes(":split:"))).toHaveLength(2);
+      expect(await sync("2026-10-16T18:00:15Z")).toMatchObject({ created: 0 });
+      expect(await cycle("2026-10-16T18:00:15Z")).toMatchObject({ sent: 1 });
+      expect(sent[0]).toContain("split-day reminder");
+      await services.events.cancel(owner, event.id);
+      await sync("2026-10-16T18:01:00Z");
+      expect((await rows()).some((r) => r.status === "scheduled")).toBe(false);
+    });
+
     it("creates deadline reminders ahead of a task, and creates nothing new on a repeat", async () => {
       await addTask();
       const first = await sync("2026-10-14T15:00:00.000Z");
@@ -88,6 +165,117 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       expect(all).toHaveLength(1);
       expect(all[0]?.dueAt.toISOString()).toBe("2026-10-16T21:00:00.000Z");
       expect(all[0]?.message).toContain("Chemistry lab report");
+    });
+
+    it("adds configurable split alerts alongside the original warning, and delivers a due split after polling", async () => {
+      const task = await addTask("Late assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      const scheduled = (await rows()).filter((r) => r.subjectId === task.id);
+      expect(scheduled.map((r) => r.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-16T20:00:00.000Z",
+        "2026-10-16T23:30:00.000Z",
+        "2026-10-17T03:59:00.000Z",
+      ]);
+      expect(await sync("2026-10-16T20:00:15Z", { splitReminders: split })).toMatchObject({
+        created: 0,
+        canceled: 0,
+      });
+      expect(await cycle("2026-10-16T20:00:15Z", { splitReminders: split })).toMatchObject({
+        sent: 1,
+      });
+      expect(sent[0]).toContain("split-day check-in");
+      expect(await sync("2026-10-16T20:01:00Z", { splitReminders: split })).toMatchObject({
+        created: 0,
+      });
+
+      await sync("2026-10-16T20:02:00Z", { splitReminders: { enabled: false, count: 2 } });
+      const after = await rows();
+      expect(after.filter((r) => r.status === "scheduled")).toEqual([
+        expect.objectContaining({ dedupeKey: expect.stringContaining("lead1h") }),
+      ]);
+      expect(
+        after.filter((r) => r.dedupeKey.includes(":split:") && r.status === "canceled"),
+      ).toHaveLength(1);
+      expect(await sync("2026-10-16T20:03:00Z", { splitReminders: split })).toMatchObject({
+        created: 1,
+      });
+      expect((await rows()).filter((r) => r.status === "scheduled")).toHaveLength(2);
+      expect((await rows()).filter((r) => r.status === "sent")).toHaveLength(1);
+    });
+
+    it("reschedules split alerts on deadline/count changes and cancels them on completion", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 2 } });
+      await services.tasks.update(owner, task.id, { dueAt: "2026-10-18T04:59:00Z" });
+      await sync("2026-10-16T12:00:15Z", { splitReminders: { enabled: true, count: 5 } });
+      const after = await rows();
+      expect(
+        after.filter((r) => r.status === "scheduled" && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(5);
+      expect(after.filter((r) => r.status === "canceled")).toHaveLength(3);
+      await services.tasks.complete(owner, task.id);
+      await sync("2026-10-16T12:01:00Z", { splitReminders: { enabled: true, count: 5 } });
+      expect((await rows()).filter((r) => r.status === "scheduled")).toEqual([]);
+    });
+
+    it("does not replay missed splits or deliver them the morning after their awake window", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      await cycle("2026-10-17T12:00:00Z", { splitReminders: split });
+      expect(sent.some((text) => text.includes("split-day check-in"))).toBe(false);
+      expect(
+        (await rows())
+          .filter((r) => r.dedupeKey.includes(":split:"))
+          .every((r) => r.status === "skipped"),
+      ).toBe(true);
+    });
+
+    it("expires retries relative to the original split slot rather than the retry time", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      outcome = () => ({ ok: false, reason: "rate_limited", retryAfterMs: 40 * 60_000 });
+      expect(await cycle("2026-10-16T20:00:00Z", { splitReminders: split })).toMatchObject({
+        retrying: 1,
+      });
+      outcome = () => ({ ok: true });
+      expect(await cycle("2026-10-16T20:40:00Z", { splitReminders: split })).toMatchObject({
+        sent: 0,
+        skipped: 1,
+      });
+      expect(sent).toEqual([]);
+    });
+
+    it("does not let a missed split suppress the original deadline warning", async () => {
+      const task = await addTask("Assignment", "2026-10-16T22:00:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 10 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      await cycle("2026-10-16T22:01:00Z", { splitReminders: split });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain("due in 1 hour");
+      expect(sent[0]).not.toContain("split-day");
+    });
+
+    it("adds split alerts to date-only deadlines without replacing their morning warning", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Worksheet",
+        dueAt: "2026-10-16T00:00:00Z",
+        dueDateOnly: true,
+      });
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 5 } });
+      const all = await rows();
+      expect(all.filter((r) => r.dedupeKey.includes(":split:"))).toHaveLength(5);
+      expect(all.find((r) => r.dedupeKey.includes(":date:"))?.dueAt.toISOString()).toBe(
+        "2026-10-16T14:00:00.000Z",
+      );
     });
 
     it("treats a date-only deadline as the end of that local day", async () => {

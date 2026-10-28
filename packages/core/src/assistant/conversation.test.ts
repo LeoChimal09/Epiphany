@@ -27,6 +27,7 @@ async function fixture(response: unknown, savedNotes: unknown[] = []) {
   const services = {
     tasks,
     notes,
+    events: { list: vi.fn(async () => []) },
     categories: { list: vi.fn(async () => []) },
     preferences: { list: vi.fn(async () => []) },
   } as unknown as Services;

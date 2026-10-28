@@ -11,6 +11,7 @@ import {
   markSent,
   markSkipped,
   releaseUntil,
+  eventAcknowledged,
 } from "./store";
 
 export type DeliveryResult =
@@ -21,7 +22,7 @@ export type DeliveryResult =
   | { ok: false; reason: "blocked" | "rate_limited" | "error"; retryAfterMs?: number };
 
 export interface ReminderDelivery {
-  send(text: string): Promise<DeliveryResult>;
+  send(text: string, reminders?: Reminder[]): Promise<DeliveryResult>;
 }
 
 export interface CycleReport {
@@ -49,14 +50,36 @@ async function subjectActive(db: Database, reminder: Reminder, now: Date): Promi
   }
   if (reminder.subjectType === "event") {
     const [event] = await db
-      .select({ status: events.status, endsAt: events.endsAt })
+      .select({ status: events.status, endsAt: events.endsAt, version: events.version })
       .from(events)
       .where(and(eq(events.id, reminder.subjectId), eq(events.ownerId, reminder.ownerId)));
     return (
-      event !== undefined && event.status === "scheduled" && event.endsAt.getTime() > now.getTime()
+      event !== undefined &&
+      event.status === "scheduled" &&
+      event.endsAt.getTime() > now.getTime() &&
+      !(await eventAcknowledged(db, reminder.ownerId, reminder.subjectId, event.version))
     );
   }
   return true;
+}
+
+async function splitEnabled(
+  db: Database,
+  reminder: Reminder,
+  settings: ReminderSettings,
+): Promise<boolean> {
+  const table = reminder.subjectType === "task" ? tasks : events;
+  const [subject] = await db
+    .select({ count: table.splitReminderCount })
+    .from(table)
+    .where(and(eq(table.id, reminder.subjectId!), eq(table.ownerId, reminder.ownerId)));
+  if (!subject) return false;
+  return (
+    (subject.count ??
+      (reminder.subjectType === "task" && settings.splitReminders.enabled
+        ? settings.splitReminders.count
+        : 0)) > 0
+  );
 }
 
 // One pass of the reminder service: handle jobs interrupted by a restart, claim what is due, decide
@@ -93,11 +116,13 @@ export async function runReminderCycle(options: {
   if (claimed.length === 0) return report;
 
   const newestTaskReminder = new Map<string, Reminder>();
+  const taskGroup = (reminder: Reminder) =>
+    `${reminder.subjectId}:${reminder.dedupeKey.includes(":split:") ? "split" : "deadline"}`;
   for (const reminder of claimed) {
     if (reminder.kind !== "task_deadline" || !reminder.subjectId) continue;
-    const current = newestTaskReminder.get(reminder.subjectId);
+    const current = newestTaskReminder.get(taskGroup(reminder));
     if (!current || reminder.dueAt.getTime() > current.dueAt.getTime()) {
-      newestTaskReminder.set(reminder.subjectId, reminder);
+      newestTaskReminder.set(taskGroup(reminder), reminder);
     }
   }
   const superseded = new Set(
@@ -106,7 +131,7 @@ export async function runReminderCycle(options: {
         (reminder) =>
           reminder.kind === "task_deadline" &&
           reminder.subjectId !== null &&
-          newestTaskReminder.get(reminder.subjectId)?.id !== reminder.id,
+          newestTaskReminder.get(taskGroup(reminder))?.id !== reminder.id,
       )
       .map((reminder) => reminder.id),
   );
@@ -124,6 +149,22 @@ export async function runReminderCycle(options: {
   const toSend: { reminder: Reminder; late: boolean }[] = [];
   for (const reminder of claimed) {
     if (superseded.has(reminder.id)) continue;
+    const split = reminder.dedupeKey.includes(":split:");
+    if (split) {
+      // The persisted awake cutoff keeps retries from rolling into the next morning.
+      const parts = reminder.dedupeKey.split(":");
+      const cutoff = Number(parts.at(-2));
+      const originalTime = Number(parts.at(-1));
+      if (
+        !(await splitEnabled(db, reminder, settings)) ||
+        now.getTime() >= cutoff ||
+        now.getTime() - originalTime > settings.graceMinutes * 60_000
+      ) {
+        await markSkipped(db, reminder.id, "split reminder window ended");
+        report.skipped++;
+        continue;
+      }
+    }
     const decision = decideDelivery({
       reminder: {
         kind: reminder.kind,
@@ -141,6 +182,11 @@ export async function runReminderCycle(options: {
       await markSkipped(db, reminder.id, decision.reason.replace("_", " "));
       report.skipped++;
     } else if (decision.action === "defer") {
+      if (split) {
+        await markSkipped(db, reminder.id, "split reminder reached quiet hours");
+        report.skipped++;
+        continue;
+      }
       await releaseUntil(db, reminder.id, decision.until, {
         countAttempt: false,
         detail: "held for quiet hours",
@@ -186,7 +232,7 @@ export async function runReminderCycle(options: {
   async function deliver(group: Reminder[], text: string, detail?: string): Promise<boolean> {
     let result: DeliveryResult;
     try {
-      result = await delivery.send(text);
+      result = await delivery.send(text, group);
     } catch {
       result = { ok: false, reason: "error" };
     }

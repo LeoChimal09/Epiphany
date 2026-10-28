@@ -86,6 +86,101 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it("saves split reminders with the task rather than as a separate type or workspace setting", async () => {
+    mocks.taskCreate.mockResolvedValue(task);
+    expect(
+      await addDashboardTask(
+        form({
+          title: "Assignment",
+          dueAt: "2099-10-28T23:59:00Z",
+          splitReminderMode: "custom",
+          splitReminderCount: "5",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(mocks.taskCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        splitReminderCount: 5,
+      }),
+    );
+  });
+
+  it("saves an event's split count alongside its original calendar timing", async () => {
+    expect(
+      await addDashboardEvent(
+        form({
+          title: "Workout",
+          date: "2099-10-28",
+          startTime: "18:00",
+          endTime: "19:00",
+          splitReminderMode: "custom",
+          splitReminderCount: "2",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(mocks.eventCreate).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        splitReminderCount: 2,
+      }),
+    );
+  });
+
+  it.each(["0", "-1", "1.5", "101", "bad"])(
+    "rejects invalid split count %s before saving the item",
+    async (count) => {
+      expect(
+        await addDashboardTask(
+          form({
+            title: "Assignment",
+            splitReminderMode: "custom",
+            splitReminderCount: count,
+          }),
+        ),
+      ).toMatchObject({ ok: false });
+      expect(mocks.taskCreate).not.toHaveBeenCalled();
+      expect(
+        await addDashboardEvent(
+          form({
+            title: "Workout",
+            date: "2099-10-28",
+            startTime: "18:00",
+            endTime: "19:00",
+            splitReminderMode: "custom",
+            splitReminderCount: count,
+          }),
+        ),
+      ).toMatchObject({ ok: false });
+      expect(mocks.eventCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("can edit an item's split count, disable it or restore the workspace default", async () => {
+    mocks.taskUpdate.mockResolvedValue({ task, changed: true });
+    for (const [mode, count] of [
+      ["custom", 5],
+      ["off", 0],
+      ["default", null],
+    ] as const) {
+      expect(
+        await editDashboardTask(
+          "task-id",
+          form({
+            expectedVersion: "1",
+            splitReminderMode: mode,
+            splitReminderCount: "5",
+          }),
+        ),
+      ).toMatchObject({ ok: true });
+      expect(mocks.taskUpdate).toHaveBeenLastCalledWith(
+        principal,
+        "task-id",
+        expect.objectContaining({ splitReminderCount: count }),
+      );
+    }
+  });
+
   it("loads upcoming events within the bounded date range", async () => {
     const startsAt = new Date("2026-10-27T17:00:00.000Z");
     const endsAt = new Date("2026-10-27T18:00:00.000Z");

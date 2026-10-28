@@ -41,6 +41,7 @@ import {
   type PendingTranscript,
 } from "./voice-discord";
 import { createReminderRunner } from "./reminders-discord";
+import { reminderIdFromMessage, withDeliveredReminders } from "./reminder-context";
 import {
   fitDiscordMessage,
   channelAnswerNotice,
@@ -245,28 +246,9 @@ export async function startDiscordGateway(
     // Replies to a reminder ("done", "snooze", "not going") are understood in its context: the
     // The private-channel conversation remembers which reminder and which task or event it was about.
     onDelivered: (delivered, { channelId }) => {
-      const reminder = delivered.at(-1);
-      if (!channelId || !reminder || delivered.length !== 1) return;
-      const title = /"([^"]{1,200})"/.exec(reminder.message)?.[1] ?? "that reminder";
+      if (!channelId) return;
       const state = conversations.get(channelId) ?? emptyConversation();
-      const subjectType =
-        reminder.subjectType === "task" || reminder.subjectType === "event"
-          ? reminder.subjectType
-          : null;
-      conversations.set(channelId, {
-        ...state,
-        lastReminder: {
-          reminderId: reminder.id,
-          kind: reminder.kind,
-          subjectType,
-          subjectId: reminder.subjectId,
-          title,
-        },
-        listed:
-          subjectType === "task" && reminder.subjectId
-            ? [{ id: reminder.subjectId, title, due: null }]
-            : state.listed,
-      });
+      conversations.set(channelId, withDeliveredReminders(state, delivered, clock()));
     },
   });
   // Keeps the overview channels in step with the records, whichever side changed them.
@@ -415,7 +397,31 @@ export async function startDiscordGateway(
     }
     if (!text) return;
 
-    const state = conversations.get(message.channelId) ?? emptyConversation();
+    let state = conversations.get(message.channelId) ?? emptyConversation();
+    // Explicit replies bind to that exact bot message, including after a worker restart.
+    // Never use another channel's message or a user-supplied marker as authority.
+    if (message.reference?.messageId || !conversations.has(message.channelId)) {
+      const referenced = message.reference?.messageId
+        ? await message.fetchReference().catch(() => null)
+        : ((await message.channel.messages.fetch({ limit: 20 }))
+            .filter((item) => item.author.id === epiUserId && reminderIdFromMessage(item.content))
+            .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+            .first() ?? null);
+      if (message.reference) state = { ...state, lastReminder: null, listed: [] };
+      if (referenced?.author.id === epiUserId && referenced.channelId === message.channelId) {
+        const id = reminderIdFromMessage(referenced.content);
+        const reminder = id
+          ? await createServices(database.db, { clock }).reminders.get(principal, id)
+          : null;
+        if (
+          reminder?.status === "sent" &&
+          reminder.sentAt &&
+          clock().getTime() - reminder.sentAt.getTime() <= 60 * 60_000
+        ) {
+          state = withDeliveredReminders(state, [reminder], reminder.sentAt);
+        }
+      }
+    }
     const budget = createBudget(
       {
         monthlyLimitUsd: aiConfig.monthlyBudgetUsd,

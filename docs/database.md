@@ -89,6 +89,20 @@ window: manual edits bypass the history table and the `version`/`updated_at` rul
 
 ## Recovering from a partly applied migration
 
+### Original 0011 checksum
+
+`0011_nebulous_outlaw_kid.sql` must remain the original single ALTER statement with no
+trailing newline (SHA-256 `242300bca7673f5399a360ad8ba0682f048d3db4d39d5e14c9dc8a793a733de3`).
+The task-type backfill belongs in the later `0013_backfill_task_types` migration,
+not in 0011. If your database recorded this original hash, restoring that file allows
+normal migration checks to pass; do not edit the database's migration-history hash.
+Migration 0012 adds the item-level split-reminder columns required by the dashboard.
+Run pending migrations before restarting the updated dashboard and worker.
+
+If a database instead applied the subsequently rewritten 0011 (with the backfill embedded),
+stop and compare its recorded hash/schema with that release before recovery. The runner
+still rejects that different history rather than silently accepting a modified migration.
+
 If `db:migrate` fails, it prints the migration tag and the failing statement ("statement 2 of
 5"). The migration is **not** recorded, but earlier statements in it may have taken effect.
 

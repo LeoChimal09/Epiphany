@@ -34,6 +34,7 @@ export function taskForDashboard(task: Task): DashboardTask {
     archivedAt: task.archivedAt?.toISOString() ?? null,
     createdAt: task.createdAt.toISOString(),
     version: task.version,
+    splitReminderCount: task.splitReminderCount,
   };
 }
 
