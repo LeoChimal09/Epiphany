@@ -99,9 +99,17 @@ normal migration checks to pass; do not edit the database's migration-history ha
 Migration 0012 adds the item-level split-reminder columns required by the dashboard.
 Run pending migrations before restarting the updated dashboard and worker.
 
-If a database instead applied the subsequently rewritten 0011 (with the backfill embedded),
-stop and compare its recorded hash/schema with that release before recovery. The runner
-still rejects that different history rather than silently accepting a modified migration.
+Railway also applied the verified release `cec7de7` version of 0011, containing the same ALTER
+plus that backfill (SHA-256 `bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a`).
+The runner recognizes **only** that exact alternate checksum for the original 0011 tag,
+timestamp, and current file hash. It verifies `tasks.task_type` is
+`enum('task','todo') NOT NULL DEFAULT 'task'` before allowing pending migrations.
+It preserves the recorded hash, skips the already-applied ALTER, and applies 0012/0013
+normally; repeating the backfill is idempotent. Local databases with the original checksum
+continue through the same pending migrations. Keep the migration pre-deploy command enabled:
+repeated runs safely skip applied migrations.
+
+All other checksum changes still block deployment and require investigation.
 Checksum-mismatch errors include the database SHA-256, current file SHA-256, and migration
 timestamp. Share those lines and the deployment commit when investigating a failed Railway
 pre-deploy step; no database credentials or personal records are needed.

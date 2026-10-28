@@ -97,6 +97,44 @@ describe("diffMigrations (no database)", () => {
     expect(status.pending).toEqual(["0000_a"]);
     expect(status.problems.join()).toMatch(/out of order/);
   });
+
+  it("recognizes the verified released 0011 without replaying it or hiding later migrations", () => {
+    const files = loadMigrationFiles(realFolder);
+    const applied = files
+      .filter((entry) => entry.tag !== "0013_backfill_task_types")
+      .map((entry) => ({
+        when: entry.when,
+        hash:
+          entry.tag === "0011_nebulous_outlaw_kid"
+            ? "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a"
+            : entry.hash,
+      }));
+    const status = diffMigrations(files, applied);
+    expect(status.problems).toEqual([]);
+    expect(status.applied).toContain("0011_nebulous_outlaw_kid");
+    expect(status.pending).toEqual(["0013_backfill_task_types"]);
+  });
+
+  it.each([{ tag: "other_migration" }, { when: 1793049246427 }, { hash: "changed-current-file" }])(
+    "rejects a legacy checksum against a different migration identity: %j",
+    (change) => {
+      const original = loadMigrationFiles(realFolder).find(
+        (entry) => entry.tag === "0011_nebulous_outlaw_kid",
+      )!;
+      const changed = { ...original, ...change };
+      const status = diffMigrations(
+        [changed],
+        [
+          {
+            when: changed.when,
+            hash: "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a",
+          },
+        ],
+      );
+      expect(status.problems.join()).toMatch(/was modified/);
+      expect(status.pending).toEqual([changed.tag]);
+    },
+  );
 });
 
 describe("loadMigrationFiles", () => {
@@ -220,6 +258,66 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
       split_reminder_count: null,
     });
     expect((await runMigrations(pool, realFolder)).applied).toEqual([]);
+  });
+
+  async function installReleased0011(): Promise<void> {
+    const all = loadMigrationFiles(realFolder);
+    const index = all.findIndex((entry) => entry.tag === "0011_nebulous_outlaw_kid");
+    await runMigrations(pool, folderUpTo(index));
+    for (const statement of UPGRADE_SEEDS["0010_task_priority"]!) await pool.query(statement);
+    const folder = folderUpTo(index + 1);
+    const original = fs.readFileSync(path.join(realFolder, "0011_nebulous_outlaw_kid.sql"), "utf8");
+    const backfill = fs.readFileSync(path.join(realFolder, "0013_backfill_task_types.sql"), "utf8");
+    fs.writeFileSync(
+      path.join(folder, "0011_nebulous_outlaw_kid.sql"),
+      `${original}\n--> statement-breakpoint\n${backfill.trimEnd()}`,
+    );
+    expect(loadMigrationFiles(folder).at(-1)?.hash).toBe(
+      "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a",
+    );
+    await runMigrations(pool, folder);
+  }
+
+  it("upgrades the released Railway 0011 without rewriting history or changing existing tasks", async () => {
+    await installReleased0011();
+    const [before] = await pool.query<RowDataPacket[]>("SELECT * FROM tasks ORDER BY id");
+    const [historyBefore] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM \`${MIGRATIONS_TABLE}\` ORDER BY id`,
+    );
+    const status = await getMigrationStatus(pool, realFolder);
+    expect(status.problems).toEqual([]);
+    expect(status.pending).toEqual(["0012_simple_patriot", "0013_backfill_task_types"]);
+    expect((await runMigrations(pool, realFolder)).applied).toEqual(status.pending);
+    const [after] = await pool.query<RowDataPacket[]>("SELECT * FROM tasks ORDER BY id");
+    expect(
+      after.map(({ split_reminder_count, ...row }) => {
+        expect(split_reminder_count).toBeNull();
+        return row;
+      }),
+    ).toEqual(before);
+    const [historyAfter] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM \`${MIGRATIONS_TABLE}\` ORDER BY id`,
+    );
+    expect(historyAfter.slice(0, historyBefore.length)).toEqual(historyBefore);
+    expect(historyAfter).toHaveLength(historyBefore.length + 2);
+    expect((await getMigrationStatus(pool, realFolder)).problems).toEqual([]);
+    expect((await runMigrations(pool, realFolder)).applied).toEqual([]);
+  });
+
+  it("blocks the released legacy checksum if its schema does not match", async () => {
+    await installReleased0011();
+    await pool.query(
+      "ALTER TABLE tasks MODIFY task_type enum('task','todo') NOT NULL DEFAULT 'todo'",
+    );
+    expect((await getMigrationStatus(pool, realFolder)).problems.join()).toContain(
+      "tasks.task_type does not match",
+    );
+    await expect(runMigrations(pool, realFolder)).rejects.toThrow(/tasks.task_type does not match/);
+    const [columns] = await pool.query<RowDataPacket[]>(
+      "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() " +
+        "AND table_name = 'tasks' AND column_name = 'split_reminder_count'",
+    );
+    expect(columns).toEqual([]);
   });
 
   it("refuses to run when an applied migration file was modified", async () => {
