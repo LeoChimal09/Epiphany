@@ -80,8 +80,11 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
         splitReminderCount: 2,
       });
       expect(updated.task.splitReminderCount).toBe(2);
-      expect((await history(task.id)).at(-1)?.after).toMatchObject({
+      const updates = (await history(task.id)).filter((entry) => entry.action === "task.update");
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.after).toMatchObject({
         fields: ["splitReminderCount"],
+        values: { splitReminderCount: { from: 5, to: 2 } },
       });
       await expect(
         services.tasks.update(owner, task.id, {
