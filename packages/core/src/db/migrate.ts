@@ -90,7 +90,10 @@ export function diffMigrations(
       problems.push(`Applied migration (id ${entry.when}) is not in the migrations folder.`);
     } else if (file.hash !== entry.hash) {
       problems.push(
-        `Applied migration ${file.tag} was modified after it was applied. Revert the file and add a new corrective migration instead.`,
+        `Applied migration ${file.tag} was modified after it was applied. ` +
+          `Database SHA-256: ${entry.hash}; file SHA-256: ${file.hash}; migration timestamp: ${entry.when}. ` +
+          "Stop and compare the recorded release before recovery (docs/database.md). " +
+          "Do not overwrite migration-history hashes or delete migration rows.",
       );
     }
   }

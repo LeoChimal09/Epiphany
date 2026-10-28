@@ -74,6 +74,11 @@ describe("diffMigrations (no database)", () => {
   it("flags an applied migration whose file changed", () => {
     const status = diffMigrations([a], [{ when: 1000, hash: "different" }]);
     expect(status.problems.join()).toMatch(/0000_a was modified/);
+    expect(status.problems.join()).toContain(
+      "Database SHA-256: different; file SHA-256: ha; migration timestamp: 1000.",
+    );
+    expect(status.problems.join()).toContain("Do not overwrite migration-history hashes");
+    expect(status.pending).toEqual(["0000_a"]);
   });
 
   it("flags applied history that is missing from the folder", () => {

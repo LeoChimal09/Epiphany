@@ -102,6 +102,9 @@ Run pending migrations before restarting the updated dashboard and worker.
 If a database instead applied the subsequently rewritten 0011 (with the backfill embedded),
 stop and compare its recorded hash/schema with that release before recovery. The runner
 still rejects that different history rather than silently accepting a modified migration.
+Checksum-mismatch errors include the database SHA-256, current file SHA-256, and migration
+timestamp. Share those lines and the deployment commit when investigating a failed Railway
+pre-deploy step; no database credentials or personal records are needed.
 
 If `db:migrate` fails, it prints the migration tag and the failing statement ("statement 2 of
 5"). The migration is **not** recorded, but earlier statements in it may have taken effect.
