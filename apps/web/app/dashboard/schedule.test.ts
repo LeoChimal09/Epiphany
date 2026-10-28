@@ -55,7 +55,9 @@ const block = (id: string, from: string, to: string) => ({
 const task = (over: Partial<DashboardTask>): DashboardTask => ({
   id: "task",
   categoryId: "inbox",
+  taskType: "task",
   title: "Task",
+  priority: "minor",
   details: null,
   sourceText: null,
   reviewNote: null,
@@ -221,6 +223,65 @@ describe("a day's timeline", () => {
     expect(lone.entries[0]).toMatchObject({ column: 0, columns: 1 });
   });
 
+  it("keeps task deadlines separate from scheduled event duration and conflicts", () => {
+    const day = buildDay(
+      "2026-10-14",
+      timelineItems(
+        schedule({
+          events: [event("appointment", "2026-10-14T16:00", "2026-10-14T16:30")],
+        }),
+      ),
+      [task({ id: "due", dueAt: iso("2026-10-14T17:00"), estimatedMinutes: 90 })],
+      CHICAGO,
+    );
+    expect(day.deadlines.map((entry) => entry.id)).toEqual(["due"]);
+    expect(day.entries).toHaveLength(1);
+    expect(day.entries[0]).toMatchObject({ startMinute: 960, endMinute: 990 });
+    expect(day.conflictCount).toBe(0);
+  });
+
+  it("does not put no-deadline todos on the calendar", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [task({ id: "snack", title: "Buy a snack", dueAt: null, estimatedMinutes: null })],
+      CHICAGO,
+    );
+    expect(day.deadlines).toEqual([]);
+    expect(day.deadlineEntries).toEqual([]);
+    expect(day.entries).toEqual([]);
+  });
+
+  it("lays nearby deadline markers side by side and counts their deadline conflict", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [
+        task({ id: "first", dueAt: iso("2026-10-14T16:00") }),
+        task({ id: "second", dueAt: iso("2026-10-14T16:10") }),
+      ],
+      CHICAGO,
+    );
+    expect(day.deadlineEntries).toMatchObject([
+      { task: { id: "first" }, dueMinute: 960, column: 0, columns: 2, conflict: true },
+      { task: { id: "second" }, dueMinute: 970, column: 1, columns: 2, conflict: true },
+    ]);
+    expect(day.conflictCount).toBe(2);
+  });
+
+  it("does not mark deadline markers far apart as conflicts", () => {
+    const day = buildDay(
+      "2026-10-14",
+      [],
+      [
+        task({ id: "first", dueAt: iso("2026-10-14T16:00") }),
+        task({ id: "later", dueAt: iso("2026-10-14T18:00") }),
+      ],
+      CHICAGO,
+    );
+    expect(day.deadlineEntries.every((entry) => !entry.conflict)).toBe(true);
+  });
+
   it("counts conflicts, planned work, and due effort for the day", () => {
     expect(day.conflictCount).toBe(2);
     expect(day.plannedMinutes).toBe(60);
@@ -274,7 +335,7 @@ describe("a day's timeline", () => {
 });
 
 describe("formatting and bounds", () => {
-  it("widens hour bounds to fit early and late items", () => {
+  it("shows the full day and widens bounds to fit early and late items", () => {
     const early = buildDay(
       "2026-10-14",
       timelineItems(schedule({ blocks: [block("dawn", "2026-10-14T05:30", "2026-10-14T06:30")] })),
@@ -287,8 +348,8 @@ describe("formatting and bounds", () => {
       [],
       CHICAGO,
     );
-    expect(hourBounds([])).toEqual({ start: 7, end: 21 });
-    expect(hourBounds([early, late])).toEqual({ start: 5, end: 23 });
+    expect(hourBounds([])).toEqual({ start: 0, end: 24 });
+    expect(hourBounds([early, late], { start: 7, end: 21 })).toEqual({ start: 5, end: 23 });
   });
 
   it("reports the current minute only on today's date", () => {

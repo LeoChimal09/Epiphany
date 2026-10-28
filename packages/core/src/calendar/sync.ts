@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { newId, recordAction, type Actor } from "../db/domain";
 import {
@@ -10,12 +10,13 @@ import {
   tasks,
   workBlocks,
   type CalendarAccount,
+  type CalendarEvent,
   type CalendarEventRef,
   type CalendarRefState,
   type SyncedCalendar,
   type WorkBlock,
 } from "../db/schema";
-import { localWallToUtc } from "../planning/time";
+import { addDays, dateKeyOf, localWallToUtc } from "../planning/time";
 import { getAccessToken, markNeedsReauth, runtimeNow, type CalendarRuntime } from "./access";
 import {
   createGoogleCalendarClient,
@@ -50,6 +51,24 @@ const BLOCK_DESCRIPTION =
   "Planned by Epiphany. Change this block in Epiphany; edits made here are not copied back and will be flagged as a conflict.";
 
 export const syncKeyFor = (blockId: string) => `wb:${blockId}`;
+const DEADLINE_SYNC_PREFIX = "deadline:";
+const EVENT_SYNC_PREFIX = "event:";
+const eventSyncKeyFor = (eventId: string) => `${EVENT_SYNC_PREFIX}${eventId}`;
+const eventIdFromSyncKey = (key: string | null) =>
+  key?.startsWith(EVENT_SYNC_PREFIX) ? key.slice(EVENT_SYNC_PREFIX.length) : null;
+const calendarEventIdFor = (eventId: string) => `epie${eventId.replaceAll("-", "").toLowerCase()}`;
+const deadlineSyncKeyFor = (taskId: string, version: number) =>
+  `${DEADLINE_SYNC_PREFIX}${taskId}:v${version}`;
+const deadlineEventIdFor = (taskId: string, version: number) =>
+  `epid${taskId.replaceAll("-", "").toLowerCase()}v${version}`;
+const deadlineVersionFromKey = (key: string | null) => {
+  const match = key?.match(/:v(\d+)$/);
+  return match ? Number(match[1]) : null;
+};
+const taskIdFromDeadlineKey = (key: string | null) => {
+  if (!key?.startsWith(DEADLINE_SYNC_PREFIX)) return null;
+  return key.slice(DEADLINE_SYNC_PREFIX.length).split(":")[0] ?? null;
+};
 // Google accepts client-chosen event IDs made of a-v and 0-9. A UUID's hex digits fit, so a block
 // always maps to the same event ID: creating it twice cannot produce two events.
 export const eventIdFor = (blockId: string) => `epi${blockId.replace(/-/g, "").toLowerCase()}`;
@@ -112,7 +131,7 @@ interface Ctx {
 const SYSTEM = (ownerId: string, now: Date): Actor => ({ ownerId, source: "worker", now });
 
 // Syncs one connected account: discovers calendars (and the dedicated Epiphany calendar), reads the
-// selected calendars into local events, then mirrors Epiphany work blocks to the Epiphany
+// selected calendars into local events, then mirrors task deadlines and work blocks to the Epiphany
 // calendar. Safe to run repeatedly; a second run with no changes writes nothing. Never throws for
 // provider problems: they are recorded on the account/calendar and in the returned report.
 export async function syncAccount(
@@ -179,7 +198,10 @@ export async function syncAccount(
       .from(calendarAccounts)
       .where(eq(calendarAccounts.id, accountId));
     if (fresh?.status === "connected" && canWrite(fresh.scopes)) {
-      await pushWorkBlocks({ ...ctx, account: fresh });
+      const writeCtx = { ...ctx, account: fresh };
+      await pushWorkBlocks(writeCtx);
+      await pushTaskDeadlines(writeCtx);
+      await pushScheduledEvents(writeCtx);
     }
     if (report.errors.length === 0) {
       await rt.db
@@ -786,22 +808,31 @@ async function cancelMissing(
 
 // An event Epiphany owns was seen at the provider. If its version differs from the one Epiphany
 // last wrote, someone edited it elsewhere: flag it, never overwrite. If it was deleted there, keep
-// the work block and say so.
+// the local item and say so.
 async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent): Promise<void> {
   const { rt, report, now } = ctx;
   if (["removed", "detached", "conflict", "remote_deleted", "uncertain"].includes(ref.syncState)) {
     return;
   }
+  const entityLabel = ref.syncKey?.startsWith(EVENT_SYNC_PREFIX)
+    ? "event"
+    : ref.syncKey?.startsWith(DEADLINE_SYNC_PREFIX)
+      ? "task deadline"
+      : "work block";
   if (ev.status === "cancelled") {
     await rt.db
       .update(calendarEventRefs)
       .set({
         syncState: "remote_deleted",
-        lastError: "Deleted in Google Calendar. The work block is still planned in Epiphany.",
+        lastError: `Deleted in Google Calendar. The ${entityLabel} is still active in Epiphany.`,
         lastSyncedAt: now,
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
+    if (entityLabel === "event")
+      report.errors.push(
+        `Deleted in Google Calendar. The ${entityLabel} is still active in Epiphany.`,
+      );
     return;
   }
   if (ref.etag && ev.etag && ev.etag !== ref.etag) {
@@ -809,12 +840,15 @@ async function applyOwnRemote(ctx: Ctx, ref: CalendarEventRef, ev: GoogleEvent):
       .update(calendarEventRefs)
       .set({
         syncState: "conflict",
-        lastError:
-          "Changed in Google Calendar since Epiphany last wrote it. Nothing was overwritten.",
+        lastError: `Changed in Google Calendar since Epiphany last wrote it. The ${entityLabel} was not overwritten.`,
         lastSyncedAt: now,
       })
       .where(eq(calendarEventRefs.id, ref.id));
     report.conflicts++;
+    if (entityLabel === "event")
+      report.errors.push(
+        `Changed in Google Calendar since Epiphany last wrote it. The ${entityLabel} was not overwritten.`,
+      );
   }
 }
 
@@ -836,7 +870,7 @@ export function assertOwnWrite(
   }
 }
 
-function desiredBody(block: WorkBlock, title: string, zone: string): GoogleEventBody {
+function desiredWorkBlockBody(block: WorkBlock, title: string, zone: string): GoogleEventBody {
   return {
     id: eventIdFor(block.id),
     summary: title.slice(0, 300),
@@ -847,13 +881,70 @@ function desiredBody(block: WorkBlock, title: string, zone: string): GoogleEvent
   };
 }
 
+function desiredDeadlineBody(
+  task: {
+    id: string;
+    title: string;
+    dueAt: Date;
+    dueDateOnly: boolean;
+  },
+  zone: string,
+  generation: number,
+): GoogleEventBody {
+  const id = deadlineEventIdFor(task.id, generation);
+  const syncKey = deadlineSyncKeyFor(task.id, generation);
+  const common = {
+    id,
+    summary: `Due: ${task.title}`.slice(0, 300),
+    description: "Task deadline and estimated work time managed by Epiphany.",
+    extendedProperties: { private: { [EPIPHANY_KEY_PROPERTY]: syncKey } },
+  };
+  if (task.dueDateOnly) {
+    const date = task.dueAt.toISOString().slice(0, 10);
+    return { ...common, start: { date }, end: { date: addDays(date, 1) } };
+  }
+  return {
+    ...common,
+    start: { dateTime: task.dueAt.toISOString(), timeZone: zone },
+    end: { dateTime: new Date(task.dueAt.getTime() + 15 * 60_000).toISOString(), timeZone: zone },
+  };
+}
+
+function desiredScheduledEventBody(event: CalendarEvent): GoogleEventBody {
+  const common = {
+    id: calendarEventIdFor(event.id),
+    summary: event.title.slice(0, 300),
+    ...(event.location ? { location: event.location } : {}),
+    extendedProperties: {
+      private: { [EPIPHANY_KEY_PROPERTY]: eventSyncKeyFor(event.id) },
+    },
+  };
+  if (event.allDay) {
+    return {
+      ...common,
+      start: { date: dateKeyOf(event.startsAt, event.timezone) },
+      end: { date: dateKeyOf(event.endsAt, event.timezone) },
+    };
+  }
+  return {
+    ...common,
+    start: { dateTime: event.startsAt.toISOString(), timeZone: event.timezone },
+    end: { dateTime: event.endsAt.toISOString(), timeZone: event.timezone },
+  };
+}
+
 function sameContent(found: GoogleEvent, desired: GoogleEventBody): boolean {
-  const start = found.start?.dateTime ? Date.parse(found.start.dateTime) : NaN;
-  const end = found.end?.dateTime ? Date.parse(found.end.dateTime) : NaN;
+  const sameTime = (actual: GoogleEvent["start"], expected: GoogleEventBody["start"]) => {
+    if (actual?.date && expected.date) return actual.date === expected.date;
+    if (actual?.dateTime && expected.dateTime)
+      return Date.parse(actual.dateTime) === Date.parse(expected.dateTime);
+    return false;
+  };
   return (
     (found.summary ?? "") === desired.summary &&
-    start === Date.parse(desired.start.dateTime!) &&
-    end === Date.parse(desired.end.dateTime!)
+    (found.location ?? "") === (desired.location ?? "") &&
+    sameTime(found.start, desired.start) &&
+    sameTime(found.end, desired.end)
   );
 }
 
@@ -973,7 +1064,10 @@ async function pushWorkBlocks(ctx: Ctx): Promise<void> {
   }
 }
 
-async function ensureRef(ctx: PushCtx, block: WorkBlock): Promise<CalendarEventRef> {
+async function ensureRef(
+  ctx: PushCtx,
+  input: { externalId: string; syncKey: string; workBlockId?: string },
+): Promise<CalendarEventRef> {
   await ctx.rt.db
     .insert(calendarEventRefs)
     .ignore()
@@ -982,80 +1076,98 @@ async function ensureRef(ctx: PushCtx, block: WorkBlock): Promise<CalendarEventR
       ownerId: ctx.account.ownerId,
       accountId: ctx.account.id,
       calendarId: ctx.calendar.id,
-      externalId: eventIdFor(block.id),
+      externalId: input.externalId,
       ownership: "epiphany",
-      workBlockId: block.id,
-      syncKey: syncKeyFor(block.id),
+      ...(input.workBlockId ? { workBlockId: input.workBlockId } : {}),
+      syncKey: input.syncKey,
       syncState: "pending",
     });
   const [ref] = await ctx.rt.db
     .select()
     .from(calendarEventRefs)
-    .where(eq(calendarEventRefs.workBlockId, block.id));
+    .where(
+      and(
+        eq(calendarEventRefs.calendarId, ctx.calendar.id),
+        eq(calendarEventRefs.externalId, input.externalId),
+      ),
+    );
   if (!ref) throw new Error("Calendar reference was not saved.");
   return ref;
 }
 
-// Creates, updates, or removes one Epiphany event so that it matches one work block, without ever
-// duplicating it, overwriting an edit made elsewhere, or retrying an uncertain write blindly.
-async function syncBlock(
+// Mirrors one owned event without duplicating it, overwriting an edit made elsewhere, or retrying
+// an uncertain write blindly.
+async function syncOwnedEvent(
   ctx: PushCtx,
-  block: WorkBlock,
-  title: string,
-  existing: CalendarEventRef | null,
-  removing: boolean,
+  input: {
+    externalId: string;
+    syncKey: string;
+    desired: GoogleEventBody;
+    version: number;
+    entityLabel: string;
+    existing: CalendarEventRef | null;
+    removing: boolean;
+    workBlockId?: string;
+  },
 ): Promise<void> {
   const { client, calendar, report } = ctx;
   assertOwnWrite(ctx.account, calendar);
   const calendarId = calendar.externalId;
-  const eventId = eventIdFor(block.id);
-  const desired = desiredBody(block, title, ctx.ownerTimezone);
 
-  let ref = existing;
-  if (!ref) {
-    if (removing) return;
-    ref = await ensureRef(ctx, block);
+  let reference = input.existing;
+  if (!reference) {
+    if (input.removing) return;
+    reference = await ensureRef(ctx, {
+      externalId: input.externalId,
+      syncKey: input.syncKey,
+      ...(input.workBlockId ? { workBlockId: input.workBlockId } : {}),
+    });
   }
-  const live = ref;
+  const live = reference;
+  const { desired } = input;
 
   let etag = live.etag;
   const unconfirmed =
     live.syncState === "uncertain" || (live.syncState === "pending" && live.etag === null);
   if (unconfirmed) {
     // An earlier write may or may not have landed: look it up by its private key first.
-    const found = await client.findEventByKey(calendarId, syncKeyFor(block.id));
+    const found = await client.findEventByKey(calendarId, input.syncKey);
     if (found && found.status === "cancelled") {
-      await setRef(ctx, live, removing ? "removed" : "remote_deleted", {
-        lastError: removing
-          ? null
-          : "Deleted in Google Calendar. The work block is still planned in Epiphany.",
+      const message = `Deleted in Google Calendar. The ${input.entityLabel} is still active in Epiphany.`;
+      await setRef(ctx, live, input.removing ? "removed" : "remote_deleted", {
+        lastError: input.removing ? null : message,
         etag: found.etag ?? live.etag,
       });
-      if (!removing) report.conflicts++;
+      if (!input.removing) {
+        report.conflicts++;
+        if (input.entityLabel !== "work block") report.errors.push(message);
+      }
       return;
     }
     if (!found) {
       if (live.etag) {
-        await setRef(ctx, live, removing ? "removed" : "remote_deleted", {
-          lastError: removing
-            ? null
-            : "Deleted in Google Calendar. The work block is still planned in Epiphany.",
+        const message = `Deleted in Google Calendar. The ${input.entityLabel} is still active in Epiphany.`;
+        await setRef(ctx, live, input.removing ? "removed" : "remote_deleted", {
+          lastError: input.removing ? null : message,
         });
-        if (!removing) report.conflicts++;
+        if (!input.removing) {
+          report.conflicts++;
+          if (input.entityLabel !== "work block") report.errors.push(message);
+        }
         return;
       }
-      if (removing) {
+      if (input.removing) {
         await setRef(ctx, live, "removed", { lastError: null });
         return;
       }
       etag = null;
     } else if (live.etag === null || found.etag === live.etag) {
       etag = found.etag ?? null;
-    } else if (!removing && sameContent(found, desired)) {
+    } else if (!input.removing && sameContent(found, desired)) {
       await setRef(ctx, live, "synced", {
         etag: found.etag ?? null,
         remoteUpdatedAt: found.updated ? new Date(found.updated) : null,
-        syncedVersion: block.version,
+        syncedVersion: input.version,
         lastError: null,
       });
       return;
@@ -1077,30 +1189,29 @@ async function syncBlock(
   };
   const conflict = (message: string) => {
     report.conflicts++;
+    if (input.entityLabel !== "work block") report.errors.push(message);
     return setRef(ctx, live, "conflict", { lastError: message });
   };
   const adopt = (ev: GoogleEvent) =>
     setRef(ctx, live, "synced", {
       etag: ev.etag ?? null,
       remoteUpdatedAt: ev.updated ? new Date(ev.updated) : null,
-      syncedVersion: block.version,
+      syncedVersion: input.version,
       lastError: null,
     });
 
-  if (removing) {
+  if (input.removing) {
     if (!etag) {
       await setRef(ctx, live, "removed", { lastError: null });
       return;
     }
     try {
-      await client.deleteEvent(calendarId, eventId, etag);
+      await client.deleteEvent(calendarId, live.externalId, etag);
       await setRef(ctx, live, "removed", { lastError: null });
       report.pushed.removed++;
     } catch (error) {
       if (error instanceof GooglePreconditionError) {
-        await conflict(
-          "Changed in Google Calendar, so it was not deleted. Nothing was removed there.",
-        );
+        await conflict(`Changed in Google Calendar, so the ${input.entityLabel} was not deleted.`);
       } else if (error instanceof GoogleNotFoundError || error instanceof GoogleGoneError) {
         await setRef(ctx, live, "removed", { lastError: null });
       } else if (error instanceof UncertainWriteError) await uncertain();
@@ -1123,20 +1234,302 @@ async function syncBlock(
   }
 
   try {
-    await adopt(await client.updateEvent(calendarId, eventId, desired, etag));
+    await adopt(await client.updateEvent(calendarId, live.externalId, desired, etag));
     report.pushed.updated++;
   } catch (error) {
     if (error instanceof GooglePreconditionError) {
       await conflict(
-        "Changed in Google Calendar since Epiphany last wrote it. Nothing was overwritten.",
+        `Changed in Google Calendar since Epiphany last wrote it. The ${input.entityLabel} was not overwritten.`,
       );
     } else if (error instanceof GoogleNotFoundError || error instanceof GoogleGoneError) {
       report.conflicts++;
+      const message = `Deleted in Google Calendar. The ${input.entityLabel} is still active in Epiphany.`;
+      if (input.entityLabel !== "work block") report.errors.push(message);
       await setRef(ctx, live, "remote_deleted", {
-        lastError: "Deleted in Google Calendar. The work block is still planned in Epiphany.",
+        lastError: message,
       });
     } else if (error instanceof UncertainWriteError) await uncertain();
     else throw error;
+  }
+}
+
+async function syncBlock(
+  ctx: PushCtx,
+  block: WorkBlock,
+  title: string,
+  existing: CalendarEventRef | null,
+  removing: boolean,
+): Promise<void> {
+  await syncOwnedEvent(ctx, {
+    externalId: eventIdFor(block.id),
+    syncKey: syncKeyFor(block.id),
+    desired: desiredWorkBlockBody(block, title, ctx.ownerTimezone),
+    version: block.version,
+    entityLabel: "work block",
+    existing,
+    removing,
+    workBlockId: block.id,
+  });
+}
+
+async function syncScheduledEvent(
+  ctx: PushCtx,
+  event: CalendarEvent,
+  existing: CalendarEventRef | null,
+  removing: boolean,
+): Promise<void> {
+  const syncKey = eventSyncKeyFor(event.id);
+  await syncOwnedEvent(ctx, {
+    externalId: existing?.externalId ?? calendarEventIdFor(event.id),
+    syncKey,
+    desired: desiredScheduledEventBody(event),
+    version: event.version,
+    entityLabel: "event",
+    existing,
+    removing,
+  });
+}
+
+async function pushScheduledEvents(ctx: Ctx): Promise<void> {
+  const { rt, account } = ctx;
+  const [calendar] = await rt.db
+    .select()
+    .from(syncedCalendars)
+    .where(
+      and(
+        eq(syncedCalendars.accountId, account.id),
+        eq(syncedCalendars.kind, "epiphany"),
+        eq(syncedCalendars.externalId, account.epiphanyCalendarId ?? ""),
+      ),
+    );
+  if (!calendar) return;
+
+  const pctx: PushCtx = { ...ctx, calendar };
+  const [refs, externalRefs, ownerEvents] = await Promise.all([
+    rt.db
+      .select()
+      .from(calendarEventRefs)
+      .where(
+        and(
+          eq(calendarEventRefs.ownerId, account.ownerId),
+          eq(calendarEventRefs.calendarId, calendar.id),
+          eq(calendarEventRefs.ownership, "epiphany"),
+        ),
+      ),
+    rt.db
+      .select({ eventId: calendarEventRefs.eventId })
+      .from(calendarEventRefs)
+      .where(
+        and(
+          eq(calendarEventRefs.ownerId, account.ownerId),
+          eq(calendarEventRefs.ownership, "external"),
+          isNotNull(calendarEventRefs.eventId),
+        ),
+      ),
+    rt.db
+      .select()
+      .from(events)
+      .where(eq(events.ownerId, account.ownerId))
+      .orderBy(asc(events.startsAt)),
+  ]);
+  const eventRefs = refs.filter((ref) => eventIdFromSyncKey(ref.syncKey) !== null);
+  const refByEventId = new Map(
+    eventRefs.flatMap((ref) => {
+      const eventId = eventIdFromSyncKey(ref.syncKey);
+      return eventId ? [[eventId, ref] as const] : [];
+    }),
+  );
+  const eventById = new Map(ownerEvents.map((event) => [event.id, event]));
+  const importedEventIds = new Set(
+    externalRefs.flatMap((ref) => (ref.eventId ? [ref.eventId] : [])),
+  );
+  const activeEvents = ownerEvents.filter((event) => event.status === "scheduled");
+  const activeEventIds = new Set(activeEvents.map((event) => event.id));
+  const pending: Array<{ event: CalendarEvent; ref: CalendarEventRef | null; removing: boolean }> =
+    [];
+
+  for (const event of activeEvents) {
+    if (importedEventIds.has(event.id)) continue;
+    const ref = refByEventId.get(event.id) ?? null;
+    if (ref && ["conflict", "remote_deleted", "detached", "removed"].includes(ref.syncState))
+      continue;
+    if (ref?.syncState === "synced" && ref.syncedVersion === event.version) continue;
+    pending.push({ event, ref, removing: false });
+  }
+  for (const ref of eventRefs) {
+    const eventId = eventIdFromSyncKey(ref.syncKey);
+    if (
+      !eventId ||
+      activeEventIds.has(eventId) ||
+      !["synced", "pending", "uncertain"].includes(ref.syncState)
+    )
+      continue;
+    const event = eventById.get(eventId);
+    if (event) pending.push({ event, ref, removing: true });
+  }
+
+  let budget = MAX_PUSHES_PER_RUN;
+  for (const item of pending) {
+    if (budget-- <= 0) break;
+    try {
+      await syncScheduledEvent(pctx, item.event, item.ref, item.removing);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      const message = describeSyncError(error);
+      ctx.report.errors.push(message);
+      await rt.db
+        .update(calendarEventRefs)
+        .set({ lastError: message.slice(0, 300) })
+        .where(
+          and(
+            eq(calendarEventRefs.calendarId, calendar.id),
+            eq(calendarEventRefs.syncKey, eventSyncKeyFor(item.event.id)),
+          ),
+        );
+    }
+  }
+}
+
+async function pushTaskDeadlines(ctx: Ctx): Promise<void> {
+  const { rt, account, ownerTimezone } = ctx;
+  const [calendar] = await rt.db
+    .select()
+    .from(syncedCalendars)
+    .where(
+      and(
+        eq(syncedCalendars.accountId, account.id),
+        eq(syncedCalendars.kind, "epiphany"),
+        eq(syncedCalendars.externalId, account.epiphanyCalendarId ?? ""),
+      ),
+    );
+  if (!calendar) return;
+
+  const pctx: PushCtx = { ...ctx, calendar };
+  const [refs, dueTasks] = await Promise.all([
+    rt.db
+      .select()
+      .from(calendarEventRefs)
+      .where(
+        and(
+          eq(calendarEventRefs.ownerId, account.ownerId),
+          eq(calendarEventRefs.calendarId, calendar.id),
+          eq(calendarEventRefs.ownership, "epiphany"),
+        ),
+      ),
+    rt.db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        dueAt: tasks.dueAt,
+        dueDateOnly: tasks.dueDateOnly,
+        status: tasks.status,
+        archivedAt: tasks.archivedAt,
+        version: tasks.version,
+      })
+      .from(tasks)
+      .where(and(eq(tasks.ownerId, account.ownerId), isNotNull(tasks.dueAt)))
+      .orderBy(asc(tasks.dueAt)),
+  ]);
+  const deadlineRefs = refs.filter((ref) => taskIdFromDeadlineKey(ref.syncKey) !== null);
+  const refByTaskId = new Map<string, CalendarEventRef>();
+  for (const ref of deadlineRefs) {
+    const taskId = taskIdFromDeadlineKey(ref.syncKey);
+    if (taskId) refByTaskId.set(taskId, ref);
+  }
+
+  const activeTasks = dueTasks.filter(
+    (task) => task.status === "open" && task.archivedAt === null && task.dueAt !== null,
+  );
+  const activeTaskIds = new Set(activeTasks.map((task) => task.id));
+  let budget = MAX_PUSHES_PER_RUN;
+  for (const task of activeTasks) {
+    const dueAt = task.dueAt;
+    if (!dueAt) continue;
+    let ref = refByTaskId.get(task.id) ?? null;
+    if (ref && ["conflict", "remote_deleted", "detached"].includes(ref.syncState)) {
+      if (ref.syncState !== "detached")
+        ctx.report.errors.push(
+          ref.lastError ?? "A task deadline needs your attention in Google Calendar.",
+        );
+      continue;
+    }
+    if (ref?.syncState === "removed") {
+      const [result] = await rt.db
+        .update(calendarEventRefs)
+        .set({
+          externalId: deadlineEventIdFor(task.id, task.version),
+          syncKey: deadlineSyncKeyFor(task.id, task.version),
+          syncState: "pending",
+          etag: null,
+          syncedVersion: null,
+          lastError: null,
+        })
+        .where(eq(calendarEventRefs.id, ref.id));
+      if (result.affectedRows === 0) throw new Error("Task deadline reference was not updated.");
+      const [reactivated] = await rt.db
+        .select()
+        .from(calendarEventRefs)
+        .where(eq(calendarEventRefs.id, ref.id));
+      if (!reactivated) throw new Error("Task deadline reference was not found.");
+      ref = reactivated;
+    }
+
+    const generation = ref ? (deadlineVersionFromKey(ref.syncKey) ?? task.version) : task.version;
+    const desired = desiredDeadlineBody({ ...task, dueAt }, ownerTimezone, generation);
+    if (ref?.syncState === "synced" && ref.syncedVersion === task.version) continue;
+    if (budget-- <= 0) break;
+    try {
+      await syncOwnedEvent(pctx, {
+        externalId: ref?.externalId ?? desired.id!,
+        syncKey: ref?.syncKey ?? deadlineSyncKeyFor(task.id, generation),
+        desired,
+        version: task.version,
+        entityLabel: "task deadline",
+        existing: ref,
+        removing: false,
+      });
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      const message = describeSyncError(error);
+      ctx.report.errors.push(message);
+      if (ref) {
+        await rt.db
+          .update(calendarEventRefs)
+          .set({ lastError: message.slice(0, 300) })
+          .where(eq(calendarEventRefs.id, ref.id));
+      }
+    }
+  }
+
+  for (const ref of deadlineRefs) {
+    const taskId = taskIdFromDeadlineKey(ref.syncKey);
+    if (!taskId || activeTaskIds.has(taskId)) continue;
+    if (!["synced", "pending", "uncertain"].includes(ref.syncState)) continue;
+    if (budget-- <= 0) break;
+    try {
+      await syncOwnedEvent(pctx, {
+        externalId: ref.externalId,
+        syncKey: ref.syncKey!,
+        desired: {
+          id: ref.externalId,
+          summary: "",
+          start: { dateTime: ctx.now.toISOString() },
+          end: { dateTime: new Date(ctx.now.getTime() + 60_000).toISOString() },
+        },
+        version: ref.syncedVersion ?? 0,
+        entityLabel: "task deadline",
+        existing: ref,
+        removing: true,
+      });
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      const message = describeSyncError(error);
+      ctx.report.errors.push(message);
+      await rt.db
+        .update(calendarEventRefs)
+        .set({ lastError: message.slice(0, 300) })
+        .where(eq(calendarEventRefs.id, ref.id));
+    }
   }
 }
 

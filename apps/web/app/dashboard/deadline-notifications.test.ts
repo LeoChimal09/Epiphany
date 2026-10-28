@@ -9,7 +9,9 @@ const timezone = "America/Chicago";
 const task = (id: string, dueAt = "2026-10-21T23:59:00-05:00"): DashboardTask => ({
   id,
   categoryId: "inbox",
+  taskType: "task",
   title: `Assignment ${id}`,
+  priority: "minor",
   details: null,
   sourceText: null,
   reviewNote: null,
@@ -63,7 +65,7 @@ describe("dashboard deadline notification area", () => {
     expect(html).toContain("Next notifications");
     expect(html).toContain("Browse all task history");
     expect(html).toContain("No response never means completed");
-    expect(html).toContain("Background Discord DMs require");
+    expect(html).toContain("Background Discord reminders require the reminder worker running");
   });
 
   it("renders due-soon, exact due, overdue and date-only labels but excludes completed work", () => {

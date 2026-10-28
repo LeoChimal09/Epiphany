@@ -15,21 +15,26 @@ import { todayKey, weekStartOf } from "./schedule";
 import { calendarSyncWarning } from "./planning-model";
 
 export function taskForDashboard(task: Task): DashboardTask {
+  const taskType =
+    task.taskType === "todo" || (!task.dueAt && task.estimatedMinutes === null) ? "todo" : "task";
   return {
     id: task.id,
     categoryId: task.categoryId,
+    taskType,
     title: task.title,
+    priority: taskType === "todo" ? "minor" : task.priority,
     details: task.details,
     sourceText: task.sourceText,
     reviewNote: task.reviewNote,
     status: task.status,
     dueAt: task.dueAt?.toISOString() ?? null,
-    dueDateOnly: task.dueDateOnly,
-    estimatedMinutes: task.estimatedMinutes,
+    dueDateOnly: taskType === "todo" ? false : task.dueDateOnly,
+    estimatedMinutes: taskType === "todo" ? null : task.estimatedMinutes,
     completedAt: task.completedAt?.toISOString() ?? null,
     archivedAt: task.archivedAt?.toISOString() ?? null,
     createdAt: task.createdAt.toISOString(),
     version: task.version,
+    splitReminderCount: task.splitReminderCount,
   };
 }
 

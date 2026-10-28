@@ -50,7 +50,7 @@ export function startCalendarRunner(options: CalendarRunnerOptions): CalendarRun
     clientSecret: google.clientSecret,
     fetch: options.fetch,
   };
-  const tickMs = options.tickMs ?? 60_000;
+  const tickMs = options.tickMs ?? 15_000;
   const intervalMs = options.syncIntervalMs ?? 5 * 60_000;
 
   let timer: ReturnType<typeof setTimeout> | undefined;

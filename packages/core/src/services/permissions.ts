@@ -35,6 +35,7 @@ export const ACTIONS = {
   "note.create": { kind: "apply" },
   "note.update": { kind: "apply" },
   "event.create": { kind: "apply" },
+  "event.acknowledge": { kind: "apply" },
   "event.cancel": { kind: "apply", confirmWhenExternal: true },
   "category.create": { kind: "apply" },
   "reminder.snooze": { kind: "apply" },

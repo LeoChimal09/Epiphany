@@ -16,7 +16,9 @@ import {
 const task = (overrides: Partial<DashboardTask> = {}): DashboardTask => ({
   id: "task-one",
   categoryId: "inbox",
+  taskType: "task",
   title: "Chemistry worksheet",
+  priority: "minor",
   details: "Chapter three",
   sourceText: null,
   reviewNote: null,
@@ -72,12 +74,12 @@ describe("dashboard views", () => {
     expect(visibleTasks(tasks, "completed", "").map((item) => item.id)).toEqual(["new", "old"]);
   });
 
-  it("filters planned and plain tasks within one task view across categories", () => {
+  it("filters deadline tasks and todos separately across categories", () => {
     const tasks = [
       task({ id: "school", categoryId: "school", dueAt: "2026-10-15T00:00:00Z" }),
       task({ id: "fitness", categoryId: "fitness", dueAt: "2026-10-14T00:00:00Z" }),
       task({ id: "duration", title: "Duration task", dueAt: null, estimatedMinutes: 30 }),
-      task({ id: "plain", dueAt: null, estimatedMinutes: null }),
+      task({ id: "todo", taskType: "todo", dueAt: null, estimatedMinutes: null }),
       task({ id: "done", status: "completed", dueAt: "2026-10-14T00:00:00Z" }),
     ];
     expect(visibleTasks(tasks, "tasks", "", null, "planned").map((item) => item.id)).toEqual([
@@ -85,15 +87,14 @@ describe("dashboard views", () => {
       "school",
       "duration",
     ]);
-    expect(visibleTasks(tasks, "tasks", "", null, "plain").map((item) => item.id)).toEqual([
-      "plain",
-    ]);
+    expect(visibleTasks(tasks, "tasks", "", null, "todo").map((item) => item.id)).toEqual(["todo"]);
     expect(visibleTasks(tasks, "tasks", "", null, "all")).toHaveLength(4);
+    expect(visibleTasks(tasks, "tasks", "", null, "events")).toEqual([]);
     expect(visibleTasks(tasks, "tasks", "duration", null, "planned")).toHaveLength(1);
     expect(visibleTasks(tasks, "tasks", "", "fitness", "planned").map((item) => item.id)).toEqual([
       "fitness",
     ]);
-    expect(visibleTasks(tasks, "tasks", "missing", null, "plain")).toEqual([]);
+    expect(visibleTasks(tasks, "tasks", "missing", null, "todo")).toEqual([]);
   });
 
   it("searches saved notes and ideas even without a title", () => {

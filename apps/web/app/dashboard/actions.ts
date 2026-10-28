@@ -52,6 +52,8 @@ export type DashboardNotesPageResult =
 
 export type DashboardScheduleResult =
   { ok: true; schedule: ScheduleData } | { ok: false; error: string };
+export type DashboardEventsResult =
+  { ok: true; events: ScheduleData["events"]; truncated: boolean } | { ok: false; error: string };
 
 export async function askEpi(message: string, state: unknown): Promise<AskEpiResult> {
   if (typeof message !== "string" || !message.trim()) {
@@ -101,6 +103,24 @@ function textField(form: FormData, name: string): string | undefined {
   return value;
 }
 
+function priorityField(form: FormData): "minor" | "major" | undefined {
+  const value = textField(form, "priority");
+  if (value === undefined) return undefined;
+  if (value === "minor" || value === "major") return value;
+  throw new ValidationError(["priority must be minor or major"]);
+}
+
+function splitReminderField(form: FormData): number | null | undefined {
+  const mode = textField(form, "splitReminderMode");
+  if (mode === undefined) return undefined;
+  if (mode === "default") return null;
+  if (mode === "off") return 0;
+  const count = Number(textField(form, "splitReminderCount"));
+  if (mode !== "custom" || !Number.isInteger(count) || count < 1 || count > 100)
+    throw new ValidationError(["choose a split reminder count from 1 to 100"]);
+  return count;
+}
+
 function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
   if (error instanceof ValidationError) return { ok: false, error: error.issues.join(". ") };
   if (error instanceof VersionConflictError) {
@@ -116,18 +136,46 @@ function failure(error: unknown): Extract<DashboardResult, { ok: false }> {
 export async function addDashboardTask(form: FormData): Promise<DashboardResult> {
   const { principal, services } = await dashboardContext();
   let estimatedMinutes: number | undefined;
+  let dueAt: string | undefined;
+  let dueDateOnly = false;
+  let isTodo: boolean;
   try {
-    estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
-  } catch {
+    const requestedType = textField(form, "entryType") ?? "task";
+    if (requestedType !== "task" && requestedType !== "todo") {
+      throw new ValidationError(["choose a task or todo"]);
+    }
+    isTodo = requestedType === "todo";
+    if (!isTodo) {
+      estimatedMinutes = parseEffort(form.get("estimatedMinutes"));
+      dueDateOnly = form.get("dueDateOnly") === "on";
+      const enteredDueAt = textField(form, "dueAt");
+      if (enteredDueAt) {
+        const deadline = new Date(enteredDueAt);
+        if (Number.isNaN(deadline.getTime())) {
+          throw new ValidationError(["enter a valid deadline"]);
+        }
+        dueAt = deadline.toISOString();
+      }
+      isTodo = !dueAt && estimatedMinutes === undefined;
+      if (isTodo) dueDateOnly = false;
+    }
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      return { ok: false, error: error.issues.join(". ") };
+    }
     return { ok: false, error: "Enter a whole number of minutes between 1 and 100,000." };
   }
   try {
     const task = await services.tasks.create(principal, {
       title: textField(form, "title"),
+      taskType: isTodo ? "todo" : "task",
+      priority: isTodo ? "minor" : (priorityField(form) ?? "minor"),
       details: textField(form, "details"),
-      dueAt: textField(form, "dueAt"),
+      dueAt,
       estimatedMinutes,
+      ...(dueDateOnly ? { dueDateOnly: true } : {}),
       categoryId: textField(form, "categoryId"),
+      splitReminderCount: splitReminderField(form),
     });
     return { ok: true, message: "Task saved.", task: taskForDashboard(task) };
   } catch (error) {
@@ -168,14 +216,25 @@ function editDeadline(form: FormData): string | null | undefined {
 export async function editDashboardTask(taskId: string, form: FormData): Promise<DashboardResult> {
   const { principal, services } = await dashboardContext();
   try {
+    const taskType = textField(form, "taskType");
+    if (taskType !== undefined && taskType !== "task" && taskType !== "todo") {
+      throw new ValidationError(["choose a task or todo"]);
+    }
+    const estimatedMinutes = taskType === "todo" ? null : editEffort(form);
+    const dueAt = taskType === "todo" ? null : editDeadline(form);
+    const becomesTodo = taskType !== "todo" && dueAt === null && estimatedMinutes === null;
+    const effectiveType = becomesTodo ? "todo" : taskType;
     const result = await services.tasks.update(principal, taskId, {
       expectedVersion: versionField(form),
+      ...(effectiveType ? { taskType: effectiveType } : {}),
       title: textField(form, "title"),
+      priority: effectiveType === "todo" ? "minor" : priorityField(form),
       details: textField(form, "details") ?? "",
-      dueAt: editDeadline(form),
-      dueDateOnly: form.get("dueDateOnly") === "on",
-      estimatedMinutes: editEffort(form),
+      dueAt: effectiveType === "todo" ? null : dueAt,
+      dueDateOnly: effectiveType === "todo" ? false : form.get("dueDateOnly") === "on",
+      estimatedMinutes: effectiveType === "todo" ? null : estimatedMinutes,
       categoryId: textField(form, "categoryId"),
+      splitReminderCount: splitReminderField(form),
     });
     return {
       ok: true,
@@ -431,13 +490,60 @@ export async function loadDashboardSchedule(weekStart: string): Promise<Dashboar
   }
 }
 
+export async function loadDashboardEvents(fromDate: string): Promise<DashboardEventsResult> {
+  let from: string;
+  try {
+    if (typeof fromDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+      throw new RangeError("invalid date");
+    }
+    parseDateKey(fromDate);
+    from = fromDate;
+  } catch {
+    return { ok: false, error: "That event date is not valid. Refresh and try again." };
+  }
+  try {
+    const { principal, services, timezone } = await dashboardContext();
+    const start = localWallToUtc(from, 0, timezone);
+    const end = localWallToUtc(addDays(from, 60), 0, timezone);
+    const events = await services.events.list(principal, {
+      from: start,
+      to: end,
+      limit: 200,
+    });
+    return {
+      ok: true,
+      events: events.map((event) => ({
+        id: event.id,
+        title: event.title,
+        location: event.location,
+        startsAt: event.startsAt.toISOString(),
+        endsAt: event.endsAt.toISOString(),
+        allDay: event.allDay,
+        timezone: event.timezone,
+      })),
+      truncated: events.length === 200,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "Upcoming events could not be loaded. Your tasks and calendar are unchanged.",
+    };
+  }
+}
+
 export type DashboardScheduleChangeResult =
   { ok: true; message: string } | { ok: false; error: string };
 
 // The owner's form fields are local wall-clock values; they become instants here, in the
 // configured timezone, so the browser's own timezone never decides when something happens.
-function scheduleWindow(form: FormData, timezone: string, allowAllDay: boolean) {
-  const date = textField(form, "date");
+function scheduleWindow(
+  form: FormData,
+  timezone: string,
+  allowAllDay: boolean,
+  dateField = "date",
+  allowDuration = false,
+) {
+  const date = textField(form, dateField);
   if (!date) throw new ValidationError(["date is required"]);
   try {
     parseDateKey(date);
@@ -459,11 +565,30 @@ function scheduleWindow(form: FormData, timezone: string, allowAllDay: boolean) 
     }
   };
   const start = minutes("startTime", "start");
+  const startsAt = localWallToUtc(date, start, timezone);
+  if (allowDuration) {
+    const timingMode = textField(form, "eventTimingMode") ?? "end";
+    if (timingMode !== "end" && timingMode !== "duration") {
+      throw new ValidationError(["choose an event end time or duration"]);
+    }
+    if (timingMode === "duration") {
+      const value = textField(form, "durationMinutes");
+      const duration = value ? Number(value) : Number.NaN;
+      if (!Number.isInteger(duration) || duration < 1 || duration > 100_000) {
+        throw new ValidationError(["duration must be between 1 and 100,000 whole minutes"]);
+      }
+      return {
+        allDay: false,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + duration * 60_000),
+      };
+    }
+  }
   const end = minutes("endTime", "end");
   if (end <= start) throw new ValidationError(["end time must be after the start time"]);
   return {
     allDay: false,
-    startsAt: localWallToUtc(date, start, timezone),
+    startsAt,
     endsAt: localWallToUtc(date, end, timezone),
   };
 }
@@ -475,7 +600,8 @@ export async function addDashboardEvent(form: FormData): Promise<DashboardSchedu
       title: textField(form, "title"),
       location: textField(form, "location"),
       timezone,
-      ...scheduleWindow(form, timezone, true),
+      ...scheduleWindow(form, timezone, true, "date", true),
+      splitReminderCount: splitReminderField(form),
     });
     return { ok: true, message: "Event saved." };
   } catch (error) {

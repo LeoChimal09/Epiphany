@@ -83,6 +83,85 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
       expect((await services.tasks.get(owner, task.id)).title).toBe("Essay");
     });
 
+    it("persists todos without task-only fields and keeps them out of deadline scheduling", async () => {
+      const todo = await services.tasks.create(owner, {
+        title: "Buy a snack",
+        taskType: "todo",
+        priority: "major",
+        dueAt: "2026-10-16T04:59:59.000Z",
+        estimatedMinutes: 30,
+      });
+      expect(todo).toMatchObject({
+        taskType: "todo",
+        priority: "minor",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+        remainingMinutes: null,
+      });
+
+      await services.tasks.update(owner, todo.id, {
+        dueAt: "2026-10-17T04:59:59.000Z",
+        dueDateOnly: true,
+        estimatedMinutes: 45,
+        priority: "major",
+      });
+      expect(await services.tasks.get(owner, todo.id)).toMatchObject({
+        taskType: "todo",
+        priority: "minor",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+      });
+    });
+
+    it("lists only the current owner's newly created tasks and events for announcements", async () => {
+      const task = await services.tasks.create(owner, { title: "Study for finals" });
+      const event = await services.events.create(owner, {
+        title: "Office hours",
+        startsAt: "2026-10-14T20:00:00.000Z",
+        endsAt: "2026-10-14T21:00:00.000Z",
+        timezone: "America/Chicago",
+      });
+      await services.notes.create(owner, { body: "Private note" });
+      await services.tasks.create(strangerOwner, { title: "Someone else's task" });
+
+      const additions = await services.history.additions(owner);
+
+      expect(additions.map((entry) => entry.entityId).toSorted()).toEqual(
+        [task.id, event.id].toSorted(),
+      );
+      await expect(services.history.additions({ ownerId })).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+    });
+
+    it("reads owner-scoped planner changes after a persisted checkpoint, including edits and completions", async () => {
+      const task = await services.tasks.create(owner, { title: "Repair drone" });
+      await services.tasks.update(owner, task.id, { title: "Repair camera" });
+      await services.tasks.complete(owner, task.id);
+      await services.tasks.create(strangerOwner, { title: "Private other task" });
+      const since = "2026-01-01T00:00:00.000Z";
+      const changes = await services.history.changes(owner, since);
+      expect(changes.map((entry) => entry.action).toSorted()).toEqual(
+        ["task.create", "task.update", "task.complete"].toSorted(),
+      );
+      expect(changes.every((entry) => entry.entityId === task.id)).toBe(true);
+      expect(
+        await services.history.changes(
+          owner,
+          since,
+          changes.map((entry) => entry.id),
+        ),
+      ).toEqual([]);
+      await expect(services.history.changes({ ownerId }, since)).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
+      await expect(
+        services.history.changes(await principalFor(ownerId, { audience: "shared" }), since),
+      ).rejects.toBeInstanceOf(AccessDeniedError);
+    });
+
     it("rejects a forged principal on every method and changes nothing", async () => {
       const task = await services.tasks.create(owner, { title: "Real task" });
       const forged = { ownerId, source: "dashboard", audience: "private", initiator: "owner" };

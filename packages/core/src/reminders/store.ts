@@ -1,7 +1,28 @@
 import { and, asc, desc, eq, gt, inArray, lt, lte, notInArray, or, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { newId } from "../db/domain";
-import { events, reminders, tasks, type Reminder } from "../db/schema";
+import { actionHistory, events, reminders, tasks, type Reminder } from "../db/schema";
+
+export async function eventAcknowledged(
+  db: Database,
+  ownerId: string,
+  eventId: string,
+  version: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: actionHistory.id })
+    .from(actionHistory)
+    .where(
+      and(
+        eq(actionHistory.ownerId, ownerId),
+        eq(actionHistory.entityId, eventId),
+        eq(actionHistory.action, "event.acknowledge"),
+        sql`JSON_EXTRACT(${actionHistory.after}, '$.version') = ${version}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
 
 export interface NewReminder {
   kind: Reminder["kind"];
@@ -35,6 +56,107 @@ export async function scheduleReminder(
       dueAt: input.dueAt,
     });
   return result.affectedRows === 1;
+}
+
+export async function scheduleSplitReminder(
+  db: Database,
+  ownerId: string,
+  input: NewReminder,
+): Promise<boolean> {
+  if (await scheduleReminder(db, ownerId, input)) return true;
+  // Re-enabling a canceled future slot must not replay a sent or uncertain delivery.
+  const [result] = await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      attempts: 0,
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.dedupeKey, input.dedupeKey),
+        eq(reminders.status, "canceled"),
+      ),
+    );
+  return result.affectedRows === 1;
+}
+
+// A briefing is scheduled once per local date. If its configured time changes while it is still
+// pending, move that job instead of letting the unique daily key preserve the old time.
+export async function scheduleBriefing(
+  db: Database,
+  ownerId: string,
+  input: { dedupeKey: string; dueAt: Date; message: string },
+): Promise<boolean> {
+  const inserted = await scheduleReminder(db, ownerId, { ...input, kind: "briefing" });
+  if (inserted) return true;
+
+  const [existing] = await db
+    .select({
+      id: reminders.id,
+      status: reminders.status,
+      dueAt: reminders.dueAt,
+      message: reminders.message,
+      nextAttemptAt: reminders.nextAttemptAt,
+      detail: reminders.detail,
+    })
+    .from(reminders)
+    .where(and(eq(reminders.ownerId, ownerId), eq(reminders.dedupeKey, input.dedupeKey)));
+  if (!existing) return false;
+
+  const wasDisabled = existing.status === "canceled" && existing.detail === "briefing disabled";
+  if (existing.status !== "scheduled" && !wasDisabled) return false;
+  if (
+    !wasDisabled &&
+    existing.dueAt.getTime() === input.dueAt.getTime() &&
+    existing.message === input.message &&
+    existing.nextAttemptAt === null &&
+    existing.detail === null
+  ) {
+    return false;
+  }
+
+  const conditions = [
+    eq(reminders.id, existing.id),
+    eq(reminders.status, existing.status),
+    ...(wasDisabled ? [eq(reminders.detail, "briefing disabled")] : []),
+  ];
+  await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(and(...conditions));
+  return false;
+}
+
+export async function cancelScheduledBriefings(db: Database, ownerId: string): Promise<number> {
+  const [result] = await db
+    .update(reminders)
+    .set({
+      status: "canceled",
+      detail: "briefing disabled",
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.kind, "briefing"),
+        eq(reminders.status, "scheduled"),
+      ),
+    );
+  return result.affectedRows;
 }
 
 // Cancels scheduled reminders for a subject whose reminder set changed (for example a new deadline).
@@ -119,6 +241,7 @@ export const SENDING_STALE_MS = 2 * 60_000;
 
 export async function markInterruptedUnknown(
   db: Database,
+  ownerId: string,
   now: Date,
   staleMs = SENDING_STALE_MS,
 ): Promise<number> {
@@ -131,6 +254,7 @@ export async function markInterruptedUnknown(
     })
     .where(
       and(
+        eq(reminders.ownerId, ownerId),
         eq(reminders.status, "sending"),
         lt(reminders.claimedAt, new Date(now.getTime() - staleMs)),
       ),
@@ -140,12 +264,18 @@ export async function markInterruptedUnknown(
 
 // Takes up to `limit` due reminders for sending. Each is claimed with a conditional update, so two
 // workers (or a worker restarting mid-cycle) can never both send the same one.
-export async function claimDue(db: Database, now: Date, limit = 25): Promise<Reminder[]> {
+export async function claimDue(
+  db: Database,
+  ownerId: string,
+  now: Date,
+  limit = 25,
+): Promise<Reminder[]> {
   const candidates = await db
     .select({ id: reminders.id })
     .from(reminders)
     .where(
       and(
+        eq(reminders.ownerId, ownerId),
         eq(reminders.status, "scheduled"),
         lte(reminders.dueAt, now),
         or(isNull(reminders.nextAttemptAt), lte(reminders.nextAttemptAt, now)),

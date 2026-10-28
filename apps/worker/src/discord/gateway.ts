@@ -20,7 +20,7 @@ import { connectDatabase } from "@epiphany/core/db";
 import { createServices, resolveDiscordPrincipal } from "@epiphany/core/services";
 import { loadDiscordBotConfig } from "./config";
 import { createDiscordWorkspaceCapability, prepareServer } from "./guild-adapter";
-import { createOverviewSync } from "./overview-discord";
+import { createOverviewSync, guildSurface } from "./overview-discord";
 import {
   createElevenLabsSpeech,
   createOpenAiSpeech,
@@ -41,9 +41,12 @@ import {
   type PendingTranscript,
 } from "./voice-discord";
 import { createReminderRunner } from "./reminders-discord";
+import { reminderIdFromMessage, withDeliveredReminders } from "./reminder-context";
 import {
   fitDiscordMessage,
+  channelAnswerNotice,
   routeMessage,
+  responseViewForMessage,
   SHARED_CHANNEL_REPLY,
   splitDiscordMessage,
   stripEpiMention,
@@ -63,8 +66,8 @@ export interface DiscordGateway {
 }
 
 // How often the overviews are compared with the records, to catch changes made in the dashboard.
-const OVERVIEW_POLL_MS = 30_000;
-const REMINDER_POLL_MS = 30_000;
+const OVERVIEW_POLL_MS = 15_000;
+const REMINDER_POLL_MS = 15_000;
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(
@@ -233,7 +236,7 @@ export async function startDiscordGateway(
     });
   }
 
-  // Persistent reminders: independent of the model, safe to restart, delivered as DMs.
+  // Persistent reminders: independent of the model, safe to restart, delivered in private #check-ins.
   const reminderRunner = createReminderRunner({
     client,
     db: database.db,
@@ -241,30 +244,11 @@ export async function startDiscordGateway(
     timezone: options.timezone,
     clock,
     // Replies to a reminder ("done", "snooze", "not going") are understood in its context: the
-    // DM conversation remembers which reminder and which task or event it was about.
+    // The private-channel conversation remembers which reminder and which task or event it was about.
     onDelivered: (delivered, { channelId }) => {
-      const reminder = delivered.at(-1);
-      if (!channelId || !reminder || delivered.length !== 1) return;
-      const title = /"([^"]{1,200})"/.exec(reminder.message)?.[1] ?? "that reminder";
+      if (!channelId) return;
       const state = conversations.get(channelId) ?? emptyConversation();
-      const subjectType =
-        reminder.subjectType === "task" || reminder.subjectType === "event"
-          ? reminder.subjectType
-          : null;
-      conversations.set(channelId, {
-        ...state,
-        lastReminder: {
-          reminderId: reminder.id,
-          kind: reminder.kind,
-          subjectType,
-          subjectId: reminder.subjectId,
-          title,
-        },
-        listed:
-          subjectType === "task" && reminder.subjectId
-            ? [{ id: reminder.subjectId, title, due: null }]
-            : state.listed,
-      });
+      conversations.set(channelId, withDeliveredReminders(state, delivered, clock()));
     },
   });
   // Keeps the overview channels in step with the records, whichever side changed them.
@@ -295,9 +279,11 @@ export async function startDiscordGateway(
         await prepareServer(client, guild, ownerUserId);
       await overviews.run({ verify: true });
       overviews.start(OVERVIEW_POLL_MS);
-      void reminderRunner.run();
+      await reminderRunner.run();
       reminderRunner.start(REMINDER_POLL_MS);
-    })();
+    })().catch((error: unknown) => {
+      log("discord_ready_setup_failed", { error: error instanceof Error ? error.name : "unknown" });
+    });
   });
   // Someone deleting an overview message only removes the message; it is put back, and no record is
   // touched.
@@ -411,7 +397,31 @@ export async function startDiscordGateway(
     }
     if (!text) return;
 
-    const state = conversations.get(message.channelId) ?? emptyConversation();
+    let state = conversations.get(message.channelId) ?? emptyConversation();
+    // Explicit replies bind to that exact bot message, including after a worker restart.
+    // Never use another channel's message or a user-supplied marker as authority.
+    if (message.reference?.messageId || !conversations.has(message.channelId)) {
+      const referenced = message.reference?.messageId
+        ? await message.fetchReference().catch(() => null)
+        : ((await message.channel.messages.fetch({ limit: 20 }))
+            .filter((item) => item.author.id === epiUserId && reminderIdFromMessage(item.content))
+            .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+            .first() ?? null);
+      if (message.reference) state = { ...state, lastReminder: null, listed: [] };
+      if (referenced?.author.id === epiUserId && referenced.channelId === message.channelId) {
+        const id = reminderIdFromMessage(referenced.content);
+        const reminder = id
+          ? await createServices(database.db, { clock }).reminders.get(principal, id)
+          : null;
+        if (
+          reminder?.status === "sent" &&
+          reminder.sentAt &&
+          clock().getTime() - reminder.sentAt.getTime() <= 60 * 60_000
+        ) {
+          state = withDeliveredReminders(state, [reminder], reminder.sentAt);
+        }
+      }
+    }
     const budget = createBudget(
       {
         monthlyLimitUsd: aiConfig.monthlyBudgetUsd,
@@ -447,6 +457,18 @@ export async function startDiscordGateway(
     conversations.set(message.channelId, result.state);
 
     let reply = result.reply.text;
+    if (!result.reply.changed && ["answered", "listed"].includes(result.reply.outcome)) {
+      const view = responseViewForMessage(text);
+      const fromAssistantChannel =
+        message.channel.type === ChannelType.GuildText &&
+        message.channel.name === "assistant" &&
+        message.channel.parent?.name.toLowerCase() === "epiphany";
+      if (view && fromAssistantChannel) {
+        reply =
+          (await postPlannerAnswer(message, view, result.reply.text, epiUserId)) ??
+          `I couldn't access your private #${view} channel, so here's the answer here:\n\n${result.reply.text}`;
+      }
+    }
     // Setup from a server channel: also prove a direct message reaches the owner, and say so if
     // it does not (DMs from server members can be switched off).
     if (result.reply.outcome === "created" && !message.channel.isDMBased()) {
@@ -462,7 +484,7 @@ export async function startDiscordGateway(
     for (const content of replies) {
       await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
     }
-    await speakIfEnabled(message, principal, result.reply.text);
+    await speakIfEnabled(message, principal, reply);
     // A change made here shows up in the overview channels straight away.
     if (result.reply.changed) void overviews.run();
   }
@@ -496,6 +518,51 @@ export async function startDiscordGateway(
       });
     } catch {
       log("spoken_reply_failed");
+    }
+  }
+
+  async function postPlannerAnswer(
+    message: Message,
+    view: "schedule" | "priorities" | "check-ins",
+    text: string,
+    epiUserId: string,
+  ): Promise<string | null> {
+    if (
+      message.channel.type !== ChannelType.GuildText ||
+      message.channel.name !== "assistant" ||
+      message.channel.parent?.name.toLowerCase() !== "epiphany" ||
+      !message.guild
+    ) {
+      return null;
+    }
+    try {
+      const surface = guildSurface(message.guild, epiUserId);
+      const channelId = await surface.channelFor(view);
+      if (!channelId) return null;
+      const channel = await message.guild.channels.fetch(channelId);
+      if (
+        !channel ||
+        channel.type !== ChannelType.GuildText ||
+        !channel.permissionsFor(message.author)?.has(PermissionFlagsBits.ViewChannel) ||
+        !channel.permissionsFor(client.user!)?.has(PermissionFlagsBits.SendMessages)
+      ) {
+        return null;
+      }
+      let jumpUrl = "";
+      for (const part of splitDiscordMessage(text)) {
+        const posted = await channel.send({
+          content: part,
+          allowedMentions: { parse: [] },
+        });
+        jumpUrl ||= posted.url;
+      }
+      return channelAnswerNotice(view, channelId, jumpUrl);
+    } catch (error) {
+      log("planner_answer_route_failed", {
+        view,
+        error: error instanceof Error ? error.name : "unknown",
+      });
+      return null;
     }
   }
 

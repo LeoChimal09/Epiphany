@@ -18,13 +18,16 @@ const task = (over: Partial<Task>): Task => ({
   id: "t1",
   ownerId: "o",
   categoryId: "inbox",
+  taskType: "task",
   title: "Task",
+  priority: "minor",
   details: null,
   sourceText: null,
   sourceRef: null,
   reviewNote: null,
   dueAt: null,
   dueDateOnly: false,
+  splitReminderCount: null,
   estimatedMinutes: null,
   remainingMinutes: null,
   status: "open",
@@ -43,6 +46,7 @@ const event = (over: Partial<CalendarEvent>): CalendarEvent => ({
   startsAt: at("2026-10-14T20:00:00.000Z"),
   endsAt: at("2026-10-14T21:30:00.000Z"),
   allDay: false,
+  splitReminderCount: null,
   timezone: TZ,
   status: "scheduled",
   canceledAt: null,
@@ -105,6 +109,13 @@ const data = (over: Partial<OverviewData> = {}): OverviewData => ({
 });
 
 describe("overview rendering", () => {
+  it("keeps simple to-dos visible today without inventing task deadlines or priority", () => {
+    const fixture = data({ openTasks: [task({ title: "Repair drone", taskType: "todo" })] });
+    expect(renderOverview("today", fixture)).toContain("__To-dos__\n• Repair drone (to-do)");
+    expect(renderOverview("today", fixture)).not.toContain("Nothing due");
+    expect(renderOverview("priorities", fixture)).toContain("Repair drone (to-do)");
+    expect(renderOverview("priorities", fixture)).not.toContain("minor");
+  });
   it("shows overdue, due-today, events and planned work for today, in the owner's timezone", () => {
     const text = renderOverview(
       "today",
@@ -204,8 +215,8 @@ describe("overview rendering", () => {
       }),
     );
     expect(text).toContain("Priorities · 15 open");
-    expect(text).toContain("1. Overdue one (due Sun, Oct 11, 11:59 PM, 3d overdue)");
-    expect(text).toContain("2. Today one (due Wed, Oct 14, 11:59 PM, today)");
+    expect(text).toContain("1. Overdue one (minor, due Sun, Oct 11, 11:59 PM, 3d overdue)");
+    expect(text).toContain("2. Today one (minor, due Wed, Oct 14, 11:59 PM, today)");
     expect(text).not.toContain("Whenever");
     expect(text).toContain("…and 5 more open tasks");
   });
@@ -270,7 +281,7 @@ describe("overview rendering", () => {
             id: "r2",
             status: "failed",
             dueAt: at("2026-10-13T22:00:00.000Z"),
-            detail: "could not deliver: Discord DMs are closed or blocked",
+            detail: "could not deliver to the private Discord channel",
           }),
           reminder({ id: "r3", status: "sent", message: "Already sent" }),
           reminder({
@@ -284,7 +295,7 @@ describe("overview rendering", () => {
     );
     expect(text).toContain("__Coming up__\n• Thu, Oct 15 5:00 PM: Heads up");
     expect(text).toContain("__Didn't reach you__");
-    expect(text).toContain("DMs are closed or blocked");
+    expect(text).toContain("private Discord channel");
     expect(text).not.toContain("Already sent");
     expect(text).not.toContain("Ancient");
     expect(renderOverview("check-ins", data())).toContain("No reminders scheduled.");

@@ -89,6 +89,31 @@ window: manual edits bypass the history table and the `version`/`updated_at` rul
 
 ## Recovering from a partly applied migration
 
+### Original 0011 checksum
+
+`0011_nebulous_outlaw_kid.sql` must remain the original single ALTER statement with no
+trailing newline (SHA-256 `242300bca7673f5399a360ad8ba0682f048d3db4d39d5e14c9dc8a793a733de3`).
+The task-type backfill belongs in the later `0013_backfill_task_types` migration,
+not in 0011. If your database recorded this original hash, restoring that file allows
+normal migration checks to pass; do not edit the database's migration-history hash.
+Migration 0012 adds the item-level split-reminder columns required by the dashboard.
+Run pending migrations before restarting the updated dashboard and worker.
+
+Railway also applied the verified release `cec7de7` version of 0011, containing the same ALTER
+plus that backfill (SHA-256 `bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a`).
+The runner recognizes **only** that exact alternate checksum for the original 0011 tag,
+timestamp, and current file hash. It verifies `tasks.task_type` is
+`enum('task','todo') NOT NULL DEFAULT 'task'` before allowing pending migrations.
+It preserves the recorded hash, skips the already-applied ALTER, and applies 0012/0013
+normally; repeating the backfill is idempotent. Local databases with the original checksum
+continue through the same pending migrations. Keep the migration pre-deploy command enabled:
+repeated runs safely skip applied migrations.
+
+All other checksum changes still block deployment and require investigation.
+Checksum-mismatch errors include the database SHA-256, current file SHA-256, and migration
+timestamp. Share those lines and the deployment commit when investigating a failed Railway
+pre-deploy step; no database credentials or personal records are needed.
+
 If `db:migrate` fails, it prints the migration tag and the failing statement ("statement 2 of
 5"). The migration is **not** recorded, but earlier statements in it may have taken effect.
 

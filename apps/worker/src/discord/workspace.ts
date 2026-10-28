@@ -175,8 +175,8 @@ async function runPlan(guild: WorkspaceGuildPort): Promise<WorkspaceApplyResult>
   return result;
 }
 
-// A message is private only in a DM, or in the Epiphany #assistant channel that @everyone cannot
-// see. Anything else, including a look-alike channel in a public category, is treated as shared.
+// Personal conversation is private only in a DM or an owner-only assistant/check-ins channel under
+// Epiphany. Anything else, including a look-alike channel in a public category, is shared.
 export function workspaceAudience(channel: {
   isDm: boolean;
   name?: string | null;
@@ -185,7 +185,7 @@ export function workspaceAudience(channel: {
 }): "private" | "shared" {
   if (channel.isDm) return "private";
   const inWorkspace =
-    normalizedName(channel.name ?? "") === "assistant" &&
+    ["assistant", "check-ins"].includes(normalizedName(channel.name ?? "")) &&
     normalizedName(channel.parentName ?? "") === WORKSPACE_CATEGORY_NAME;
   return inWorkspace && channel.everyoneCanView === false ? "private" : "shared";
 }

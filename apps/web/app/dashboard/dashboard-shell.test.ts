@@ -5,6 +5,7 @@ import { DashboardShell } from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
+vi.mock("./reminders/actions", () => ({}));
 vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("./voice-actions", () => ({}));
 
@@ -13,7 +14,9 @@ describe("compact assistant dashboard", () => {
     const tasks: DashboardTask[] = Array.from({ length: 40 }, (_, index) => ({
       id: `task-${index}`,
       categoryId: "inbox",
+      taskType: "task",
       title: `Assignment ${index + 1}`,
+      priority: "minor",
       details: null,
       sourceText: null,
       reviewNote: null,

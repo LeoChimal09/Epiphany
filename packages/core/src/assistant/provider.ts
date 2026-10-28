@@ -5,6 +5,9 @@ export interface OpenTaskContext {
   title: string;
   // Local date (owner's timezone) or null.
   due: string | null;
+  taskType?: "task" | "todo";
+  priority?: "minor" | "major";
+  estimatedMinutes?: number | null;
 }
 
 export interface NoteContext {
@@ -30,6 +33,13 @@ export interface InterpretRequest {
   recentNotes: NoteContext[];
   // Numbered results of the previous list, so "the second one" can be resolved.
   lastListed: OpenTaskContext[];
+  lastReminder?: {
+    reminderId: string;
+    subjectType: "task" | "event" | null;
+    subjectId: string | null;
+    title: string;
+  } | null;
+  events?: { id: string; title: string; startsAt: string; endsAt: string; allDay: boolean }[];
   history: Turn[];
   // Summary of an action waiting for yes or no, if any.
   pending: string | null;

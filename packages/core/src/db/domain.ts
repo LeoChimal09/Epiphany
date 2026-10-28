@@ -162,7 +162,10 @@ export async function createCategory(db: Database, actor: Actor, name: string): 
 }
 
 export interface NewTask {
+  splitReminderCount?: number | null;
   title: string;
+  taskType?: "task" | "todo";
+  priority?: "minor" | "major";
   categoryId?: string;
   details?: string;
   sourceText?: string;
@@ -175,27 +178,43 @@ export interface NewTask {
 
 export async function createTask(db: Database, actor: Actor, input: NewTask): Promise<Task> {
   const id = newId();
+  const taskType =
+    input.taskType === "todo" || (!input.dueAt && input.estimatedMinutes === undefined)
+      ? "todo"
+      : "task";
   await db.transaction(async (tx) => {
     const categoryId = await resolveCategory(tx, actor.ownerId, input.categoryId);
     await tx.insert(tasks).values({
       id,
       ownerId: actor.ownerId,
       categoryId,
+      taskType,
       title: input.title,
+      priority: taskType === "todo" ? "minor" : (input.priority ?? "minor"),
       details: input.details ?? null,
       sourceText: input.sourceText ?? null,
       sourceRef: input.sourceRef ?? null,
       reviewNote: input.reviewNote ?? null,
-      dueAt: input.dueAt ?? null,
-      dueDateOnly: input.dueDateOnly ?? false,
-      estimatedMinutes: input.estimatedMinutes ?? null,
-      remainingMinutes: input.estimatedMinutes ?? null,
+      dueAt: taskType === "todo" ? null : (input.dueAt ?? null),
+      dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
+      estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+      remainingMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+      splitReminderCount: input.splitReminderCount ?? null,
     });
     await record(tx, actor, {
       action: "task.create",
       entityType: "task",
       entityId: id,
-      after: { title: input.title, categoryId },
+      after: {
+        title: input.title,
+        categoryId,
+        taskType,
+        priority: taskType === "todo" ? "minor" : (input.priority ?? "minor"),
+        dueAt: taskType === "todo" ? null : (input.dueAt?.toISOString() ?? null),
+        dueDateOnly: taskType === "todo" ? false : (input.dueDateOnly ?? false),
+        estimatedMinutes: taskType === "todo" ? null : (input.estimatedMinutes ?? null),
+        splitReminderCount: input.splitReminderCount ?? null,
+      },
     });
   });
   return getTask(db, actor.ownerId, id);
@@ -248,6 +267,7 @@ export async function completeTask(
 }
 
 export interface NewEvent {
+  splitReminderCount?: number | null;
   title: string;
   startsAt: Date;
   endsAt: Date;
@@ -272,12 +292,20 @@ export async function createEvent(
       timezone: input.timezone,
       allDay: input.allDay ?? false,
       location: input.location ?? null,
+      splitReminderCount: input.splitReminderCount ?? null,
     });
     await record(tx, actor, {
       action: "event.create",
       entityType: "event",
       entityId: id,
-      after: { title: input.title, startsAt: input.startsAt.toISOString() },
+      after: {
+        title: input.title,
+        startsAt: input.startsAt.toISOString(),
+        endsAt: input.endsAt.toISOString(),
+        timezone: input.timezone,
+        allDay: input.allDay ?? false,
+        splitReminderCount: input.splitReminderCount ?? null,
+      },
     });
   });
   return getEvent(db, actor.ownerId, id);

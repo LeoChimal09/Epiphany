@@ -74,6 +74,19 @@ async function readApplied(connection: Pool | PoolConnection): Promise<AppliedMi
   return rows.map((row) => ({ hash: String(row.hash), when: Number(row.created_at) }));
 }
 
+function matchesApplied(file: MigrationFile, entry: AppliedMigration): boolean {
+  if (file.when !== entry.when) return false;
+  if (file.hash === entry.hash) return true;
+  // Release cec7de7 shipped the same ALTER plus the backfill now in 0013.
+  // Preserve that recorded history; never rerun its ALTER or accept other changed files.
+  return (
+    file.tag === "0011_nebulous_outlaw_kid" &&
+    file.when === 1793049246426 &&
+    file.hash === "242300bca7673f5399a360ad8ba0682f048d3db4d39d5e14c9dc8a793a733de3" &&
+    entry.hash === "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a"
+  );
+}
+
 // Compares the journal with recorded history. Problems must be resolved by a person; the
 // runner refuses to apply anything while any exist.
 export function diffMigrations(
@@ -82,20 +95,25 @@ export function diffMigrations(
 ): MigrationStatus {
   const problems: string[] = [];
   const byWhen = new Map(files.map((file) => [file.when, file]));
-  const appliedHashes = new Set(applied.map((entry) => entry.hash));
+  const appliedFiles = new Set(
+    files.filter((file) => applied.some((entry) => matchesApplied(file, entry))),
+  );
 
   for (const entry of applied) {
     const file = byWhen.get(entry.when);
     if (!file) {
       problems.push(`Applied migration (id ${entry.when}) is not in the migrations folder.`);
-    } else if (file.hash !== entry.hash) {
+    } else if (!matchesApplied(file, entry)) {
       problems.push(
-        `Applied migration ${file.tag} was modified after it was applied. Revert the file and add a new corrective migration instead.`,
+        `Applied migration ${file.tag} was modified after it was applied. ` +
+          `Database SHA-256: ${entry.hash}; file SHA-256: ${file.hash}; migration timestamp: ${entry.when}. ` +
+          "Stop and compare the recorded release before recovery (docs/database.md). " +
+          "Do not overwrite migration-history hashes or delete migration rows.",
       );
     }
   }
 
-  const pending = files.filter((file) => !appliedHashes.has(file.hash));
+  const pending = files.filter((file) => !appliedFiles.has(file));
   const lastApplied = applied.reduce((max, entry) => Math.max(max, entry.when), 0);
   for (const file of pending) {
     if (file.when < lastApplied) {
@@ -106,17 +124,49 @@ export function diffMigrations(
   }
 
   return {
-    applied: files.filter((file) => appliedHashes.has(file.hash)).map((file) => file.tag),
+    applied: files.filter((file) => appliedFiles.has(file)).map((file) => file.tag),
     pending: pending.map((file) => file.tag),
     problems,
   };
+}
+
+async function checkedStatus(
+  connection: Pool | PoolConnection,
+  files: MigrationFile[],
+): Promise<MigrationStatus> {
+  const applied = await readApplied(connection);
+  const status = diffMigrations(files, applied);
+  const legacy0011 = files.some((file) =>
+    applied.some((entry) => file.hash !== entry.hash && matchesApplied(file, entry)),
+  );
+  if (legacy0011) {
+    const [columns] = await connection.query<RowDataPacket[]>(
+      "SELECT COLUMN_TYPE AS columnType, IS_NULLABLE AS nullable, COLUMN_DEFAULT AS defaultValue " +
+        "FROM information_schema.columns WHERE table_schema = DATABASE() " +
+        "AND table_name = 'tasks' AND column_name = 'task_type'",
+    );
+    const column = columns[0];
+    if (
+      columns.length !== 1 ||
+      column?.columnType !== "enum('task','todo')" ||
+      column.nullable !== "NO" ||
+      column.defaultValue !== "task"
+    ) {
+      status.problems.push(
+        "The released legacy 0011 checksum is recognized, but tasks.task_type does not match " +
+          "its expected schema (enum('task','todo') NOT NULL DEFAULT 'task'). " +
+          "Stop and inspect the schema before recovery (docs/database.md).",
+      );
+    }
+  }
+  return status;
 }
 
 export async function getMigrationStatus(
   pool: Pool,
   migrationsFolder: string,
 ): Promise<MigrationStatus> {
-  return diffMigrations(loadMigrationFiles(migrationsFolder), await readApplied(pool));
+  return checkedStatus(pool, loadMigrationFiles(migrationsFolder));
 }
 
 export interface RunMigrationsOptions {
@@ -146,7 +196,7 @@ export async function runMigrations(
       await connection.query(
         `CREATE TABLE IF NOT EXISTS \`${MIGRATIONS_TABLE}\` (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
       );
-      const status = diffMigrations(files, await readApplied(connection));
+      const status = await checkedStatus(connection, files);
       if (status.problems.length > 0) {
         throw new Error(`Migration history problems:\n- ${status.problems.join("\n- ")}`);
       }

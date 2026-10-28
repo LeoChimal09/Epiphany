@@ -22,25 +22,28 @@ function WindowFields({
   return (
     <span className={styles.window}>
       <label>
-        Start{" "}
+        Start (AM/PM){" "}
         <input
           type="time"
+          aria-label="Start time"
           value={value.start}
           onChange={(e) => onChange({ ...value, start: e.target.value })}
           required
         />
       </label>
       <label>
-        End{" "}
+        End (AM/PM){" "}
         <input
-          type="text"
-          inputMode="numeric"
-          placeholder="HH:MM"
-          aria-label="End time (24:00 allowed)"
-          value={value.end}
-          onChange={(e) => onChange({ ...value, end: e.target.value })}
+          type="time"
+          aria-label="End time"
+          value={value.end === "24:00" ? "00:00" : value.end}
+          onChange={(e) =>
+            onChange({
+              ...value,
+              end: value.end === "24:00" && e.target.value === "00:00" ? "24:00" : e.target.value,
+            })
+          }
           required
-          pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
         />
       </label>
     </span>
@@ -115,14 +118,14 @@ export function PlanningSettings({
   return (
     <div>
       <Section
-        title="Preferred hours"
+        title="Work hours"
         setting="planning.preferred_hours"
         value={hours}
         version={versions["planning.preferred_hours"]}
       >
         <p>
-          Only these hours are considered usable. A day without windows is unavailable. Use 24-hour
-          times; 24:00 means midnight at the end of the day.
+          Epi plans work during these hours. Leave a day empty to mark it unavailable. Split
+          overnight hours across two days.
         </p>
         {DAYS.map((day) => (
           <div key={day}>
@@ -163,204 +166,209 @@ export function PlanningSettings({
           </div>
         ))}
       </Section>
-      <Section
-        title="Sleep"
-        setting="planning.sleep"
-        value={sleep}
-        version={versions["planning.sleep"]}
-      >
-        <label>
-          <input
-            type="checkbox"
-            checked={sleep !== null}
-            onChange={(e) => setSleep(e.target.checked ? { start: "23:00", end: "07:00" } : null)}
-          />{" "}
-          Protect sleep every day
-        </label>
-        {sleep ? <WindowFields value={sleep} onChange={setSleep} /> : null}
-      </Section>
-      <Section
-        title="Meals"
-        setting="planning.meals"
-        value={meals}
-        version={versions["planning.meals"]}
-      >
-        <p>Daily meal breaks. Overnight windows carry into the following morning.</p>
-        {meals.map((meal, index) => (
-          <div className={styles.row} key={index}>
-            <WindowFields
-              value={meal}
-              onChange={(value) => setMeals(meals.map((w, i) => (i === index ? value : w)))}
-            />
-            <button type="button" onClick={() => setMeals(meals.filter((_, i) => i !== index))}>
-              Remove meal
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          disabled={meals.length >= 8}
-          onClick={() => setMeals([...meals, { start: "12:00", end: "13:00" }])}
+      <details className={styles.group}>
+        <summary>Daily routine</summary>
+        <Section
+          title="Sleep"
+          setting="planning.sleep"
+          value={sleep}
+          version={versions["planning.sleep"]}
         >
-          Add meal
-        </button>
-      </Section>
-      <Section
-        title="Protected time"
-        setting="planning.protected_time"
-        value={protectedTime}
-        version={versions["planning.protected_time"]}
-      >
-        <p>
-          Protect routines, travel, or personal time on selected weekdays. Overnight time belongs to
-          the starting weekday.
-        </p>
-        {protectedTime.map((item, index) => (
-          <fieldset key={index} className={styles.protected}>
-            <label>
-              Label{" "}
-              <input
-                value={item.label}
-                maxLength={100}
-                required
-                onChange={(e) =>
+          <label>
+            <input
+              type="checkbox"
+              checked={sleep !== null}
+              onChange={(e) => setSleep(e.target.checked ? { start: "23:00", end: "07:00" } : null)}
+            />{" "}
+            Protect sleep every day
+          </label>
+          {sleep ? <WindowFields value={sleep} onChange={setSleep} /> : null}
+        </Section>
+        <Section
+          title="Meals"
+          setting="planning.meals"
+          value={meals}
+          version={versions["planning.meals"]}
+        >
+          <p>Daily meal breaks.</p>
+          {meals.map((meal, index) => (
+            <div className={styles.row} key={index}>
+              <WindowFields
+                value={meal}
+                onChange={(value) => setMeals(meals.map((w, i) => (i === index ? value : w)))}
+              />
+              <button type="button" onClick={() => setMeals(meals.filter((_, i) => i !== index))}>
+                Remove meal
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={meals.length >= 8}
+            onClick={() => setMeals([...meals, { start: "12:00", end: "13:00" }])}
+          >
+            Add meal
+          </button>
+        </Section>
+        <Section
+          title="Protected time"
+          setting="planning.protected_time"
+          value={protectedTime}
+          version={versions["planning.protected_time"]}
+        >
+          <p>Block out personal time on selected days.</p>
+          {protectedTime.map((item, index) => (
+            <fieldset key={index} className={styles.protected}>
+              <label>
+                Label{" "}
+                <input
+                  value={item.label}
+                  maxLength={100}
+                  required
+                  onChange={(e) =>
+                    setProtectedTime(
+                      protectedTime.map((p, i) =>
+                        i === index ? { ...p, label: e.target.value } : p,
+                      ),
+                    )
+                  }
+                />
+              </label>
+              <WindowFields
+                value={item.window}
+                onChange={(window) =>
                   setProtectedTime(
-                    protectedTime.map((p, i) =>
-                      i === index ? { ...p, label: e.target.value } : p,
-                    ),
+                    protectedTime.map((p, i) => (i === index ? { ...p, window } : p)),
                   )
                 }
               />
-            </label>
-            <WindowFields
-              value={item.window}
-              onChange={(window) =>
-                setProtectedTime(protectedTime.map((p, i) => (i === index ? { ...p, window } : p)))
-              }
-            />
-            <div className={styles.row}>
-              {DAYS.map((day) => (
-                <label key={day}>
-                  <input
-                    type="checkbox"
-                    checked={item.weekdays?.includes(day) ?? true}
-                    onChange={(e) =>
-                      setProtectedTime(
-                        protectedTime.map((p, i) =>
-                          i === index
-                            ? {
-                                ...p,
-                                weekdays: e.target.checked
-                                  ? [...(p.weekdays ?? DAYS), day]
-                                  : (p.weekdays ?? DAYS).filter((d) => d !== day),
-                              }
-                            : p,
-                        ),
-                      )
-                    }
-                  />
-                  {day}
-                </label>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setProtectedTime(protectedTime.filter((_, i) => i !== index))}
-            >
-              Remove protected time
-            </button>
-          </fieldset>
-        ))}
-        <button
-          type="button"
-          disabled={protectedTime.length >= 30}
-          onClick={() =>
-            setProtectedTime([
-              ...protectedTime,
-              { label: "", weekdays: [...DAYS], window: { start: "17:00", end: "18:00" } },
-            ])
-          }
+              <div className={styles.row}>
+                {DAYS.map((day) => (
+                  <label key={day}>
+                    <input
+                      type="checkbox"
+                      checked={item.weekdays?.includes(day) ?? true}
+                      onChange={(e) =>
+                        setProtectedTime(
+                          protectedTime.map((p, i) =>
+                            i === index
+                              ? {
+                                  ...p,
+                                  weekdays: e.target.checked
+                                    ? [...(p.weekdays ?? DAYS), day]
+                                    : (p.weekdays ?? DAYS).filter((d) => d !== day),
+                                }
+                              : p,
+                          ),
+                        )
+                      }
+                    />
+                    {day}
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setProtectedTime(protectedTime.filter((_, i) => i !== index))}
+              >
+                Remove protected time
+              </button>
+            </fieldset>
+          ))}
+          <button
+            type="button"
+            disabled={protectedTime.length >= 30}
+            onClick={() =>
+              setProtectedTime([
+                ...protectedTime,
+                { label: "", weekdays: [...DAYS], window: { start: "17:00", end: "18:00" } },
+              ])
+            }
+          >
+            Add protected time
+          </button>
+        </Section>
+      </details>
+      <details className={styles.group}>
+        <summary>More planning options</summary>
+        <Section
+          title="Event buffer"
+          setting="planning.buffer_minutes"
+          value={buffer}
+          version={versions["planning.buffer_minutes"]}
         >
-          Add protected time
-        </button>
-      </Section>
-      <Section
-        title="Event buffer"
-        setting="planning.buffer_minutes"
-        value={buffer}
-        version={versions["planning.buffer_minutes"]}
-      >
-        <label>
-          Minutes before and after timed events{" "}
-          <input
-            type="number"
-            min={0}
-            max={120}
-            required
-            value={buffer}
-            onChange={(e) => setBuffer(e.target.valueAsNumber)}
-          />
-        </label>
-      </Section>
-      <Section
-        title="Travel before events"
-        setting="planning.travel_before_minutes"
-        value={travelBefore}
-        version={versions["planning.travel_before_minutes"]}
-      >
-        <p>
-          Optional default for every timed event, including online events. Leave at zero and use
-          specific protected time if only some events require travel. Buffers are added outside
-          travel time.
-        </p>
-        <label>
-          Minutes before each timed event{" "}
-          <input
-            type="number"
-            min={0}
-            max={240}
-            required
-            value={travelBefore}
-            onChange={(e) => setTravelBefore(e.target.valueAsNumber)}
-          />
-        </label>
-      </Section>
-      <Section
-        title="Travel after events"
-        setting="planning.travel_after_minutes"
-        value={travelAfter}
-        version={versions["planning.travel_after_minutes"]}
-      >
-        <label>
-          Minutes after each timed event{" "}
-          <input
-            type="number"
-            min={0}
-            max={240}
-            required
-            value={travelAfter}
-            onChange={(e) => setTravelAfter(e.target.valueAsNumber)}
-          />
-        </label>
-      </Section>
-      <Section
-        title="Minimum work block"
-        setting="planning.min_block_minutes"
-        value={minimum}
-        version={versions["planning.min_block_minutes"]}
-      >
-        <label>
-          Minimum usable minutes{" "}
-          <input
-            type="number"
-            min={10}
-            max={240}
-            required
-            value={minimum}
-            onChange={(e) => setMinimum(e.target.valueAsNumber)}
-          />
-        </label>
-      </Section>
+          <label>
+            Minutes before and after timed events{" "}
+            <input
+              type="number"
+              min={0}
+              max={120}
+              required
+              value={buffer}
+              onChange={(e) => setBuffer(e.target.valueAsNumber)}
+            />
+          </label>
+        </Section>
+        <Section
+          title="Travel before events"
+          setting="planning.travel_before_minutes"
+          value={travelBefore}
+          version={versions["planning.travel_before_minutes"]}
+        >
+          <p>
+            Optional default for every timed event, including online events. Leave at zero and use
+            specific protected time if only some events require travel. Buffers are added outside
+            travel time.
+          </p>
+          <label>
+            Minutes before each timed event{" "}
+            <input
+              type="number"
+              min={0}
+              max={240}
+              required
+              value={travelBefore}
+              onChange={(e) => setTravelBefore(e.target.valueAsNumber)}
+            />
+          </label>
+        </Section>
+        <Section
+          title="Travel after events"
+          setting="planning.travel_after_minutes"
+          value={travelAfter}
+          version={versions["planning.travel_after_minutes"]}
+        >
+          <label>
+            Minutes after each timed event{" "}
+            <input
+              type="number"
+              min={0}
+              max={240}
+              required
+              value={travelAfter}
+              onChange={(e) => setTravelAfter(e.target.valueAsNumber)}
+            />
+          </label>
+        </Section>
+        <Section
+          title="Minimum work block"
+          setting="planning.min_block_minutes"
+          value={minimum}
+          version={versions["planning.min_block_minutes"]}
+        >
+          <label>
+            Minimum usable minutes{" "}
+            <input
+              type="number"
+              min={10}
+              max={240}
+              required
+              value={minimum}
+              onChange={(e) => setMinimum(e.target.valueAsNumber)}
+            />
+          </label>
+        </Section>
+      </details>
     </div>
   );
 }

@@ -13,6 +13,7 @@ export interface CaptureItem {
   dueDate?: DateKey;
   dueTime?: string;
   estimatedMinutes?: number;
+  priority?: "minor" | "major";
   // The name of one of the owner's existing categories; anything unknown lands in the Inbox.
   category?: string;
   // What is missing or unclear (for example "no due date given"). Flags the record for review.
@@ -31,6 +32,7 @@ export type Intent =
       dueFrom?: DateKey;
       dueThrough?: DateKey;
       search?: string;
+      taskType?: "task" | "todo";
     }
   | {
       kind: "create_task";
@@ -39,6 +41,29 @@ export type Intent =
       dueDate?: DateKey;
       dueTime?: string;
       estimatedMinutes?: number;
+      priority?: "minor" | "major";
+      taskType?: "task" | "todo";
+    }
+  | {
+      kind: "update_task";
+      reference: string;
+      targetId?: string;
+      title?: string;
+      taskType?: "task" | "todo";
+      dueDate?: DateKey;
+      dueTime?: string;
+      estimatedMinutes?: number;
+      priority?: "minor" | "major";
+    }
+  | { kind: "reopen_task"; reference: string; targetId?: string }
+  | { kind: "acknowledge_event"; reference: string; targetId?: string }
+  | {
+      kind: "create_event";
+      title: string;
+      date: DateKey;
+      startTime: string;
+      endTime: string;
+      location?: string;
     }
   | {
       kind: "create_note";
@@ -78,6 +103,7 @@ export type Intent =
   | { kind: "resume_reminders" }
   // The owner starts something and wants a check-in afterwards ("gaming for an hour").
   | { kind: "start_activity"; activity: string; minutes: number }
+  | { kind: "create_reminder"; title: string; date: DateKey; time: string }
   // Change one of the owner's settings (quiet hours, briefing time, routines, planning hours).
   | { kind: "set_preference"; key: SettableKey; value: unknown; summary: string }
   // Show the schedule for a range of dates with free time and what could be tackled, and schedule
@@ -120,6 +146,9 @@ export const INTENT_KINDS = [
   "capture",
   "recategorize",
   "complete_task",
+  "update_task",
+  "reopen_task",
+  "acknowledge_event",
   "delete_note",
   "setup_workspace",
   "snooze",
@@ -127,6 +156,7 @@ export const INTENT_KINDS = [
   "pause_reminders",
   "resume_reminders",
   "start_activity",
+  "create_reminder",
   "voice_control",
   "report_duration",
   "show_insights",
@@ -134,6 +164,7 @@ export const INTENT_KINDS = [
   "forget_insights",
   "set_preference",
   "show_schedule",
+  "create_event",
   "plan_work",
   "remember",
   "list_memory",
@@ -151,6 +182,7 @@ const captureItemWireSchema = z
     due_date: z.string().nullable(),
     due_time: z.string().nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
+    priority: z.enum(["minor", "major"]).nullable().optional(),
     category: z.string().max(100).nullable(),
     review: z.string().max(300).nullable(),
   })
@@ -166,7 +198,13 @@ export const intentWireSchema = z
     details: z.string().max(10_000).nullable(),
     due_date: z.string().nullable(),
     due_time: z.string().nullable(),
+    event_date: z.string().nullable(),
+    start_time: z.string().nullable(),
+    end_time: z.string().nullable(),
+    location: z.string().max(300).nullable(),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
+    priority: z.enum(["minor", "major"]).nullable(),
+    task_type: z.enum(["task", "todo"]).nullable().default(null),
     note_kind: z.enum(["note", "idea"]).nullable().default(null),
     status: z.enum(["open", "completed", "all"]).nullable(),
     from_date: z.string().nullable(),
@@ -232,6 +270,7 @@ function toCaptureItem(item: z.infer<typeof captureItemWireSchema>): CaptureItem
     ...(dueDate ? { dueDate } : {}),
     ...(dueTime ? { dueTime } : {}),
     ...(item.estimated_minutes ? { estimatedMinutes: item.estimated_minutes } : {}),
+    ...(item.priority ? { priority: item.priority } : {}),
     ...(category ? { category } : {}),
     ...(review ? { review } : {}),
   };
@@ -262,9 +301,11 @@ export function toIntent(raw: unknown): Intent {
         ...(dueFrom ? { dueFrom } : {}),
         ...(dueThrough ? { dueThrough } : {}),
         ...(search ? { search } : {}),
+        ...(wire.task_type ? { taskType: wire.task_type } : {}),
       };
     }
-    case "create_task": {
+    case "create_task":
+    case "update_task": {
       const dueDate = date(wire.due_date, "due_date");
       const dueTime = present(wire.due_time);
       if (dueTime !== undefined) {
@@ -276,13 +317,54 @@ export function toIntent(raw: unknown): Intent {
         }
       }
       const details = present(wire.details);
-      return {
-        kind: "create_task",
-        title: need(wire.title, "title"),
+      const fields = {
+        ...(wire.kind === "create_task"
+          ? { title: need(wire.title, "title") }
+          : present(wire.title)
+            ? { title: present(wire.title) }
+            : {}),
         ...(details ? { details } : {}),
         ...(dueDate ? { dueDate } : {}),
         ...(dueTime ? { dueTime } : {}),
         ...(wire.estimated_minutes ? { estimatedMinutes: wire.estimated_minutes } : {}),
+        ...(wire.priority ? { priority: wire.priority } : {}),
+        ...(wire.task_type ? { taskType: wire.task_type } : {}),
+      };
+      if (wire.kind === "update_task") {
+        if (!Object.keys(fields).length) throw new IntentError("update_task needs a change");
+        return {
+          kind: "update_task",
+          reference: present(wire.reference) ?? "",
+          ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+          ...fields,
+        };
+      }
+      return { kind: "create_task", ...fields, title: need(wire.title, "title") };
+    }
+    case "create_event": {
+      const eventDate = date(wire.event_date, "event_date");
+      if (!eventDate) throw new IntentError("event_date is required");
+      const startTime = need(wire.start_time, "start_time");
+      const endTime = need(wire.end_time, "end_time");
+      let startMinutes: number;
+      let endMinutes: number;
+      try {
+        startMinutes = parseTimeOfDay(startTime);
+        endMinutes = parseTimeOfDay(endTime);
+      } catch {
+        throw new IntentError("event times must be valid 24-hour times");
+      }
+      if (endMinutes <= startMinutes) {
+        throw new IntentError("event end_time must be after start_time");
+      }
+      const location = present(wire.location);
+      return {
+        kind: "create_event",
+        title: need(wire.title, "title"),
+        date: eventDate,
+        startTime,
+        endTime,
+        ...(location ? { location } : {}),
       };
     }
     case "create_note":
@@ -342,6 +424,8 @@ export function toIntent(raw: unknown): Intent {
       };
     }
     case "complete_task":
+    case "reopen_task":
+    case "acknowledge_event":
     case "delete_note": {
       const targetId = present(wire.target_id);
       return {
@@ -371,6 +455,22 @@ export function toIntent(raw: unknown): Intent {
         kind: "start_activity",
         activity: need(wire.title, "title"),
         minutes: wire.estimated_minutes,
+      };
+    }
+    case "create_reminder": {
+      const dueDate = date(wire.due_date, "due_date");
+      if (!dueDate) throw new IntentError("due_date is required");
+      const dueTime = need(wire.due_time, "due_time");
+      try {
+        parseTimeOfDay(dueTime);
+      } catch {
+        throw new IntentError("due_time is not a valid time");
+      }
+      return {
+        kind: "create_reminder",
+        title: need(wire.title, "title"),
+        date: dueDate,
+        time: dueTime,
       };
     }
     case "voice_control": {

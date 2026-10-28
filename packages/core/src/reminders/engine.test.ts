@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectDatabase, type DatabaseHandle } from "../db/client";
 import { createOwner } from "../db/domain";
 import { runMigrations } from "../db/migrate";
-import { reminders, tasks } from "../db/schema";
+import { events, reminders, tasks } from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
 import { createServices, issueOwnerPrincipal, type Principal } from "../services";
 import { MAX_LATE_INDIVIDUAL, runReminderCycle, type DeliveryResult } from "./engine";
 import { DEFAULT_REMINDER_SETTINGS, type ReminderSettings } from "./policy";
 import { syncReminders } from "./schedule";
-import { SENDING_STALE_MS, claimDue } from "./store";
+import { SENDING_STALE_MS, claimDue, scheduleReminder } from "./store";
 
 const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
 const TZ = "America/Chicago";
@@ -76,22 +76,206 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
   const addTask = (title = "Chemistry lab report", dueAt = DUE) =>
     services.tasks.create(owner, { title, dueAt });
+  const backdateTask = (id: string) =>
+    handle.db
+      .update(tasks)
+      .set({ createdAt: at("2026-10-14T12:00:00Z") })
+      .where(eq(tasks.id, id));
 
   describe("scheduling", () => {
+    it("uses each task's split count independently without enabling workspace-wide splits", async () => {
+      const a = await services.tasks.create(owner, {
+        title: "Five splits",
+        dueAt: DUE,
+        splitReminderCount: 5,
+      });
+      const b = await services.tasks.create(owner, {
+        title: "Two splits",
+        dueAt: DUE,
+        splitReminderCount: 2,
+      });
+      const c = await services.tasks.create(owner, {
+        title: "No splits",
+        dueAt: DUE,
+        splitReminderCount: 0,
+      });
+      for (const task of [a, b, c]) await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z");
+      const all = await rows();
+      expect(
+        all.filter((r) => r.subjectId === a.id && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(5);
+      expect(
+        all.filter((r) => r.subjectId === b.id && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(2);
+      expect(all.filter((r) => r.subjectId === c.id)).toHaveLength(1);
+      expect(await cycle("2026-10-16T20:45:00Z")).toMatchObject({ sent: 1 });
+      expect(sent.some((text) => text.includes("split-day"))).toBe(true);
+    });
+
+    it("honors item opt-out even when workspace splits are enabled", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Original only",
+        dueAt: DUE,
+        splitReminderCount: 0,
+      });
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 5 } });
+      expect(await rows()).toEqual([
+        expect.objectContaining({ dedupeKey: expect.stringContaining(":lead1h:") }),
+      ]);
+    });
+
+    it("adds event-specific splits before the start without replacing the original warning/check-in", async () => {
+      const event = await services.events.create(owner, {
+        title: "Gym",
+        startsAt: "2026-10-16T23:00:00Z",
+        endsAt: "2026-10-17T01:00:00Z",
+        timezone: TZ,
+        splitReminderCount: 2,
+      });
+      await handle.db
+        .update(events)
+        .set({ createdAt: at("2026-10-14T12:00:00Z") })
+        .where(eq(events.id, event.id));
+      await sync("2026-10-16T12:00:00Z");
+      const all = await rows();
+      expect(
+        all
+          .filter((r) => r.dedupeKey.includes(":split:"))
+          .map((r) => r.dueAt.toISOString())
+          .toSorted(),
+      ).toEqual(["2026-10-16T18:00:00.000Z", "2026-10-16T20:30:00.000Z"]);
+      expect(all.filter((r) => !r.dedupeKey.includes(":split:"))).toHaveLength(2);
+      expect(await sync("2026-10-16T18:00:15Z")).toMatchObject({ created: 0 });
+      expect(await cycle("2026-10-16T18:00:15Z")).toMatchObject({ sent: 1 });
+      expect(sent[0]).toContain("split-day reminder");
+      await services.events.cancel(owner, event.id);
+      await sync("2026-10-16T18:01:00Z");
+      expect((await rows()).some((r) => r.status === "scheduled")).toBe(false);
+    });
+
     it("creates deadline reminders ahead of a task, and creates nothing new on a repeat", async () => {
       await addTask();
       const first = await sync("2026-10-14T15:00:00.000Z");
-      expect(first.created).toBe(3);
+      expect(first.created).toBe(1);
       const again = await sync("2026-10-14T15:05:00.000Z");
       expect(again.created).toBe(0);
       const all = await rows();
-      expect(all).toHaveLength(3);
-      expect(all.map((r) => r.dueAt.toISOString()).toSorted()).toEqual([
-        "2026-10-15T22:00:00.000Z",
-        "2026-10-16T20:00:00.000Z",
-        "2026-10-16T21:00:00.000Z",
-      ]);
+      expect(all).toHaveLength(1);
+      expect(all[0]?.dueAt.toISOString()).toBe("2026-10-16T21:00:00.000Z");
       expect(all[0]?.message).toContain("Chemistry lab report");
+    });
+
+    it("adds configurable split alerts alongside the original warning, and delivers a due split after polling", async () => {
+      const task = await addTask("Late assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      const scheduled = (await rows()).filter((r) => r.subjectId === task.id);
+      expect(scheduled.map((r) => r.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-16T20:00:00.000Z",
+        "2026-10-16T23:30:00.000Z",
+        "2026-10-17T03:59:00.000Z",
+      ]);
+      expect(await sync("2026-10-16T20:00:15Z", { splitReminders: split })).toMatchObject({
+        created: 0,
+        canceled: 0,
+      });
+      expect(await cycle("2026-10-16T20:00:15Z", { splitReminders: split })).toMatchObject({
+        sent: 1,
+      });
+      expect(sent[0]).toContain("split-day check-in");
+      expect(await sync("2026-10-16T20:01:00Z", { splitReminders: split })).toMatchObject({
+        created: 0,
+      });
+
+      await sync("2026-10-16T20:02:00Z", { splitReminders: { enabled: false, count: 2 } });
+      const after = await rows();
+      expect(after.filter((r) => r.status === "scheduled")).toEqual([
+        expect.objectContaining({ dedupeKey: expect.stringContaining("lead1h") }),
+      ]);
+      expect(
+        after.filter((r) => r.dedupeKey.includes(":split:") && r.status === "canceled"),
+      ).toHaveLength(1);
+      expect(await sync("2026-10-16T20:03:00Z", { splitReminders: split })).toMatchObject({
+        created: 1,
+      });
+      expect((await rows()).filter((r) => r.status === "scheduled")).toHaveLength(2);
+      expect((await rows()).filter((r) => r.status === "sent")).toHaveLength(1);
+    });
+
+    it("reschedules split alerts on deadline/count changes and cancels them on completion", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 2 } });
+      await services.tasks.update(owner, task.id, { dueAt: "2026-10-18T04:59:00Z" });
+      await sync("2026-10-16T12:00:15Z", { splitReminders: { enabled: true, count: 5 } });
+      const after = await rows();
+      expect(
+        after.filter((r) => r.status === "scheduled" && r.dedupeKey.includes(":split:")),
+      ).toHaveLength(5);
+      expect(after.filter((r) => r.status === "canceled")).toHaveLength(3);
+      await services.tasks.complete(owner, task.id);
+      await sync("2026-10-16T12:01:00Z", { splitReminders: { enabled: true, count: 5 } });
+      expect((await rows()).filter((r) => r.status === "scheduled")).toEqual([]);
+    });
+
+    it("does not replay missed splits or deliver them the morning after their awake window", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      await cycle("2026-10-17T12:00:00Z", { splitReminders: split });
+      expect(sent.some((text) => text.includes("split-day check-in"))).toBe(false);
+      expect(
+        (await rows())
+          .filter((r) => r.dedupeKey.includes(":split:"))
+          .every((r) => r.status === "skipped"),
+      ).toBe(true);
+    });
+
+    it("expires retries relative to the original split slot rather than the retry time", async () => {
+      const task = await addTask("Assignment", "2026-10-17T04:59:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 2 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      outcome = () => ({ ok: false, reason: "rate_limited", retryAfterMs: 40 * 60_000 });
+      expect(await cycle("2026-10-16T20:00:00Z", { splitReminders: split })).toMatchObject({
+        retrying: 1,
+      });
+      outcome = () => ({ ok: true });
+      expect(await cycle("2026-10-16T20:40:00Z", { splitReminders: split })).toMatchObject({
+        sent: 0,
+        skipped: 1,
+      });
+      expect(sent).toEqual([]);
+    });
+
+    it("does not let a missed split suppress the original deadline warning", async () => {
+      const task = await addTask("Assignment", "2026-10-16T22:00:00Z");
+      await backdateTask(task.id);
+      const split = { enabled: true, count: 10 };
+      await sync("2026-10-16T12:00:00Z", { splitReminders: split });
+      await cycle("2026-10-16T22:01:00Z", { splitReminders: split });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain("due in 1 hour");
+      expect(sent[0]).not.toContain("split-day");
+    });
+
+    it("adds split alerts to date-only deadlines without replacing their morning warning", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Worksheet",
+        dueAt: "2026-10-16T00:00:00Z",
+        dueDateOnly: true,
+      });
+      await backdateTask(task.id);
+      await sync("2026-10-16T12:00:00Z", { splitReminders: { enabled: true, count: 5 } });
+      const all = await rows();
+      expect(all.filter((r) => r.dedupeKey.includes(":split:"))).toHaveLength(5);
+      expect(all.find((r) => r.dedupeKey.includes(":date:"))?.dueAt.toISOString()).toBe(
+        "2026-10-16T14:00:00.000Z",
+      );
     });
 
     it("treats a date-only deadline as the end of that local day", async () => {
@@ -102,11 +286,65 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       });
       await sync("2026-10-14T15:00:00.000Z");
       const times = (await rows()).map((r) => r.dueAt.toISOString()).toSorted();
-      expect(times).toEqual([
-        "2026-10-16T04:59:00.000Z",
-        "2026-10-17T02:59:00.000Z",
-        "2026-10-17T03:59:00.000Z",
-      ]);
+      expect(times).toEqual(["2026-10-16T14:00:00.000Z"]);
+      expect((await rows()).map((r) => r.message).join("\n")).toContain("due today");
+    });
+
+    it("schedules major deadlines two weeks ahead plus the closer configured reminders", async () => {
+      const dueAt = "2026-11-04T23:00:00.000Z";
+      const major = await services.tasks.create(owner, { title: "Exam", dueAt, priority: "major" });
+      const minor = await services.tasks.create(owner, { title: "Minor task", dueAt });
+
+      await sync("2026-10-21T23:00:00.000Z");
+
+      const all = await rows();
+      const twoWeekAlerts = all.filter((reminder) => reminder.dedupeKey.includes("lead336h"));
+      expect(twoWeekAlerts).toHaveLength(1);
+      expect(twoWeekAlerts[0]?.message).toContain('"Exam"');
+      expect(
+        all
+          .filter((reminder) => reminder.subjectId === major.id)
+          .map((reminder) => reminder.dedupeKey.match(/lead(\d+)h/)?.[1])
+          .toSorted(),
+      ).toEqual(["1", "168", "2", "24", "336", "72"]);
+      expect(all.filter((reminder) => reminder.subjectId === minor.id)).toHaveLength(1);
+      expect(all.filter((reminder) => reminder.status === "scheduled")).toHaveLength(7);
+    });
+
+    it("does not replay missed lead reminders for a task created shortly before its deadline", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Sister Pick up",
+        dueAt: "2026-10-26T19:30:00.000Z",
+        priority: "major",
+      });
+      const now = "2026-10-26T19:07:00.000Z";
+
+      expect(await sync(now)).toMatchObject({ created: 1, canceled: 0 });
+      const first = await rows();
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatchObject({
+        subjectId: task.id,
+        dedupeKey: `task:${task.id}:soon:1793043000000`,
+        dueAt: at(now),
+      });
+      expect(first[0]?.message).toContain("due at");
+      expect(first[0]?.message).not.toContain("tomorrow");
+
+      expect(await sync("2026-10-26T19:07:15.000Z")).toMatchObject({ created: 0, canceled: 0 });
+      expect((await rows()).filter((reminder) => reminder.status === "scheduled")).toHaveLength(1);
+    });
+
+    it("cancels pending leads for an overdue task instead of delivering them late", async () => {
+      const task = await addTask("Past task", "2026-10-16T22:00:00.000Z");
+      await sync("2026-10-15T20:00:00.000Z");
+
+      expect(await sync("2026-10-17T00:00:00.000Z")).toMatchObject({
+        created: 0,
+        canceled: 1,
+      });
+      const all = await rows();
+      expect(all.filter((reminder) => reminder.subjectId === task.id)).toHaveLength(1);
+      expect(all.every((reminder) => reminder.status === "canceled")).toBe(true);
     });
 
     it("replaces the reminders when the deadline moves, and cancels them when the task is done", async () => {
@@ -114,9 +352,9 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       await sync("2026-10-14T15:00:00.000Z");
       await services.tasks.update(owner, task.id, { dueAt: "2026-10-20T22:00:00.000Z" });
       const moved = await sync("2026-10-14T15:30:00.000Z");
-      expect(moved).toMatchObject({ created: 3, canceled: 3 });
+      expect(moved).toMatchObject({ created: 1, canceled: 1 });
       const all = await rows();
-      expect(all.filter((r) => r.status === "scheduled")).toHaveLength(3);
+      expect(all.filter((r) => r.status === "scheduled")).toHaveLength(1);
       expect(
         all.filter((r) => r.status === "canceled").every((r) => r.detail === "deadline changed"),
       ).toBe(true);
@@ -140,9 +378,70 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
         "2026-10-14T19:30:00.000Z",
       );
     });
+
+    it("sends a same-day meeting reminder and schedules all-day events for the morning", async () => {
+      const meeting = await services.events.create(owner, {
+        title: "Project review",
+        startsAt: "2026-10-14T15:20:00.000Z",
+        endsAt: "2026-10-14T16:20:00.000Z",
+        timezone: TZ,
+      });
+      const allDay = await services.events.create(owner, {
+        title: "Conference",
+        startsAt: "2026-10-15T05:00:00.000Z",
+        endsAt: "2026-10-16T05:00:00.000Z",
+        timezone: TZ,
+        allDay: true,
+      });
+      await sync("2026-10-14T15:00:00.000Z", { briefingTime: null });
+      const scheduled = await rows();
+      expect(
+        scheduled
+          .find((r) => r.subjectId === meeting.id && r.kind === "event")
+          ?.dueAt.toISOString(),
+      ).toBe("2026-10-14T14:50:00.000Z");
+      expect(scheduled.filter((r) => r.subjectId === allDay.id)).toMatchObject([
+        { kind: "event", dueAt: at("2026-10-15T14:00:00.000Z") },
+      ]);
+      expect(scheduled.some((r) => r.subjectId === allDay.id && r.kind === "check_in")).toBe(false);
+
+      const result = await cycle("2026-10-14T15:00:00.000Z", { briefingTime: null });
+      expect(result.sent).toBe(1);
+      expect(sent[0]).toContain("Project review");
+    });
   });
 
   describe("delivery", () => {
+    it("sends only the newest task alert when several lead reminders are overdue together", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Sister Pick up",
+        dueAt: "2026-10-16T22:00:00.000Z",
+        priority: "major",
+      });
+      for (const [lead, dueAt] of [
+        [24, "2026-10-15T22:00:00.000Z"],
+        [2, "2026-10-16T20:00:00.000Z"],
+        [1, "2026-10-16T21:00:00.000Z"],
+      ] as const) {
+        await scheduleReminder(handle.db, ownerId, {
+          kind: "task_deadline",
+          subjectType: "task",
+          subjectId: task.id,
+          dedupeKey: `task:${task.id}:lead${lead}h:${task.dueAt!.getTime()}`,
+          dueAt: at(dueAt),
+          message: `lead ${lead}`,
+        });
+      }
+
+      const report = await cycle("2026-10-16T21:30:00.000Z");
+
+      expect(report.sent).toBe(1);
+      expect(report.skipped).toBe(2);
+      expect(sent).toEqual(["(a little late) lead 1"]);
+      expect((await rows()).filter((reminder) => reminder.status === "sent")).toHaveLength(1);
+      expect((await rows()).filter((reminder) => reminder.status === "skipped")).toHaveLength(2);
+    });
+
     it("sends the one-hour warning at 60 minutes, once, without inferring completion from silence", async () => {
       const task = await addTask();
       const leads = { deadlineLeadHours: [1] };
@@ -161,7 +460,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("sends a due reminder exactly once, however often the cycle runs or restarts", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       expect((await cycle("2026-10-15T22:00:30.000Z")).sent).toBe(1);
       expect(sent).toHaveLength(1);
       expect(sent[0]).toContain("due tomorrow");
@@ -172,7 +471,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("retries a failed send with backoff, and sends it once when delivery recovers", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       outcome = () => ({ ok: false, reason: "error" });
       expect(await cycle("2026-10-15T22:00:30.000Z")).toMatchObject({ retrying: 1, sent: 0 });
       let row = (await rows()).find((r) => r.attempts === 1)!;
@@ -190,7 +489,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("gives up after the attempt limit and records why", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       outcome = () => ({ ok: false, reason: "rate_limited", retryAfterMs: 60_000 });
       let now = at("2026-10-15T22:00:30.000Z");
       for (let i = 0; i < 6; i++) {
@@ -204,11 +503,11 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("records blocked delivery as a failure that is visible, without retrying", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       outcome = () => ({ ok: false, reason: "blocked" });
       expect((await cycle("2026-10-15T22:00:30.000Z")).failed).toBe(1);
       const failed = (await rows()).find((r) => r.status === "failed");
-      expect(failed?.detail).toContain("DMs are closed");
+      expect(failed?.detail).toContain("private Discord channel");
       expect(failed?.attempts).toBe(1);
       await cycle("2026-10-15T22:30:00.000Z");
       expect(failed && (await rows()).find((r) => r.id === failed.id)?.attempts).toBe(1);
@@ -216,9 +515,9 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("never resends a job interrupted mid-send; it is marked unknown instead", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       // A worker claims the job and dies before recording the result.
-      const claimed = await claimDue(handle.db, at("2026-10-15T22:00:30.000Z"));
+      const claimed = await claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z"));
       expect(claimed).toHaveLength(1);
 
       const later = new Date(at("2026-10-15T22:00:30.000Z").getTime() + SENDING_STALE_MS + 1000);
@@ -232,11 +531,11 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("lets two workers race for a job and only one wins it", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       const results = await Promise.all([
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
-        claimDue(handle.db, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
+        claimDue(handle.db, ownerId, at("2026-10-15T22:00:30.000Z")),
       ]);
       expect(results.flat()).toHaveLength(1);
     });
@@ -245,7 +544,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
   describe("what is still worth sending", () => {
     it("skips a reminder for a task finished in the meantime", async () => {
       const task = await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       await services.tasks.complete(owner, task.id);
       const report = await cycle("2026-10-15T22:00:30.000Z");
       expect(report).toMatchObject({ sent: 0, skipped: 1 });
@@ -269,16 +568,16 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("sends a late but still relevant deadline reminder, marked as late", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
-      await cycle("2026-10-15T23:30:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
+      await cycle("2026-10-15T23:30:00.000Z", { deadlineLeadHours: [24] });
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatch(/^\(a little late\)/);
     });
 
     it("merges many missed reminders into one summary", async () => {
       for (let i = 0; i < MAX_LATE_INDIVIDUAL + 2; i++) await addTask(`Assignment ${i}`);
-      await sync("2026-10-14T15:00:00.000Z");
-      const report = await cycle("2026-10-15T23:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
+      const report = await cycle("2026-10-15T23:00:00.000Z", { deadlineLeadHours: [24] });
       expect(sent).toHaveLength(1);
       expect(sent[0]).toContain("missed 5 reminders");
       expect(report.summarized).toBe(5);
@@ -289,7 +588,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
   describe("quiet hours, limits, and pause", () => {
     it("holds a reminder during quiet hours and sends it when they end", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       const quiet = { quietHours: { start: "16:00", end: "23:00" } };
       expect(await cycle("2026-10-15T22:00:30.000Z", quiet)).toMatchObject({
         deferred: 1,
@@ -307,7 +606,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("stops at the daily limit", async () => {
       for (let i = 0; i < 4; i++) await addTask(`Task ${i}`);
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       await cycle("2026-10-15T22:00:30.000Z", { dailyLimit: 2 });
       expect(sent).toHaveLength(2);
       expect((await rows()).filter((r) => r.detail === "daily limit")).toHaveLength(2);
@@ -315,7 +614,7 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
 
     it("sends nothing while accountability is paused", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       expect((await cycle("2026-10-15T22:00:30.000Z", { paused: true })).skipped).toBe(1);
       expect(sent).toHaveLength(0);
     });
@@ -346,6 +645,38 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       });
       expect(sent).toEqual(["Fresh briefing text"]);
       expect(composed).toHaveLength(1);
+    });
+
+    it("moves pending briefings when the owner changes the saved time", async () => {
+      await sync("2026-10-14T11:00:00.000Z", { briefingTime: "08:00" });
+
+      expect((await sync("2026-10-14T16:02:00.000Z", { briefingTime: "12:03" })).created).toBe(0);
+      const briefings = (await rows()).filter((reminder) => reminder.kind === "briefing");
+      expect(briefings).toHaveLength(2);
+      expect(briefings.map((reminder) => reminder.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-14T17:03:00.000Z",
+        "2026-10-15T17:03:00.000Z",
+      ]);
+
+      expect((await cycle("2026-10-14T17:03:30.000Z")).sent).toBe(1);
+      expect(sent).toHaveLength(1);
+    });
+
+    it("cancels a pending briefing when disabled and can re-enable it that day", async () => {
+      await sync("2026-10-14T11:00:00.000Z", { briefingTime: "08:00" });
+      await sync("2026-10-14T11:05:00.000Z", { briefingTime: null });
+      expect((await rows()).filter((reminder) => reminder.kind === "briefing")).toEqual(
+        expect.arrayContaining([expect.objectContaining({ status: "canceled" })]),
+      );
+
+      await sync("2026-10-14T11:10:00.000Z", { briefingTime: "09:30" });
+      const briefings = (await rows()).filter((reminder) => reminder.kind === "briefing");
+      expect(briefings).toHaveLength(2);
+      expect(briefings.every((reminder) => reminder.status === "scheduled")).toBe(true);
+      expect(briefings.map((reminder) => reminder.dueAt.toISOString()).toSorted()).toEqual([
+        "2026-10-14T14:30:00.000Z",
+        "2026-10-15T14:30:00.000Z",
+      ]);
     });
 
     it("can turn the briefing off, and drops one that is hours late", async () => {
@@ -392,9 +723,9 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
   describe("through the services", () => {
     it("lists recent reminders and snoozes one that has not been sent", async () => {
       await addTask();
-      await sync("2026-10-14T15:00:00.000Z");
+      await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       const before = await services.reminders.recent(owner);
-      expect(before).toHaveLength(3);
+      expect(before).toHaveLength(1);
       const target = before.find((r) => r.dueAt.toISOString() === "2026-10-15T22:00:00.000Z")!;
 
       expect(await services.reminders.snooze(owner, target.id, 90)).toBe(true);
@@ -442,5 +773,39 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
     await sync("2026-10-14T15:00:00.000Z");
     expect(await rows()).toHaveLength(0);
     expect(await handle.db.select().from(tasks).where(eq(tasks.ownerId, other.id))).toHaveLength(1);
+  });
+
+  it("claims and recovers only this owner's reminder jobs", async () => {
+    const other = await createOwner(handle.db, { displayName: "Other" });
+    const theirs = await issueOwnerPrincipal(handle.db, other.id, {
+      source: "dashboard",
+      audience: "private",
+      initiator: "owner",
+    });
+    await services.tasks.create(theirs, { title: "Other's task", dueAt: DUE });
+    await syncReminders({
+      db: handle.db,
+      ownerId: other.id,
+      now: at("2026-10-14T15:00:00.000Z"),
+      timezone: TZ,
+      settings: settings({ deadlineLeadHours: [24, 2, 1] }),
+    });
+    const otherJobs = (await rows()).filter((row) => row.ownerId === other.id);
+    const stale = otherJobs[0]!;
+    await handle.db
+      .update(reminders)
+      .set({
+        status: "sending",
+        claimedAt: at("2026-10-15T21:57:00.000Z"),
+      })
+      .where(eq(reminders.id, stale.id));
+
+    await addTask();
+    await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24, 2, 1] });
+    await cycle("2026-10-15T22:00:30.000Z");
+
+    const after = (await rows()).filter((row) => row.ownerId === other.id);
+    expect(after.find((row) => row.id === stale.id)?.status).toBe("sending");
+    expect(after.filter((row) => row.status === "scheduled")).toHaveLength(2);
   });
 });

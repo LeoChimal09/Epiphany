@@ -38,7 +38,7 @@ import type {
   TextProvider,
   Turn,
 } from "./provider";
-import type { Note, Task } from "../db/schema";
+import type { CalendarEvent, Note, Task } from "../db/schema";
 
 // Long enough for a pasted page of assignments from a school system.
 export const MAX_MESSAGE_LENGTH = 8000;
@@ -68,6 +68,7 @@ export interface LastReminder {
   subjectType: "task" | "event" | null;
   subjectId: string | null;
   title: string;
+  receivedAt?: string;
 }
 
 // A setting change that needs a clear yes (raising how much Epi may notify the owner).
@@ -192,6 +193,9 @@ const taskContext = (task: Task, timezone: string): OpenTaskContext => ({
   id: task.id,
   title: task.title,
   due: localDue(task, timezone),
+  taskType: task.taskType,
+  priority: task.priority,
+  estimatedMinutes: task.estimatedMinutes,
 });
 
 const noteTitle = (note: Note) => note.title?.trim() || note.body.trim().slice(0, 60);
@@ -351,6 +355,12 @@ export function createAssistant(options: AssistantOptions) {
         };
       }
       const userText = message.trim();
+      if (
+        state.lastReminder?.receivedAt &&
+        clock().getTime() - Date.parse(state.lastReminder.receivedAt) > 60 * 60_000
+      ) {
+        state = { ...state, lastReminder: null, listed: [] };
+      }
       if (!userText) {
         return {
           reply: {
@@ -392,12 +402,20 @@ export function createAssistant(options: AssistantOptions) {
       let notes: Note[];
       let categories: string[];
       let activeIdea: Note | undefined;
+      let currentEvents: CalendarEvent[];
       try {
-        const [taskRows, noteRows, categoryRows] = await Promise.all([
+        const today = dateKeyOf(clock(), timezone);
+        const [taskRows, noteRows, categoryRows, eventRows] = await Promise.all([
           services.tasks.list(principal, { status: "open", limit: POOL_LIMIT }),
           services.notes.list(principal, { limit: POOL_LIMIT }),
           services.categories.list(principal),
+          services.events.list(principal, {
+            from: localWallToUtc(addDays(today, -1), 0, timezone),
+            to: localWallToUtc(addDays(today, 7), 0, timezone),
+            limit: 40,
+          }),
         ]);
+        currentEvents = eventRows;
         openTasks = taskRows;
         notes = noteRows;
         categories = categoryRows.map((category) => category.name);
@@ -441,7 +459,15 @@ export function createAssistant(options: AssistantOptions) {
         recentNotes: notes
           .slice(0, PROVIDER_NOTES)
           .map((note): NoteContext => ({ id: note.id, title: noteTitle(note), kind: note.kind })),
-        lastListed: state.listed,
+        lastListed: state.lastReminder?.subjectType === "event" ? [] : state.listed,
+        lastReminder: state.lastReminder ?? null,
+        events: currentEvents.map((event) => ({
+          id: event.id,
+          title: event.title,
+          startsAt: event.startsAt.toISOString(),
+          endsAt: event.endsAt.toISOString(),
+          allDay: event.allDay,
+        })),
         history: state.turns,
         pending:
           state.pending?.summary ??
@@ -1030,6 +1056,7 @@ export function createAssistant(options: AssistantOptions) {
             dueAt,
             dueDateOnly,
             estimatedMinutes: item.estimatedMinutes,
+            priority: item.priority,
             categoryId: category?.id,
             reviewNote: item.review ?? (!item.dueDate ? "no due date given" : undefined),
           });
@@ -1421,6 +1448,7 @@ export function createAssistant(options: AssistantOptions) {
         });
         const query = intent.search?.toLowerCase();
         const matched = rows.filter((task) => {
+          if (intent.taskType && task.taskType !== intent.taskType) return false;
           const due = localDue(task, timezone);
           if ((intent.dueFrom || intent.dueThrough) && !due) return false;
           if (intent.dueFrom && due && due < intent.dueFrom) return false;
@@ -1432,12 +1460,13 @@ export function createAssistant(options: AssistantOptions) {
         });
         const label =
           intent.status === "completed" ? "completed" : intent.status === "all" ? "" : "open";
+        const noun = intent.taskType === "todo" ? "to-dos" : "tasks";
         if (matched.length === 0) {
           return reply(
             {
               text: label
-                ? `I don't see any ${label} tasks that match that. Want me to look at something else?`
-                : "I don't see any tasks that match that. Want me to look at something else?",
+                ? `I don't see any ${label} ${noun} that match that. Want me to look at something else?`
+                : `I don't see any ${noun} that match that. Want me to look at something else?`,
               outcome: "listed",
               changed: false,
             },
@@ -1446,9 +1475,13 @@ export function createAssistant(options: AssistantOptions) {
         }
         const shown = matched.slice(0, LIST_LINES);
         const more = matched.length - shown.length;
-        const lines = shown.map((task) => `${task.title} (${dueText(task, timezone)})`);
+        const lines = shown.map((task) =>
+          task.taskType === "todo"
+            ? `${task.title} (to-do)`
+            : `${task.title} (${task.priority}, ${dueText(task, timezone)}${task.estimatedMinutes ? `, ${task.estimatedMinutes} min` : ""})`,
+        );
         const closing = more > 0 ? "" : "\nWant me to check any of these off?";
-        const text = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} tasks (${matched.length}):\n${numbered(lines)}${more > 0 ? `\n...and ${more} more.` : ""}${closing}`;
+        const text = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun} (${matched.length}):\n${numbered(lines)}${more > 0 ? `\n...and ${more} more.` : ""}${closing}`;
         return reply(
           { text, outcome: "listed", changed: false },
           { listed: shown.map((task) => taskContext(task, timezone)) },
@@ -1456,27 +1489,67 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_task": {
-        const { dueAt, dueDateOnly } = dueFields(intent.dueDate, intent.dueTime);
+        const due = dueFields(intent.dueDate, intent.dueTime);
         // With learning on, a task with no stated effort gets an estimate from what the owner has
         // reported for similar work (or their own correction), and says so.
-        const learned = intent.estimatedMinutes
-          ? null
-          : await learnedEstimate(principal, intent.title);
+        const learned =
+          intent.estimatedMinutes || intent.taskType === "todo"
+            ? null
+            : await learnedEstimate(principal, intent.title);
         const task = await services.tasks.create(principal, {
           title: intent.title,
+          taskType: intent.taskType,
           details: intent.details,
           sourceText: userText,
           sourceRef,
-          dueAt,
-          dueDateOnly,
+          dueAt: due.dueAt,
+          dueDateOnly: due.dueDateOnly,
           estimatedMinutes: intent.estimatedMinutes ?? learned?.minutes,
+          priority: intent.priority,
         });
         const effort = task.estimatedMinutes ? `, about ${task.estimatedMinutes} min` : "";
         const why = learned
           ? ` I guessed the time from ${learned.source === "correction" ? "what you told me" : "how long similar ones took you"}.`
           : "";
+        const timingFollowUp =
+          intent.taskType === "todo"
+            ? ""
+            : !due.dueAt && !task.estimatedMinutes
+              ? " Do you know when it's due or how long it might take? That's optional; you can leave it as-is or add timing to the task later."
+              : !due.dueAt
+                ? " Do you know when it's due? That's optional; you can leave it as-is or add a due date later."
+                : !task.estimatedMinutes
+                  ? " Do you know how long it might take? That's optional; you can leave it as-is or add an estimate later."
+                  : "";
         return reply({
-          text: `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}`,
+          text:
+            task.taskType === "todo"
+              ? `Got it, I added "${task.title}" as a to-do.${timingFollowUp}`
+              : `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
+          outcome: "created",
+          changed: true,
+        });
+      }
+
+      case "create_event": {
+        const startsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.startTime), timezone);
+        const endsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.endTime), timezone);
+        const event = await services.events.create(principal, {
+          title: intent.title,
+          startsAt,
+          endsAt,
+          timezone,
+          location: intent.location,
+        });
+        const time = new Intl.DateTimeFormat("en-US", {
+          timeZone: timezone,
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const startTime = time.format(startsAt).replace(/\u202f/g, " ");
+        const endTime = time.format(endsAt).replace(/\u202f/g, " ");
+        return reply({
+          text: `I added "${event.title}" to your calendar for ${dayLabel(intent.date)} from ${startTime} to ${endTime}.`,
           outcome: "created",
           changed: true,
         });
@@ -1736,7 +1809,9 @@ export function createAssistant(options: AssistantOptions) {
               text:
                 intent.key === "tracking.enabled"
                   ? "Turning this on means I'll keep track of how long things take when you tell me, so my estimates get better. You can pause it or have me erase it any time, and I never record anything from silence. Do you want me to turn it on?"
-                  : `That would let me send you more reminders each day (${intent.summary}). Do you want me to raise it?`,
+                  : intent.key === "reminders.split"
+                    ? `That adds split-day reminders (${intent.summary}) without changing your existing deadline alerts or daily notification limit. Do you want me to enable that?`
+                    : `That would let me send you more reminders each day (${intent.summary}). Do you want me to raise it?`,
               outcome: "confirmation_needed",
               changed: false,
             },
@@ -2007,14 +2082,134 @@ export function createAssistant(options: AssistantOptions) {
         });
       }
 
+      case "create_reminder": {
+        const targetAt = localWallToUtc(intent.date, parseTimeOfDay(intent.time), timezone);
+        const now = clock();
+        if (targetAt.getTime() <= now.getTime()) {
+          return reply({
+            text: `That time has already passed in your timezone. What future date and time should I remind you about "${intent.title}"?`,
+            outcome: "clarification",
+            changed: false,
+          });
+        }
+        const remindAt = new Date(Math.max(targetAt.getTime() - 30 * 60_000, now.getTime()));
+        const display = (value: Date) =>
+          new Intl.DateTimeFormat("en-US", {
+            timeZone: timezone,
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(value);
+        const notifyWhen = remindAt.getTime() <= now.getTime() + 60_000 ? "now" : display(remindAt);
+        await services.reminders.create(principal, {
+          message: `Time to "${intent.title}" (scheduled for ${display(targetAt)}).`,
+          at: remindAt,
+          kind: "custom",
+        });
+        return reply({
+          text: `Got it. I'll remind you in Discord ${notifyWhen === "now" ? "now" : `at ${notifyWhen}`}, before ${display(targetAt)}, to ${intent.title}.`,
+          outcome: "created",
+          changed: true,
+        });
+      }
+
       case "recategorize":
         return recategorize(principal, userText, intent, state, openTasks, notes);
 
+      case "acknowledge_event": {
+        const last = state.lastReminder;
+        const today = dateKeyOf(clock(), timezone);
+        const rows = await services.events.list(principal, {
+          from: localWallToUtc(addDays(today, -1), 0, timezone),
+          to: localWallToUtc(addDays(today, 7), 0, timezone),
+        });
+        const found = resolveReference(intent.reference, rows, {
+          listed:
+            last?.subjectType === "event"
+              ? rows.filter((event) => event.id === last.subjectId)
+              : [],
+        });
+        if (found.kind === "many") return clarify(found.items);
+        if (found.kind === "none")
+          return reply({
+            text: "Which event do you mean? I haven't changed any tasks or events.",
+            outcome: "clarification",
+            changed: false,
+          });
+        const result = await services.events.acknowledge(principal, found.item.id);
+        return reply(
+          {
+            text: `Got it, I stopped the remaining check-ins for "${result.event.title}". The event stays on your calendar and in your history; I haven't canceled it or completed any task.`,
+            outcome: "completed",
+            changed: result.changed,
+          },
+          { lastReminder: null, listed: [] },
+        );
+      }
+
+      case "update_task":
+      case "reopen_task": {
+        const rows =
+          intent.kind === "reopen_task"
+            ? await services.tasks.list(principal, { status: "completed", limit: POOL_LIMIT })
+            : openTasks;
+        const found = resolveReference(intent.reference, rows, {
+          listed: state.listed.flatMap((item) => {
+            const row = rows.find((row) => row.id === item.id);
+            return row ? [row] : [];
+          }),
+        });
+        if (found.kind === "many") return clarify(found.items);
+        if (found.kind === "none")
+          return reply({
+            text: "Which task or to-do do you want to change? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
+        const result =
+          intent.kind === "reopen_task"
+            ? await services.tasks.reopen(principal, found.item.id)
+            : await services.tasks.update(principal, found.item.id, {
+                expectedVersion: found.item.version,
+                ...(intent.title ? { title: intent.title } : {}),
+                ...(intent.taskType || intent.dueDate || intent.estimatedMinutes
+                  ? { taskType: intent.taskType ?? "task" }
+                  : {}),
+                ...(intent.priority ? { priority: intent.priority } : {}),
+                ...(intent.estimatedMinutes ? { estimatedMinutes: intent.estimatedMinutes } : {}),
+                ...(intent.dueDate ? dueFields(intent.dueDate, intent.dueTime) : {}),
+              });
+        return reply({
+          text: result.changed
+            ? `I ${intent.kind === "reopen_task" ? "reopened" : "updated"} "${result.task.title}" (${result.task.taskType === "todo" ? "to-do" : `${result.task.priority}, ${dueText(result.task, timezone)}`}).`
+            : `"${result.task.title}" was already up to date.`,
+          outcome: "completed",
+          changed: result.changed,
+        });
+      }
+
       case "complete_task": {
         const pool = openTasks.map((task) => ({ id: task.id, title: task.title }));
+        const last = state.lastReminder;
+        // A provider-selected ID is not evidence that a different record was requested.
+        const listed = last?.subjectType === "event" ? [] : state.listed;
+        const foundEvent =
+          last?.subjectType === "event"
+            ? resolveReference(
+                intent.reference,
+                [{ id: last.subjectId ?? "", title: last.title }],
+                {
+                  listed: [{ id: last.subjectId ?? "", title: last.title }],
+                },
+              )
+            : null;
+        if (foundEvent?.kind === "one")
+          return reply({
+            text: `Do you mean you've arrived at or finished "${last!.title}"? That's an event, not a task. I haven't checked off any task. I can stop its remaining check-ins without canceling the event.`,
+            outcome: "clarification",
+            changed: false,
+          });
         const found = resolveReference(intent.reference, pool, {
-          listed: state.listed.map(({ id, title }) => ({ id, title })),
-          ...(intent.targetId ? { targetId: intent.targetId } : {}),
+          listed: listed.map(({ id, title }) => ({ id, title })),
         });
         if (found.kind === "none") {
           return reply({
@@ -2024,6 +2219,16 @@ export function createAssistant(options: AssistantOptions) {
           });
         }
         if (found.kind === "many") return clarify(found.items);
+        if (
+          last?.subjectType === "event" &&
+          resolveReference(intent.reference, [{ id: "message", title: userText }]).kind !== "one"
+        ) {
+          return reply({
+            text: `Your latest reminder was for the event "${last.title}". Which event or task do you mean? Nothing was changed.`,
+            outcome: "clarification",
+            changed: false,
+          });
+        }
         const { task, changed } = await services.tasks.complete(principal, found.item.id);
         let extra = "";
         if (changed) {
@@ -2044,7 +2249,13 @@ export function createAssistant(options: AssistantOptions) {
             outcome: "completed",
             changed,
           },
-          changed ? { lastChange: { kind: "completed", taskId: task.id, title: task.title } } : {},
+          changed
+            ? {
+                lastChange: { kind: "completed", taskId: task.id, title: task.title },
+                lastReminder: null,
+                listed: [],
+              }
+            : {},
         );
       }
 

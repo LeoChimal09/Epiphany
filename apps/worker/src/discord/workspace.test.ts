@@ -201,11 +201,12 @@ describe("applying the workspace plan", () => {
 });
 
 describe("which conversations count as private", () => {
-  it("accepts DMs and the unseen #assistant channel in the Epiphany category only", () => {
+  it("accepts DMs and private assistant/check-ins channels in the Epiphany category only", () => {
     expect(workspaceAudience({ isDm: true })).toBe("private");
     const ok = { isDm: false, name: "assistant", parentName: "epiphany", everyoneCanView: false };
     expect(workspaceAudience(ok)).toBe("private");
     expect(workspaceAudience({ ...ok, name: "Assistant", parentName: "Epiphany" })).toBe("private");
+    expect(workspaceAudience({ ...ok, name: "check-ins" })).toBe("private");
   });
 
   it("treats a visible, misplaced, or unknown channel as shared", () => {

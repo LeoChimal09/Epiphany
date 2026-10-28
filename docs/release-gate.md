@@ -56,7 +56,7 @@ date and result in the GOALS.md progress record.
 - [ ] A real Railway MySQL backup restored into a scratch database and verified with the drill; time
       recorded against the 4 h target.
 - [ ] The full flow with real accounts: create a task in Discord, see it on the dashboard, plan a work
-      block, receive the reminder as a DM, reply "finished it", and see it complete everywhere.
+      block, receive the reminder in private `#check-ins`, reply "finished it", and see it complete everywhere.
 - [ ] The same reminder delivered with the dashboard closed, and after restarting the worker.
 - [ ] Stop the OpenAI key, the Discord token, and the database one at a time and confirm the documented
       behavior (docs/operating-policies.md "Outages").

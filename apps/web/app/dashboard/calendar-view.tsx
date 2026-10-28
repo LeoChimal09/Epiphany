@@ -6,6 +6,7 @@ import { loadDashboardSchedule } from "./actions";
 import type { DashboardTask } from "./model";
 import {
   buildDay,
+  formatClock,
   formatDayLabel,
   formatWeekRange,
   monthDays,
@@ -275,7 +276,10 @@ export function MonthView({
           const content = buildDay(day, items, tasks, timezone);
           const entries = [
             ...content.allDay.map((event) => `Event: ${event.title}`),
-            ...content.deadlines.map((task) => `Due: ${task.title}`),
+            ...content.deadlines.map(
+              (task) =>
+                `Due${task.dueAt && !task.dueDateOnly ? ` at ${formatClock(new Date(task.dueAt).getTime(), timezone)}` : ""}: ${task.title}`,
+            ),
             ...content.entries.map(
               (entry) =>
                 `${entry.item.kind === "work" ? "Work" : "Event"}: ${entry.item.title}${entry.item.conflict ? " (overlap)" : ""}`,

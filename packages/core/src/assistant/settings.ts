@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { splitReminderSchema } from "../reminders/policy";
 
 // The preferences a conversation may change. Each has a strict shape so a misheard value is
 // refused instead of stored, and the owner can only set things Epi actually uses.
@@ -22,6 +23,7 @@ const SCHEMAS = {
   "reminders.daily_limit": z.number().int().min(1).max(100),
   "reminders.event_lead_minutes": z.number().int().min(1).max(1440),
   "reminders.deadline_lead_hours": z.array(z.number().int().min(1).max(336)).min(1).max(5),
+  "reminders.split": splitReminderSchema,
   "routine.bedtime": z.object({ time }).strict(),
   "routine.workout": z
     .object({
@@ -69,6 +71,13 @@ export function parseSettingValue(key: SettableKey, raw: string): { value: unkno
 export function needsConsent(key: SettableKey, value: unknown, current: unknown): boolean {
   // Turning learning from the owner's habits on also needs a clear yes.
   if (key === "tracking.enabled") return value === true && current !== true;
+  if (key === "reminders.split") {
+    const before = splitReminderSchema.safeParse(current);
+    const after = splitReminderSchema.parse(value);
+    return (
+      after.enabled && (!before.success || !before.data.enabled || after.count > before.data.count)
+    );
+  }
   if (key !== "reminders.daily_limit") return false;
   const before = typeof current === "number" ? current : 12;
   return typeof value === "number" && value > before;

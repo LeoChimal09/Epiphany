@@ -14,7 +14,11 @@ export interface OverviewSurface {
   guildId: string;
   // The id of the view's channel, or null when it does not exist or is not private.
   channelFor(view: OverviewView): Promise<string | null>;
-  post(channelId: string, content: string): Promise<string>;
+  post(
+    channelId: string,
+    content: string,
+    options?: { notifyUserId: string; nonce: string },
+  ): Promise<string>;
   edit(channelId: string, messageId: string, content: string): Promise<"edited" | "missing">;
   // An earlier message of Epi's for this view (found by its marker), for example one whose
   // binding was lost, so it is reused instead of duplicated.

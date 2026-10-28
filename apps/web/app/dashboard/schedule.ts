@@ -62,11 +62,20 @@ export interface DayEntry {
   columns: number;
 }
 
+export interface DayDeadlineEntry {
+  task: DashboardTask;
+  dueMinute: number;
+  column: number;
+  columns: number;
+  conflict: boolean;
+}
+
 export interface DayView {
   date: DateKey;
   allDay: TimelineItem[];
   entries: DayEntry[];
   deadlines: DashboardTask[];
+  deadlineEntries: DayDeadlineEntry[];
   completed: DashboardTask[];
   plannedMinutes: number;
   dueEffortMinutes: number;
@@ -75,6 +84,7 @@ export interface DayView {
 
 const MINUTE_MS = 60_000;
 const MIN_VISIBLE_MINUTES = 20;
+const DEADLINE_MARKER_WINDOW_MINUTES = 40;
 
 export function weekStartOf(date: DateKey): DateKey {
   const index = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].indexOf(weekdayOf(date));
@@ -169,7 +179,7 @@ function dueKey(task: DashboardTask, timezone: string): DateKey | null {
   return task.dueDateOnly ? task.dueAt.slice(0, 10) : dateKeyOf(due, timezone);
 }
 
-// Side-by-side columns for overlapping items; each overlap cluster shares one column count.
+// Side-by-side columns for overlapping scheduled items; each overlap cluster shares one column count.
 function layoutColumns(entries: Omit<DayEntry, "column" | "columns">[]): DayEntry[] {
   const sorted = entries.toSorted(
     (first, second) => first.startMinute - second.startMinute || first.endMinute - second.endMinute,
@@ -197,6 +207,52 @@ function layoutColumns(entries: Omit<DayEntry, "column" | "columns">[]): DayEntr
   }
   closeCluster();
   return placed;
+}
+
+function layoutDeadlineMarkers(
+  entries: Array<Omit<DayDeadlineEntry, "column" | "columns">>,
+): DayDeadlineEntry[] {
+  const sorted = entries.toSorted((first, second) => first.dueMinute - second.dueMinute);
+  const placed: Array<DayDeadlineEntry & { startMinute: number; endMinute: number }> = [];
+  let cluster: typeof placed = [];
+  let columnEnds: number[] = [];
+  let clusterEnd = -1;
+
+  const closeCluster = () => {
+    for (const entry of cluster) entry.columns = columnEnds.length;
+    cluster = [];
+    columnEnds = [];
+  };
+
+  for (const entry of sorted) {
+    const startMinute = Math.max(0, entry.dueMinute - DEADLINE_MARKER_WINDOW_MINUTES / 2);
+    const endMinute = Math.min(1440, entry.dueMinute + DEADLINE_MARKER_WINDOW_MINUTES / 2);
+    if (cluster.length > 0 && startMinute >= clusterEnd) closeCluster();
+    let column = columnEnds.findIndex((end) => end <= startMinute);
+    if (column === -1) column = columnEnds.length;
+    columnEnds[column] = endMinute;
+    clusterEnd = cluster.length === 0 ? endMinute : Math.max(clusterEnd, endMinute);
+    cluster.push({ ...entry, startMinute, endMinute, column, columns: 1 });
+    placed.push(cluster[cluster.length - 1]!);
+  }
+  closeCluster();
+  const conflicts = new Set<string>();
+  for (let index = 0; index < placed.length; index += 1) {
+    const current = placed[index]!;
+    for (let next = index + 1; next < placed.length; next += 1) {
+      const other = placed[next]!;
+      if (other.startMinute >= current.endMinute) break;
+      conflicts.add(current.task.id);
+      conflicts.add(other.task.id);
+    }
+  }
+  return placed.map(({ task, dueMinute, column, columns }) => ({
+    task,
+    dueMinute,
+    column,
+    columns,
+    conflict: conflicts.has(task.id),
+  }));
 }
 
 export function buildDay(
@@ -247,6 +303,15 @@ export function buildDay(
   const deadlines = tasks
     .filter((task) => task.status === "open" && dueKey(task, timezone) === date)
     .toSorted((first, second) => (first.dueAt ?? "").localeCompare(second.dueAt ?? ""));
+  const deadlineEntries = layoutDeadlineMarkers(
+    deadlines.flatMap((task) => {
+      if (!task.dueAt || task.dueDateOnly) return [];
+      const dueAt = new Date(task.dueAt);
+      if (Number.isNaN(dueAt.getTime())) return [];
+      const { hour, minute } = localParts(dueAt, timezone);
+      return [{ task, dueMinute: hour * 60 + minute, conflict: false }];
+    }),
+  );
   const completed = tasks.filter(
     (task) =>
       task.status === "completed" &&
@@ -259,10 +324,13 @@ export function buildDay(
     allDay,
     entries,
     deadlines,
+    deadlineEntries,
     completed,
     plannedMinutes,
     dueEffortMinutes: deadlines.reduce((total, task) => total + (task.estimatedMinutes ?? 0), 0),
-    conflictCount: timed.filter((item) => item.conflict).length,
+    conflictCount:
+      entries.filter((entry) => entry.item.conflict).length +
+      deadlineEntries.filter((entry) => entry.conflict).length,
   };
 }
 
@@ -270,7 +338,7 @@ export function buildDay(
 // the default waking hours.
 export function hourBounds(
   days: DayView[],
-  defaults = { start: 7, end: 21 },
+  defaults = { start: 0, end: 24 },
 ): { start: number; end: number } {
   let start = defaults.start;
   let end = defaults.end;

@@ -9,6 +9,17 @@
   cursor: pointer;
   font-weight: 700;
 }
+.group {
+  margin: 12px 0;
+}
+.group > summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: #181818;
+}
 .fields {
   display: grid;
   gap: 12px;

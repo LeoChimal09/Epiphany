@@ -13,7 +13,10 @@ import {
 import { categories, notes, tasks, type Category, type Note, type Task } from "./schema";
 
 export interface TaskPatch {
+  splitReminderCount?: number | null;
+  taskType?: "task" | "todo";
   title?: string;
+  priority?: "minor" | "major";
   details?: string | null;
   // null clears the deadline.
   dueAt?: Date | null;
@@ -59,31 +62,67 @@ export async function updateTask(
       throw new VersionConflictError("Task", current.version);
     }
 
+    if (
+      patch.dueDateOnly === true &&
+      (patch.dueAt === undefined ? current.dueAt : patch.dueAt) === null
+    ) {
+      throw new InvalidChangeError("dueDateOnly needs a deadline");
+    }
+
     const next = {
+      splitReminderCount:
+        patch.splitReminderCount === undefined
+          ? current.splitReminderCount
+          : patch.splitReminderCount,
+      taskType: patch.taskType ?? current.taskType,
       title: patch.title ?? current.title,
+      priority:
+        (patch.taskType ?? current.taskType) === "todo"
+          ? "minor"
+          : (patch.priority ?? current.priority),
       details: patch.details === undefined ? current.details : patch.details,
-      dueAt: patch.dueAt === undefined ? current.dueAt : patch.dueAt,
-      dueDateOnly: patch.dueDateOnly ?? current.dueDateOnly,
+      dueAt:
+        (patch.taskType ?? current.taskType) === "todo"
+          ? null
+          : patch.dueAt === undefined
+            ? current.dueAt
+            : patch.dueAt,
+      dueDateOnly:
+        (patch.taskType ?? current.taskType) === "todo"
+          ? false
+          : (patch.dueDateOnly ?? current.dueDateOnly),
       estimatedMinutes:
-        patch.estimatedMinutes === undefined ? current.estimatedMinutes : patch.estimatedMinutes,
+        (patch.taskType ?? current.taskType) === "todo"
+          ? null
+          : patch.estimatedMinutes === undefined
+            ? current.estimatedMinutes
+            : patch.estimatedMinutes,
       categoryId:
         patch.categoryId === undefined
           ? current.categoryId
           : await resolveCategory(tx, actor.ownerId, patch.categoryId),
-      remainingMinutes: current.remainingMinutes,
+      remainingMinutes:
+        (patch.taskType ?? current.taskType) === "todo" ? null : current.remainingMinutes,
       reviewNote:
-        patch.reviewNote === undefined
-          ? patch.dueAt
-            ? null
-            : current.reviewNote
-          : patch.reviewNote,
+        (patch.taskType ?? current.taskType) === "todo"
+          ? null
+          : patch.reviewNote === undefined
+            ? patch.dueAt
+              ? null
+              : current.reviewNote
+            : patch.reviewNote,
     };
+
+    if (next.taskType !== "todo" && next.dueAt === null && next.estimatedMinutes === null) {
+      next.taskType = "todo";
+      next.priority = "minor";
+      next.dueDateOnly = false;
+      next.remainingMinutes = null;
+      next.reviewNote = null;
+    }
 
     // A date-only deadline needs a deadline; clearing the deadline clears the flag.
     if (next.dueAt === null) {
-      if (patch.dueDateOnly === true) {
-        throw new InvalidChangeError("dueDateOnly needs a deadline");
-      }
       next.dueDateOnly = false;
     }
 
@@ -98,7 +137,19 @@ export async function updateTask(
 
     const fields: string[] = [];
     const values: Record<string, unknown> = {};
+    if (next.splitReminderCount !== current.splitReminderCount) {
+      fields.push("splitReminderCount");
+      values.splitReminderCount = { from: current.splitReminderCount, to: next.splitReminderCount };
+    }
+    if (next.taskType !== current.taskType) {
+      fields.push("taskType");
+      values.taskType = { from: current.taskType, to: next.taskType };
+    }
     if (next.title !== current.title) fields.push("title");
+    if (next.priority !== current.priority) {
+      fields.push("priority");
+      values.priority = { from: current.priority, to: next.priority };
+    }
     if (next.details !== current.details) fields.push("details");
     if (!sameDate(next.dueAt, current.dueAt)) {
       fields.push("dueAt");

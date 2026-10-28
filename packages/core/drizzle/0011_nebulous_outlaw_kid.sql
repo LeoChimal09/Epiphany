@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `task_type` enum('task','todo') DEFAULT 'task' NOT NULL;

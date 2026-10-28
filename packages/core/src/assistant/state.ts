@@ -16,7 +16,16 @@ const conversationStateSchema = z
       .max(8),
     listed: z
       .array(
-        z.object({ id: text(64), title: text(300), due: z.string().max(10).nullable() }).strict(),
+        z
+          .object({
+            id: text(64),
+            title: text(300),
+            due: z.string().max(10).nullable(),
+            taskType: z.enum(["task", "todo"]).optional(),
+            priority: z.enum(["minor", "major"]).optional(),
+            estimatedMinutes: z.number().nullable().optional(),
+          })
+          .strict(),
       )
       .max(15),
     pendingCapture: z
@@ -81,6 +90,7 @@ const conversationStateSchema = z
         subjectType: z.enum(["task", "event"]).nullable(),
         subjectId: text(64).nullable(),
         title: text(300),
+        receivedAt: z.iso.datetime().optional(),
       })
       .strict()
       .nullable()

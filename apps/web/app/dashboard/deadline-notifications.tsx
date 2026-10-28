@@ -110,8 +110,8 @@ export function DeadlineNotifications({
           </nav>
         ) : null}
         <p className={styles.limitNotice}>
-          Updates while this dashboard is open. Background Discord DMs require the reminder worker
-          running and DMs enabled; quiet hours, pause and daily limits still apply.
+          Updates while this dashboard is open. Background Discord reminders require the reminder
+          worker running and DMs enabled; quiet hours, pause and daily limits still apply.
         </p>
         {truncated ? (
           <p className={styles.limitNotice}>

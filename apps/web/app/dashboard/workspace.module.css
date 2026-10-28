@@ -39,6 +39,10 @@
 .workspace select {
   font: inherit;
 }
+.workspace select option {
+  color: var(--ink);
+  background-color: var(--surface-2);
+}
 .workspace button,
 .workspace a,
 .workspace input,
@@ -823,11 +827,18 @@
   min-width: 0;
 }
 .fields > label,
+.timeRange > label,
 .searchLabel {
   display: grid;
   gap: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+.timeRange {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
 }
 .fields input:not([type="radio"], [type="checkbox"]),
 .fields textarea,
@@ -1118,6 +1129,12 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.eventHeading {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 700;
+}
 .taskCheckbox {
   width: 20px;
   height: 20px;
@@ -1183,6 +1200,10 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+.taskMeta strong {
+  color: var(--muted);
+  font-weight: 700;
 }
 .overdue {
   color: #ff8a8f;
@@ -1385,7 +1406,9 @@
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
-  overflow: hidden;
+  max-height: min(70dvh, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .gridHead,
 .gridBody {
@@ -1475,10 +1498,61 @@
   background: rgba(29, 185, 84, 0.16);
   border-color: rgba(29, 185, 84, 0.4);
 }
+.slotDeadline {
+  position: absolute;
+  left: 4px;
+  z-index: 2;
+  box-sizing: border-box;
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(45, 125, 255, 0.95);
+  color: #e2edff;
+  background: rgba(45, 125, 255, 0.82);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+}
+.slotDeadline span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .slotConflict {
+  color: #fff4f4;
+  background: rgba(170, 24, 35, 0.92);
+  border: 2px solid #ff454f;
+  box-shadow:
+    inset 4px 0 0 #ff454f,
+    0 0 0 2px rgba(255, 69, 79, 0.24);
+}
+.conflictBadge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid #ff8a90;
+  border-radius: 999px;
+  color: #fff;
+  background: #a91823;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.majorTag {
+  padding: 2px 7px;
+  border-radius: 999px;
   color: #ffd2d4;
-  background: rgba(224, 71, 76, 0.2);
-  border-color: var(--danger);
+  background: rgba(224, 71, 76, 0.16);
+  font-size: 11px;
+  font-weight: 700;
 }
 .slotTitle {
   display: flex;
@@ -1539,11 +1613,21 @@
   align-items: flex-start;
   overflow-wrap: anywhere;
 }
+.agendaList li > span:not(.agendaTime) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.agendaComplete {
+  flex: 0 0 auto;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
 .agendaTime {
-  flex-shrink: 0;
+  flex: 0 0 7.6rem;
   min-width: 7.6rem;
   color: var(--muted-2);
   font-size: 12px;
+  white-space: nowrap;
 }
 .agendaMeta,
 .agendaWarn {

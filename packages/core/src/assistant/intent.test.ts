@@ -8,7 +8,12 @@ const wire = (over: Record<string, unknown>) => ({
   details: null,
   due_date: null,
   due_time: null,
+  event_date: null,
+  start_time: null,
+  end_time: null,
+  location: null,
   estimated_minutes: null,
+  priority: null,
   note_kind: null,
   status: null,
   from_date: null,
@@ -23,6 +28,34 @@ const wire = (over: Record<string, unknown>) => ({
 });
 
 describe("intent parsing", () => {
+  it("accepts configurable split reminder counts and rejects invalid settings", () => {
+    expect(
+      toIntent(
+        wire({
+          kind: "set_preference",
+          search: "reminders.split",
+          details: '{"enabled":true,"count":5}',
+          title: "five split reminders",
+        }),
+      ),
+    ).toMatchObject({
+      kind: "set_preference",
+      key: "reminders.split",
+      value: { enabled: true, count: 5 },
+    });
+    for (const count of [0, -1, 2.5, 101]) {
+      expect(() =>
+        toIntent(
+          wire({
+            kind: "set_preference",
+            search: "reminders.split",
+            details: JSON.stringify({ enabled: true, count }),
+            title: "split reminders",
+          }),
+        ),
+      ).toThrow(IntentError);
+    }
+  });
   it("resumes an idea without requiring new points or saving anything", () => {
     expect(
       toIntent(wire({ kind: "resume_idea", reference: "tool library", details: null })),
@@ -115,6 +148,7 @@ describe("intent parsing", () => {
           due_date: "2026-10-16",
           due_time: "17:00",
           estimated_minutes: 45,
+          priority: "major",
         }),
       ),
     ).toEqual({
@@ -123,7 +157,57 @@ describe("intent parsing", () => {
       dueDate: "2026-10-16",
       dueTime: "17:00",
       estimatedMinutes: 45,
+      priority: "major",
     });
+    expect(
+      toIntent(
+        wire({
+          kind: "create_event",
+          title: "Study group",
+          event_date: "2026-10-16",
+          start_time: "16:30",
+          end_time: "17:00",
+          location: "Library",
+        }),
+      ),
+    ).toEqual({
+      kind: "create_event",
+      title: "Study group",
+      date: "2026-10-16",
+      startTime: "16:30",
+      endTime: "17:00",
+      location: "Library",
+    });
+    expect(toIntent(wire({ kind: "create_task", title: "Exam next month" }))).toEqual({
+      kind: "create_task",
+      title: "Exam next month",
+    });
+    expect(
+      toIntent(
+        wire({
+          kind: "create_reminder",
+          title: "Go grocery shopping",
+          due_date: "2026-10-26",
+          due_time: "14:00",
+        }),
+      ),
+    ).toEqual({
+      kind: "create_reminder",
+      title: "Go grocery shopping",
+      date: "2026-10-26",
+      time: "14:00",
+    });
+    for (const invalid of [
+      wire({ kind: "create_reminder", title: "Groceries", due_date: null, due_time: "14:00" }),
+      wire({
+        kind: "create_reminder",
+        title: "Groceries",
+        due_date: "2026-10-26",
+        due_time: "2pm",
+      }),
+    ]) {
+      expect(() => toIntent(invalid)).toThrow(IntentError);
+    }
     expect(
       toIntent(wire({ kind: "complete_task", reference: "chem lab", target_id: "abc" })),
     ).toEqual({
@@ -260,6 +344,13 @@ describe("intent parsing", () => {
       wire({ kind: "create_task", title: "x", due_date: "2026-02-30" }),
       wire({ kind: "create_task", title: "x", due_time: "17:00" }),
       wire({ kind: "create_task", title: "x", due_date: "2026-10-16", due_time: "5pm" }),
+      wire({
+        kind: "create_event",
+        title: "Study group",
+        event_date: "2026-10-16",
+        start_time: "17:00",
+        end_time: "16:30",
+      }),
       wire({ kind: "list_tasks", from_date: "2026-10-18", through_date: "2026-10-12" }),
       wire({ kind: "create_task", title: "x", estimated_minutes: 0 }),
       { ...wire({ kind: "respond", text: "hi" }), sql: "DROP TABLE tasks" },

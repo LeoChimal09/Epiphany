@@ -157,6 +157,11 @@ function today(data: OverviewData): string {
       );
     }
   }
+  const todos = data.openTasks.filter((task) => task.taskType === "todo");
+  if (todos.length) {
+    lines.push("__To-dos__");
+    for (const task of todos) lines.push(`• ${plain(task.title)} (to-do)`);
+  }
   return assemble("today", `Today · ${dayLabel(key)}`, lines, "Nothing due or scheduled today.");
 }
 
@@ -220,7 +225,7 @@ function priorities(data: OverviewData): string {
       countdown = days < 0 ? `, ${-days}d overdue` : days === 0 ? ", today" : `, in ${days}d`;
     }
     const category = data.categoryNames.get(task.categoryId);
-    return `${index + 1}. ${plain(task.title)} (${dueText(task, timezone)}${countdown}${category && category !== "Inbox" ? `, ${plain(category)}` : ""})${review(task)}`;
+    return `${index + 1}. ${plain(task.title)} (${task.taskType === "todo" ? "to-do" : `${task.priority}, ${dueText(task, timezone)}${countdown}`}${category && category !== "Inbox" ? `, ${plain(category)}` : ""})${review(task)}`;
   });
   if (ranked.length > 10) lines.push(`…and ${ranked.length - 10} more open tasks`);
   return assemble(
@@ -288,6 +293,7 @@ const VERBS: Record<string, string> = {
   "note.delete": "Deleted note",
   "event.create": "Added event",
   "event.cancel": "Canceled event",
+  "event.acknowledge": "Stopped event check-ins",
   "work_block.create": "Planned work block",
   "work_block.remove": "Removed work block",
   "category.create": "Created category",

@@ -26,6 +26,7 @@ describe("conversation evaluation harness", () => {
       "pause_reminders",
       "resume_reminders",
       "start_activity",
+      "create_reminder",
       "set_preference",
       "show_schedule",
       "plan_work",

@@ -85,7 +85,9 @@ export const tasks = mysqlTable(
     categoryId: char("category_id", { length: 36 })
       .notNull()
       .references(() => categories.id),
+    taskType: mysqlEnum("task_type", ["task", "todo"]).notNull().default("task"),
     title: varchar("title", { length: 300 }).notNull(),
+    priority: mysqlEnum("priority", ["minor", "major"]).notNull().default("minor"),
     details: text("details"),
     sourceText: text("source_text"),
     sourceRef: varchar("source_ref", { length: 255 }),
@@ -94,6 +96,7 @@ export const tasks = mysqlTable(
     reviewNote: varchar("review_note", { length: 300 }),
     dueAt: utc("due_at"),
     dueDateOnly: boolean("due_date_only").notNull().default(false),
+    splitReminderCount: int("split_reminder_count", { unsigned: true }),
     estimatedMinutes: int("estimated_minutes", { unsigned: true }),
     remainingMinutes: int("remaining_minutes", { unsigned: true }),
     status: mysqlEnum("status", ["open", "completed"]).notNull().default("open"),
@@ -125,6 +128,7 @@ export const events = mysqlTable(
     startsAt: utc("starts_at").notNull(),
     endsAt: utc("ends_at").notNull(),
     allDay: boolean("all_day").notNull().default(false),
+    splitReminderCount: int("split_reminder_count", { unsigned: true }),
     timezone: varchar("timezone", { length: 64 }).notNull(),
     status: mysqlEnum("status", ["scheduled", "canceled"]).notNull().default("scheduled"),
     canceledAt: utc("canceled_at"),
@@ -461,9 +465,10 @@ export type CalendarRefState = (typeof CALENDAR_REF_STATES)[number];
 // Links a provider event to a local record so nothing is duplicated or looped.
 //   ownership 'external': the event came from the provider (event_id is the imported local event).
 //     Epiphany never edits or deletes these.
-//   ownership 'epiphany': Epiphany created it from a work block (work_block_id) in its own calendar.
+//   ownership 'epiphany': Epiphany created it from a work block (work_block_id) or task deadline
+//     (identified by sync_key) in its own calendar.
 // etag/remote_updated_at are the provider's version of the event as last seen; synced_version is
-// the work block version last pushed. 'uncertain' means a write may or may not have happened and
+// the local work-block or task version last pushed. 'uncertain' means a write may or may not have happened and
 // must be reconciled (looked up by sync_key) before it is retried.
 export const calendarEventRefs = mysqlTable(
   "calendar_event_refs",

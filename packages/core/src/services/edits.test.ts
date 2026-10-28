@@ -65,6 +65,44 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     (await handle.db.select().from(notes).where(eq(notes.id, id)))[0]!;
 
   describe("tasks.update", () => {
+    it("persists per-item split counts atomically, enforces ownership/version and logs edits", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Assignment",
+        dueAt: "2026-10-20T04:59:00Z",
+        splitReminderCount: 5,
+      });
+      expect((await taskRow(task.id)).splitReminderCount).toBe(5);
+      await expect(
+        services.tasks.update(stranger, task.id, { splitReminderCount: 2 }),
+      ).rejects.toThrow(NOT_FOUND);
+      const updated = await services.tasks.update(owner, task.id, {
+        expectedVersion: task.version,
+        splitReminderCount: 2,
+      });
+      expect(updated.task.splitReminderCount).toBe(2);
+      const updates = (await history(task.id)).filter((entry) => entry.action === "task.update");
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.after).toMatchObject({
+        fields: ["splitReminderCount"],
+        values: { splitReminderCount: { from: 5, to: 2 } },
+      });
+      await expect(
+        services.tasks.update(owner, task.id, {
+          expectedVersion: task.version,
+          splitReminderCount: 0,
+        }),
+      ).rejects.toBeInstanceOf(VersionConflictError);
+      for (const count of [0, null]) {
+        await services.tasks.update(owner, task.id, { splitReminderCount: count });
+        expect((await taskRow(task.id)).splitReminderCount).toBe(count);
+      }
+      for (const count of [-1, 101, 2.5]) {
+        await expect(
+          services.tasks.update(owner, task.id, { splitReminderCount: count }),
+        ).rejects.toBeInstanceOf(ValidationError);
+      }
+    });
+
     it("edits fields, bumps the version, returns the stored row, and logs only what changed", async () => {
       const task = await services.tasks.create(owner, {
         title: "Draft essay",
@@ -100,6 +138,7 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     it("keeps a review flag until a deadline is set, can set or clear it directly, and logs only the field name", async () => {
       const task = await services.tasks.create(owner, {
         title: "Read chapter 7",
+        estimatedMinutes: 30,
         reviewNote: "no due date given",
       });
       expect((await taskRow(task.id)).reviewNote).toBe("no due date given");
@@ -161,7 +200,17 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     });
 
     it("refuses a date-only deadline when there is no deadline, and changes nothing", async () => {
-      const task = await services.tasks.create(owner, { title: "No deadline" });
+      const todo = await services.tasks.create(owner, { title: "No deadline" });
+      expect(todo.taskType).toBe("todo");
+      await expect(
+        services.tasks.update(owner, todo.id, { dueDateOnly: true }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect((await taskRow(todo.id)).version).toBe(1);
+
+      const task = await services.tasks.create(owner, {
+        title: "No deadline task",
+        estimatedMinutes: 30,
+      });
       await expect(
         services.tasks.update(owner, task.id, { dueDateOnly: true }),
       ).rejects.toBeInstanceOf(ValidationError);
@@ -171,6 +220,33 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
         dueDateOnly: true,
       });
       expect(withDate.task.dueDateOnly).toBe(true);
+      await expect(
+        services.tasks.update(owner, task.id, { dueAt: null, dueDateOnly: true }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(await taskRow(task.id)).toEqual(withDate.task);
+    });
+
+    it("clears task-only fields when converting a dated task to a todo", async () => {
+      const task = await services.tasks.create(owner, {
+        title: "Buy a snack",
+        dueAt: "2026-10-20T00:00:00.000Z",
+        estimatedMinutes: 30,
+        priority: "major",
+      });
+
+      const { task: todo } = await services.tasks.update(owner, task.id, {
+        taskType: "todo",
+        dueDateOnly: true,
+      });
+      expect(todo).toEqual(await taskRow(task.id));
+      expect(todo).toMatchObject({
+        taskType: "todo",
+        dueAt: null,
+        dueDateOnly: false,
+        estimatedMinutes: null,
+        remainingMinutes: null,
+        priority: "minor",
+      });
     });
 
     it("keeps remaining work in step with an untouched estimate, but not after progress", async () => {

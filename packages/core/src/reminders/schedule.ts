@@ -1,12 +1,23 @@
-import { and, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte } from "drizzle-orm";
 import type { Database } from "../db/client";
-import { events, tasks, type CalendarEvent, type Task } from "../db/schema";
+import { events, reminders, tasks, type CalendarEvent, type Task } from "../db/schema";
 import { addDays, dateKeyOf, localWallToUtc, parseTimeOfDay, weekdayOf } from "../planning/time";
 import { maxLatenessMs, type ReminderSettings } from "./policy";
-import { cancelObsoleteReminders, cancelOtherReminders, scheduleReminder } from "./store";
+import { splitReminderTimes, splitReminderWindow } from "./split";
+import {
+  cancelObsoleteReminders,
+  cancelOtherReminders,
+  cancelScheduledBriefings,
+  scheduleBriefing,
+  scheduleReminder,
+  scheduleSplitReminder,
+  eventAcknowledged,
+} from "./store";
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
+const DATE_ONLY_REMINDER_MINUTE = 9 * 60;
+const MAJOR_DEADLINE_LEADS_HOURS = [14 * 24, 7 * 24, 3 * 24] as const;
 
 // A date-only deadline means the end of that local day, not midnight UTC.
 export function effectiveDue(task: Task, timezone: string): Date | null {
@@ -38,6 +49,17 @@ function dueClock(at: Date, timezone: string): string {
     .replace(/\u202f/g, " ");
 }
 
+function dayDistance(from: string, to: string): number {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (24 * HOUR);
+}
+
+function dateOnlyDuePhrase(reminderDay: string, dueDay: string): string {
+  const days = dayDistance(reminderDay, dueDay);
+  if (days === 0) return "due today";
+  if (days === 1) return "due tomorrow";
+  return `due in ${days} days`;
+}
+
 export interface SyncReport {
   created: number;
   canceled: number;
@@ -57,8 +79,15 @@ export async function syncReminders(options: {
   horizonDays?: number;
 }): Promise<SyncReport> {
   const { db, ownerId, now, timezone, settings } = options;
-  const horizon = new Date(now.getTime() + (options.horizonDays ?? 14) * 24 * HOUR);
+  const horizonDays = options.horizonDays ?? 14;
+  const horizon = new Date(now.getTime() + horizonDays * 24 * HOUR);
+  const majorHorizon = new Date(
+    now.getTime() +
+      Math.max(horizonDays * 24, ...MAJOR_DEADLINE_LEADS_HOURS) * HOUR +
+      settings.catchUpHours * HOUR,
+  );
   const earliest = new Date(now.getTime() - settings.catchUpHours * HOUR);
+  const today = dateKeyOf(now, timezone);
   const report: SyncReport = { created: 0, canceled: 0 };
 
   report.canceled += await cancelObsoleteReminders(db, ownerId);
@@ -70,25 +99,128 @@ export async function syncReminders(options: {
 
   for (const task of openTasks) {
     const due = effectiveDue(task, timezone);
-    if (!due || due.getTime() > horizon.getTime()) continue;
+    if (!due || due.getTime() > (task.priority === "major" ? majorHorizon : horizon).getTime()) {
+      report.canceled += await cancelOtherReminders(
+        db,
+        ownerId,
+        "task",
+        task.id,
+        [],
+        "deadline outside reminder window",
+      );
+      continue;
+    }
+    const priorityLabel = task.priority === "major" ? "Major deadline: " : "";
+    const deadlineLeads =
+      task.priority === "major"
+        ? [
+            ...new Set([...MAJOR_DEADLINE_LEADS_HOURS, ...settings.majorDeadlineLeadHours]),
+          ].toSorted((a, b) => b - a)
+        : settings.deadlineLeadHours;
     const keep: string[] = [];
-    for (const lead of settings.deadlineLeadHours) {
-      const at = new Date(due.getTime() - lead * HOUR);
-      const key = `task:${task.id}:lead${lead}h:${due.getTime()}`;
-      // A reminder whose moment passed longer ago than a deadline reminder stays useful is not made.
-      if (at.getTime() < earliest.getTime()) continue;
-      keep.push(key);
-      if (
-        await scheduleReminder(db, ownerId, {
-          kind: "task_deadline",
-          subjectType: "task",
-          subjectId: task.id,
-          dedupeKey: key,
-          dueAt: at,
-          message: `Heads up: "${clean(task.title)}" is due ${leadWords(lead)} (${dueClock(due, timezone)}). Tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
-        })
-      ) {
-        report.created++;
+    if (task.dueDateOnly) {
+      const dueDay = task.dueAt!.toISOString().slice(0, 10);
+      const reminderDays = new Set(
+        deadlineLeads.map((lead) => dateKeyOf(new Date(due.getTime() - lead * HOUR), timezone)),
+      );
+      for (const day of reminderDays) {
+        if (day < today) continue;
+        const key = `task:${task.id}:date:${day}:${due.getTime()}`;
+        const morning = localWallToUtc(day, DATE_ONLY_REMINDER_MINUTE, timezone);
+        const at = day === today && morning.getTime() < now.getTime() ? now : morning;
+        keep.push(key);
+        if (
+          await scheduleReminder(db, ownerId, {
+            kind: "task_deadline",
+            subjectType: "task",
+            subjectId: task.id,
+            dedupeKey: key,
+            dueAt: at,
+            message: `Heads up: ${priorityLabel}"${clean(task.title)}" is ${dateOnlyDuePhrase(day, dueDay)} (${dueClock(due, timezone)}). Tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
+          })
+        ) {
+          report.created++;
+        }
+      }
+    } else {
+      let upcomingLeads = 0;
+      for (const lead of deadlineLeads) {
+        const at = new Date(due.getTime() - lead * HOUR);
+        const key = `task:${task.id}:lead${lead}h:${due.getTime()}`;
+        if (at.getTime() < now.getTime()) continue;
+        upcomingLeads++;
+        keep.push(key);
+        if (
+          await scheduleReminder(db, ownerId, {
+            kind: "task_deadline",
+            subjectType: "task",
+            subjectId: task.id,
+            dedupeKey: key,
+            dueAt: at,
+            message: `Heads up: ${priorityLabel}"${clean(task.title)}" is due ${leadWords(lead)} (${dueClock(due, timezone)}). Tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
+          })
+        ) {
+          report.created++;
+        }
+      }
+      if (upcomingLeads === 0 && due.getTime() > now.getTime()) {
+        const key = `task:${task.id}:soon:${due.getTime()}`;
+        const leadKeys = deadlineLeads.map(
+          (lead) => `task:${task.id}:lead${lead}h:${due.getTime()}`,
+        );
+        const [alreadyNotified] = await db
+          .select({ id: reminders.id })
+          .from(reminders)
+          .where(
+            and(
+              eq(reminders.ownerId, ownerId),
+              eq(reminders.subjectType, "task"),
+              eq(reminders.subjectId, task.id),
+              inArray(reminders.status, ["sent", "sending", "unknown"]),
+              inArray(reminders.dedupeKey, leadKeys),
+            ),
+          )
+          .limit(1);
+        if (!alreadyNotified) {
+          keep.push(key);
+          if (
+            await scheduleReminder(db, ownerId, {
+              kind: "task_deadline",
+              subjectType: "task",
+              subjectId: task.id,
+              dedupeKey: key,
+              dueAt: now,
+              message: `Heads up: ${priorityLabel}"${clean(task.title)}" is due at ${dueClock(due, timezone)}. Tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
+            })
+          ) {
+            report.created++;
+          }
+        }
+      }
+    }
+    const splitCount =
+      task.splitReminderCount ??
+      (settings.splitReminders.enabled ? settings.splitReminders.count : 0);
+    if (splitCount > 0 && due > now) {
+      const window = splitReminderWindow(due, task.createdAt, timezone, settings);
+      if (window) {
+        const times = splitReminderTimes(window.start, window.end, splitCount);
+        for (const [index, at] of times.entries()) {
+          const key = `task:${task.id}:split:${splitCount}:${index}:${due.getTime()}:${window.end.getTime()}:${at.getTime()}`;
+          keep.push(key);
+          if (at < now) continue;
+          if (
+            await scheduleSplitReminder(db, ownerId, {
+              kind: "task_deadline",
+              subjectType: "task",
+              subjectId: task.id,
+              dedupeKey: key,
+              dueAt: at,
+              message: `Heads up: ${priorityLabel}"${clean(task.title)}" is due ${dueClock(due, timezone)}. This is a split-day check-in; tell me when you've finished, or mark it done on the dashboard. No reply leaves it open.`,
+            })
+          )
+            report.created++;
+        }
       }
     }
     report.canceled += await cancelOtherReminders(
@@ -114,8 +246,58 @@ export async function syncReminders(options: {
     );
 
   for (const event of upcoming) {
-    if (event.allDay) continue;
+    if (await eventAcknowledged(db, ownerId, event.id, event.version)) continue;
     const keep: string[] = [];
+    if ((event.splitReminderCount ?? 0) > 0 && event.startsAt > now) {
+      const window = splitReminderWindow(event.startsAt, event.createdAt, timezone, settings);
+      if (window) {
+        const count = event.splitReminderCount!;
+        for (const [index, at] of splitReminderTimes(window.start, window.end, count).entries()) {
+          const key = `event:${event.id}:split:${count}:${index}:${event.startsAt.getTime()}:${window.end.getTime()}:${at.getTime()}`;
+          keep.push(key);
+          if (at < now) continue;
+          if (
+            await scheduleSplitReminder(db, ownerId, {
+              kind: "event",
+              subjectType: "event",
+              subjectId: event.id,
+              dedupeKey: key,
+              dueAt: at,
+              message: `Heads up: "${clean(event.title)}" starts ${dueClock(event.startsAt, timezone)}. This is a split-day reminder; your original event alerts are unchanged.`,
+            })
+          )
+            report.created++;
+        }
+      }
+    }
+    if (event.allDay) {
+      const eventDay = dateKeyOf(event.startsAt, event.timezone);
+      const key = `event:${event.id}:all-day:${event.startsAt.getTime()}`;
+      const morning = localWallToUtc(eventDay, DATE_ONLY_REMINDER_MINUTE, timezone);
+      const at = morning.getTime() < now.getTime() ? now : morning;
+      keep.push(key);
+      if (
+        await scheduleReminder(db, ownerId, {
+          kind: "event",
+          subjectType: "event",
+          subjectId: event.id,
+          dedupeKey: key,
+          dueAt: at,
+          message: `You have "${clean(event.title)}" on your calendar today (${eventDay}).`,
+        })
+      ) {
+        report.created++;
+      }
+      report.canceled += await cancelOtherReminders(
+        db,
+        ownerId,
+        "event",
+        event.id,
+        keep,
+        "event time changed",
+      );
+      continue;
+    }
     const lead = settings.eventLeadMinutes;
     const before = new Date(event.startsAt.getTime() - lead * MINUTE);
     const beforeKey = `event:${event.id}:lead${lead}m:${event.startsAt.getTime()}`;
@@ -175,6 +357,7 @@ async function syncDailyReminders(options: {
   const { db, ownerId, now, timezone, settings } = options;
   const today = dateKeyOf(now, timezone);
   let created = 0;
+  if (!settings.briefingTime) await cancelScheduledBriefings(db, ownerId);
 
   async function plan(
     kind: "briefing" | "wind_down" | "check_in",
@@ -192,13 +375,18 @@ async function syncDailyReminders(options: {
     const key = addDays(today, offset);
     const { briefingTime, routines } = settings;
     if (briefingTime) {
-      await plan(
-        "briefing",
-        key,
-        briefingTime,
-        `briefing:${key}`,
-        "Good morning! Here is your day.",
-      );
+      const at = localWallToUtc(key, parseTimeOfDay(briefingTime), timezone);
+      if (at.getTime() + maxLatenessMs("briefing", settings) > now.getTime()) {
+        if (
+          await scheduleBriefing(db, ownerId, {
+            dedupeKey: `briefing:${key}`,
+            dueAt: at,
+            message: "Good morning! Here is your day.",
+          })
+        ) {
+          created++;
+        }
+      }
     }
     if (routines.bedtime) {
       await plan(
