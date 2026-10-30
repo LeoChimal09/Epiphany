@@ -74,6 +74,7 @@ export function AccountMenu({
       <button
         type="button"
         className={styles.accountButton}
+        aria-label={`Account menu for ${label}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}

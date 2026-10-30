@@ -770,7 +770,7 @@ export function DashboardShell({
             Epiphany<span className={styles.brandCaption}> Personal field station</span>
           </span>
         </Link>
-        <div className={styles.rowActions}>
+        <div className={styles.topbarActions}>
           <DeadlineNotifications
             tasks={data.tasks}
             timezone={data.timezone}

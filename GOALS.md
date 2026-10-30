@@ -328,6 +328,21 @@ and fixed narrow agenda text wrapping. Focused tests and the full automated
 
 ## Progress Record
 
+### 2026-10-30: Mobile Account And Avatar Containment
+
+The mobile header now uses a non-wrapping action group and a compact account
+button. The full display name remains accessible in the button label and menu.
+Avatar frames have explicitly bounded grid tracks and circular clipping; image
+dimensions cannot expand them. Desktop account names truncate and long menu names
+wrap. The menu fits the viewport and scrolls on short screens.
+
+Verification: `bun run check`, nine focused header/dashboard tests, production
+build, and `git diff --check` passed. Chromium checks at 320, 360, 390, 640, 768,
+and 1024 pixels used synthetic oversized avatar images and long names: no header
+overlap or horizontal overflow, both avatar sizes contained, menu in bounds, and
+Escape dismissal passed. Inspected the narrow-screen screenshot. No records
+changed; the browser session was revoked. Not deployed.
+
 ### 2026-10-30: Retro Field-Station Theme And Record Layouts
 
 Owner-requested original retro-futuristic visual direction: blue-steel panels,
