@@ -31,6 +31,12 @@ const SEED_0009_VOICE_USAGE_OBSERVATIONS: string[] = [
 ];
 
 export const UPGRADE_SEEDS: Record<string, string[]> = {
+  "0013_backfill_task_types": [
+    ...SEED_0009_VOICE_USAGE_OBSERVATIONS,
+    "UPDATE tasks SET task_type = 'todo', priority = 'minor' WHERE id = 'task-done'",
+    "UPDATE tasks SET task_type = 'task', priority = 'major', split_reminder_count = 2 WHERE id = 'task-open'",
+    "UPDATE events SET split_reminder_count = 3 WHERE id = 'event-1'",
+  ],
   "0012_simple_patriot": [
     ...SEED_0009_VOICE_USAGE_OBSERVATIONS,
     "UPDATE tasks SET task_type = 'todo', priority = 'minor' WHERE id = 'task-done'",

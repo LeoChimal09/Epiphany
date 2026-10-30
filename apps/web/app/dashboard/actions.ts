@@ -8,7 +8,14 @@ import {
   type AssistantReply,
   type ConversationState,
 } from "@epiphany/core/assistant";
-import { addDays, localWallToUtc, parseDateKey, parseTimeOfDay } from "@epiphany/core/planning";
+import {
+  addDays,
+  dateKeyOf,
+  localParts,
+  localWallToUtc,
+  parseDateKey,
+  parseTimeOfDay,
+} from "@epiphany/core/planning";
 import {
   categoryForDashboard,
   dashboardContext,
@@ -514,6 +521,7 @@ export async function loadDashboardEvents(fromDate: string): Promise<DashboardEv
       ok: true,
       events: events.map((event) => ({
         id: event.id,
+        seriesId: event.seriesId,
         title: event.title,
         location: event.location,
         startsAt: event.startsAt.toISOString(),
@@ -596,17 +604,107 @@ function scheduleWindow(
 export async function addDashboardEvent(form: FormData): Promise<DashboardScheduleChangeResult> {
   const { principal, services, timezone } = await dashboardContext();
   try {
+    const window = scheduleWindow(form, timezone, true, "date", true);
+    const frequency = textField(form, "repeatFrequency");
+    if (frequency && frequency !== "none") {
+      if (frequency !== "daily" && frequency !== "weekly") {
+        throw new ValidationError(["Repeat frequency must be daily or weekly."]);
+      }
+      if (
+        window.allDay ||
+        dateKeyOf(window.startsAt, timezone) !== dateKeyOf(window.endsAt, timezone)
+      ) {
+        throw new ValidationError(["Repeating events need a start and end on the same local day."]);
+      }
+      const count = Number(textField(form, "repeatCount"));
+      if (!Number.isInteger(count) || count < 1 || count > 520) {
+        throw new ValidationError(["Choose 1 to 520 total occurrences."]);
+      }
+      const time = (date: Date) => {
+        const parts = localParts(date, timezone);
+        return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+      };
+      const saved = await services.events.createSeries(principal, {
+        title: textField(form, "title"),
+        location: textField(form, "location"),
+        timezone,
+        startDate: dateKeyOf(window.startsAt, timezone),
+        startTime: time(window.startsAt),
+        endTime: time(window.endsAt),
+        splitReminderCount: splitReminderField(form),
+        recurrence: { frequency, count },
+      });
+      return { ok: true, message: `${saved.length} recurring event occurrences saved.` };
+    }
     await services.events.create(principal, {
       title: textField(form, "title"),
       location: textField(form, "location"),
       timezone,
-      ...scheduleWindow(form, timezone, true, "date", true),
+      ...window,
       splitReminderCount: splitReminderField(form),
     });
     return { ok: true, message: "Event saved." };
   } catch (error) {
     return failure(error);
   }
+}
+
+export type EventCancelProposal = {
+  confirmationId: string;
+  payloadHash: string;
+  summary: string;
+};
+
+export async function proposeDashboardEventCancellation(
+  eventId: string,
+  scope: "occurrence" | "series",
+): Promise<{ ok: true; proposal: EventCancelProposal } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const proposal = await services.confirmations.propose(principal, {
+      action: "event.cancel_series",
+      payload: { eventId, scope },
+    });
+    return {
+      ok: true,
+      proposal: {
+        confirmationId: proposal.confirmationId,
+        payloadHash: proposal.payloadHash,
+        summary: String(proposal.preview.summary),
+      },
+    };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function confirmDashboardEventCancellation(
+  proposal: EventCancelProposal,
+): Promise<DashboardScheduleChangeResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const outcome = await services.confirmations.confirm(principal, {
+      confirmationId: proposal.confirmationId,
+      payloadHash: proposal.payloadHash,
+    });
+    return {
+      ok: true,
+      message: `${outcome.result.count} event occurrence(s) canceled. History is kept.`,
+    };
+  } catch (error) {
+    if (error instanceof ConfirmationError) {
+      return {
+        ok: false,
+        error: "Cancellation expired or the events changed. Request a fresh preview.",
+      };
+    }
+    return failure(error);
+  }
+}
+
+export async function cancelDashboardEventCancellation(confirmationId: string): Promise<void> {
+  const { principal, services } = await dashboardContext();
+  await services.confirmations.cancel(principal, confirmationId);
 }
 
 export async function addDashboardWorkBlock(

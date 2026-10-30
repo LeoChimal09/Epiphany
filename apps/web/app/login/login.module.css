@@ -1,24 +1,94 @@
 .page {
-  --accent: #2d7dff;
-  --accent-hover: #4d9bff;
-  --cyan: #00d9ff;
-  --muted: #b3b3b3;
-  --muted-2: #8c8c8c;
+  --accent: var(--epi-primary);
+  --accent-hover: var(--epi-accent);
+  --cyan: var(--epi-mint);
+  --muted: var(--epi-muted);
+  --muted-2: var(--epi-subtle);
   position: relative;
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 64px 32px;
   overflow: hidden;
-  color: #fff;
+  color: var(--epi-ink);
   color-scheme: dark;
   background:
-    radial-gradient(circle at 20% 15%, rgba(45, 125, 255, 0.2), transparent 32%),
-    radial-gradient(circle at 85% 90%, rgba(0, 217, 255, 0.1), transparent 30%), #121212;
-  font:
-    15px/1.5 "Trebuchet MS",
-    "Gill Sans",
-    sans-serif;
+    radial-gradient(ellipse at 15% 15%, #7351d726, transparent 50%),
+    radial-gradient(ellipse at 95% 85%, #7fe3d11a, transparent 50%), var(--epi-bg);
+  font: 15px/1.6 var(--epi-font);
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  gap: clamp(32px, 6vw, 100px);
+  align-items: center;
+  width: min(100%, 1100px);
+}
+.intro {
+  min-width: 0;
+}
+.kicker {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 24px;
+  color: var(--cyan);
+  font-size: 13px;
+  font-weight: 600;
+}
+.intro h2 {
+  margin: 0;
+  font-size: clamp(36px, 5vw, 62px);
+  line-height: 1.08;
+  letter-spacing: -0.05em;
+  font-weight: 750;
+}
+.intro h2 > span {
+  color: var(--accent-hover);
+}
+.introLead {
+  max-width: 440px;
+  margin: 24px 0 32px;
+  color: var(--muted);
+  font-size: 17px;
+}
+.featureStack {
+  display: grid;
+  gap: 20px;
+}
+.featureStack > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.featureIcon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  height: 44px;
+  border: 1px solid #a78bfa4d;
+  border-radius: 14px;
+  color: var(--accent-hover);
+  background: #a78bfa14;
+}
+.featureStack > div:nth-child(2) .featureIcon {
+  border-color: #7fe3d14d;
+  color: var(--cyan);
+  background: #7fe3d114;
+}
+.featureStack > div:nth-child(3) .featureIcon {
+  border-color: #ffd18a4d;
+  color: var(--epi-warn);
+  background: #ffd18a14;
+}
+.featureStack p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+.featureStack p > span {
+  color: var(--muted);
+  font-size: 13px;
 }
 .page *,
 .page *::before,
@@ -30,13 +100,13 @@
   width: min(100%, 420px);
   display: grid;
   gap: 20px;
-  padding: 32px 28px 28px;
+  padding: 40px 32px 32px;
   overflow: hidden;
   border-radius: 24px;
-  background: rgba(24, 24, 24, 0.96);
+  background: linear-gradient(145deg, #202b42, #141e31);
   box-shadow:
-    0 28px 90px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.08);
+    0 28px 90px #03081466,
+    0 0 0 1px #a78bfa4d;
 }
 .card::before {
   content: "";
@@ -53,7 +123,7 @@
   height: 192px;
   transform: translateX(-50%);
   border-radius: 50%;
-  background: rgba(45, 125, 255, 0.22);
+  background: #a78bfa38;
   filter: blur(56px);
   pointer-events: none;
 }
@@ -71,8 +141,8 @@
   height: 56px;
   border-radius: 18px;
   color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--cyan));
-  box-shadow: 0 14px 36px rgba(45, 125, 255, 0.35);
+  background: linear-gradient(135deg, #9472ef, #4a99a4);
+  box-shadow: 0 14px 36px #a78bfa30;
 }
 .eyebrow {
   margin: 0 0 4px;
@@ -110,7 +180,8 @@
   gap: 6px;
   padding: 5px 11px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--epi-line);
+  background: var(--epi-input);
   color: var(--muted);
   font-size: 12px;
 }
@@ -167,7 +238,7 @@
   border-color: var(--accent);
 }
 .devPrimary:hover {
-  background: var(--accent-hover);
+  background: #6240bd;
 }
 .divider {
   display: flex;
@@ -207,7 +278,7 @@
   border-color: rgba(224, 71, 76, 0.35);
 }
 .warning {
-  color: #e3b341;
+  color: var(--epi-warn);
   background: rgba(227, 179, 65, 0.1);
   border-color: rgba(227, 179, 65, 0.3);
   font-size: 12px;
@@ -221,4 +292,34 @@
   margin: 0;
   color: var(--muted-2);
   font-size: 11px;
+}
+@media (max-width: 800px) {
+  .page {
+    padding: 32px 20px;
+  }
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 480px;
+    gap: 32px;
+  }
+  .intro {
+    text-align: center;
+  }
+  .intro h2 br {
+    display: none;
+  }
+  .kicker {
+    margin-bottom: 16px;
+  }
+  .introLead {
+    margin: 16px auto 0;
+    font-size: 15px;
+  }
+  .featureStack {
+    display: none;
+  }
+  .card {
+    width: 100%;
+    padding: 28px 24px;
+  }
 }

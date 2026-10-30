@@ -57,6 +57,7 @@ export function categoryForDashboard(category: Category) {
 export function eventForSchedule(event: CalendarEvent): ScheduleEvent {
   return {
     id: event.id,
+    seriesId: event.seriesId,
     title: event.title,
     location: event.location,
     startsAt: event.startsAt.toISOString(),

@@ -37,76 +37,121 @@ export default async function LoginPage({
 
   return (
     <main className={styles.page}>
-      <div className={styles.card}>
-        <div className={styles.glow} aria-hidden="true" />
-
-        <div className={styles.hero}>
-          <span className={styles.logo} aria-hidden="true">
-            <Sparkles size={26} />
-          </span>
-          <div>
-            <p className={styles.eyebrow}>Private workspace</p>
-            <h1>Epiphany</h1>
+      <div className={styles.layout}>
+        <section className={styles.intro} aria-labelledby="welcome-heading">
+          <p className={styles.kicker}>
+            <Sparkles size={16} aria-hidden="true" /> A little clarity, every day
+          </p>
+          <h2 id="welcome-heading">
+            Make room for
+            <br />
+            <span>what matters.</span>
+          </h2>
+          <p className={styles.introLead}>
+            The big plans. The small errands. The idea you don&apos;t want to lose. Give them a
+            home, and give yourself some headspace.
+          </p>
+          <div className={styles.featureStack}>
+            <div>
+              <span className={styles.featureIcon}>
+                <ListChecks size={21} aria-hidden="true" />
+              </span>
+              <p>
+                <strong>One thing at a time</strong>
+                <span>Tasks and todos, without the mental clutter.</span>
+              </p>
+            </div>
+            <div>
+              <span className={styles.featureIcon}>
+                <CalendarClock size={21} aria-hidden="true" />
+              </span>
+              <p>
+                <strong>See the shape of your day</strong>
+                <span>Your commitments and deadlines, together.</span>
+              </p>
+            </div>
+            <div>
+              <span className={styles.featureIcon}>
+                <Sparkles size={21} aria-hidden="true" />
+              </span>
+              <p>
+                <strong>Keep the spark</strong>
+                <span>A place for notes, ideas, and what comes next.</span>
+              </p>
+            </div>
           </div>
-          <p className={styles.lead}>Your planner for school, work and everything else.</p>
-        </div>
+        </section>
+        <div className={styles.card}>
+          <div className={styles.glow} aria-hidden="true" />
 
-        <ul className={styles.features} aria-label="What Epiphany does">
-          <li>
-            <ListChecks size={13} aria-hidden="true" /> Tasks
-          </li>
-          <li>
-            <CalendarClock size={13} aria-hidden="true" /> Deadlines
-          </li>
-          <li>
-            <Sparkles size={13} aria-hidden="true" /> Notes &amp; ideas
-          </li>
-        </ul>
+          <div className={styles.hero}>
+            <span className={styles.logo} aria-hidden="true">
+              <Sparkles size={26} />
+            </span>
+            <div>
+              <p className={styles.eyebrow}>Private workspace</p>
+              <h1>Epiphany</h1>
+            </div>
+            <p className={styles.lead}>Your space to think, plan, and move forward.</p>
+          </div>
 
-        {error && MESSAGES[error] ? (
-          <p role="alert" className={`${styles.notice} ${styles.error}`}>
-            <TriangleAlert size={15} aria-hidden="true" />
-            {MESSAGES[error]}
-          </p>
-        ) : null}
+          <ul className={styles.features} aria-label="What Epiphany does">
+            <li>
+              <ListChecks size={13} aria-hidden="true" /> Tasks
+            </li>
+            <li>
+              <CalendarClock size={13} aria-hidden="true" /> Deadlines
+            </li>
+            <li>
+              <Sparkles size={13} aria-hidden="true" /> Notes &amp; ideas
+            </li>
+          </ul>
 
-        {!config ? (
-          <p role="alert" className={`${styles.notice} ${styles.error}`}>
-            <TriangleAlert size={15} aria-hidden="true" />
-            Sign-in is not set up yet. The owner needs to configure it (see
-            docs/local-development.md).
-          </p>
-        ) : null}
-
-        <div className={styles.actions}>
-          {discordReady ? (
-            <a className={`${styles.button} ${styles.discord}`} href="/api/auth/discord">
-              <DiscordMark />
-              Sign in with Discord
-            </a>
+          {error && MESSAGES[error] ? (
+            <p role="alert" className={`${styles.notice} ${styles.error}`}>
+              <TriangleAlert size={15} aria-hidden="true" />
+              {MESSAGES[error]}
+            </p>
           ) : null}
 
-          {discordReady && config?.devBypass ? <div className={styles.divider}>or</div> : null}
+          {!config ? (
+            <p role="alert" className={`${styles.notice} ${styles.error}`}>
+              <TriangleAlert size={15} aria-hidden="true" />
+              Sign-in is not set up yet. The owner needs to configure it (see
+              docs/local-development.md).
+            </p>
+          ) : null}
+
+          <div className={styles.actions}>
+            {discordReady ? (
+              <a className={`${styles.button} ${styles.discord}`} href="/api/auth/discord">
+                <DiscordMark />
+                Sign in with Discord
+              </a>
+            ) : null}
+
+            {discordReady && config?.devBypass ? <div className={styles.divider}>or</div> : null}
+
+            {config?.devBypass ? (
+              <form action="/api/auth/dev" method="post">
+                <button
+                  type="submit"
+                  className={`${styles.button} ${styles.dev} ${discordReady ? "" : styles.devPrimary}`}
+                >
+                  <FlaskConical size={17} aria-hidden="true" />
+                  Continue as dev owner
+                </button>
+              </form>
+            ) : null}
+          </div>
 
           {config?.devBypass ? (
-            <form action="/api/auth/dev" method="post">
-              <button
-                type="submit"
-                className={`${styles.button} ${styles.dev} ${discordReady ? "" : styles.devPrimary}`}
-              >
-                <FlaskConical size={17} aria-hidden="true" />
-                Continue as dev owner
-              </button>
-            </form>
+            <p role="status" className={`${styles.notice} ${styles.warning}`}>
+              <ShieldAlert size={15} aria-hidden="true" />
+              Local development access only. Use test data.
+            </p>
           ) : null}
         </div>
-
-        {config?.devBypass ? (
-          <p role="status" className={`${styles.notice} ${styles.warning}`}>
-            <ShieldAlert size={15} aria-hidden="true" />
-            Local development access only. Use test data.
-          </p>
-        ) : null}
       </div>
     </main>
   );

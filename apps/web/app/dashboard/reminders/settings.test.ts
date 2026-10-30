@@ -23,6 +23,16 @@ describe("optional split reminder controls", () => {
       'value="off" selected',
     );
   });
+  it("does not offer task-only reminder settings for todos or imply events inherit task defaults", () => {
+    const todo = renderToStaticMarkup(createElement(SplitReminderFields, { itemType: "todo" }));
+    expect(todo).not.toContain("<select");
+    expect(todo).not.toContain("<input");
+    expect(todo).toContain("split reminders do not apply");
+    const event = renderToStaticMarkup(createElement(SplitReminderFields, { itemType: "event" }));
+    expect(event).toContain("Off (event default)");
+    expect(event).not.toContain("Use workspace default");
+    expect(event).not.toContain('name="splitReminderCount"');
+  });
   it("shows an editable count rather than hardcoded reminder choices", () => {
     const html = renderToStaticMarkup(
       createElement(SplitReminderSettings, {
@@ -39,15 +49,28 @@ describe("optional split reminder controls", () => {
     expect(html).toContain("Save split reminder settings");
   });
 
-  it("shows the feature off with two preselected until explicitly enabled", () => {
+  it("hides the count while split reminders are off", () => {
     const html = renderToStaticMarkup(
       createElement(SplitReminderSettings, {
         value: { enabled: false, count: 2 },
         dailyLimit: 12,
       }),
     );
-    expect(html).toContain('value="2"');
+    expect(html).not.toContain('type="number"');
     expect(html).not.toContain("checked");
+    expect(html).toContain(">Off<");
+  });
+  it("shows a required count when split reminders are enabled", () => {
+    const html = renderToStaticMarkup(
+      createElement(SplitReminderSettings, {
+        value: { enabled: true, count: 5 },
+        dailyLimit: 20,
+      }),
+    );
+    expect(html).toContain('type="number"');
+    expect(html).toContain('value="5"');
+    expect(html).toContain('required=""');
+    expect(html).toContain(">On<");
   });
 });
 

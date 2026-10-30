@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ValidationError } from "./errors";
+import { recurrenceInput } from "../planning/recurrence";
 
 const id = z.uuid();
 const title = z.string().trim().min(1, "must not be empty").max(300);
@@ -64,6 +65,19 @@ export const createEventInput = z
     path: ["endsAt"],
     message: "must not be before startsAt",
   });
+
+export const createEventSeriesInput = z
+  .object({
+    title,
+    timezone,
+    startDate: z.iso.date(),
+    startTime: z.string(),
+    endTime: z.string(),
+    location: z.string().trim().max(300).optional(),
+    splitReminderCount: z.number().int().min(0).max(100).nullable().optional(),
+    recurrence: recurrenceInput,
+  })
+  .strict();
 
 export const createWorkBlockInput = z
   .object({

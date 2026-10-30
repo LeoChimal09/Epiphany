@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowLeft, CalendarDays } from "lucide-react";
 import { verifySession } from "../../../lib/auth/dal";
 import { calendarServices, getGoogleDeps } from "../../../lib/google/deps";
 import { redirect } from "next/navigation";
@@ -292,9 +293,13 @@ export default async function CalendarsPage({
     <main className={styles.page}>
       <header className={styles.header}>
         <Link href="/dashboard" className={styles.back}>
-          ← Dashboard
+          <ArrowLeft size={15} aria-hidden="true" /> Dashboard
         </Link>
+        <span className={styles.headerIcon}>
+          <CalendarDays size={23} aria-hidden="true" />
+        </span>
         <h1>Calendars</h1>
+        <p>Bring your commitments into focus. You choose what stays connected.</p>
       </header>
       {message ? (
         <p className={message.error ? styles.alert : styles.success} role="status">

@@ -126,6 +126,13 @@ it inside JSON. There is no automatic second model call, retry, or repair reques
 Input caps include the system prompt, current context, and available function schemas;
 usage-based cost estimates are recorded even when output is rejected.
 
+Older conversation and optional record context are trimmed automatically when needed
+to fit the configured input cap. The current message, latest reminder, and pending
+confirmation stay intact; the model is told when context is incomplete so it can
+read or clarify rather than assume a missing record does not exist. Large context
+must not leave short follow-up requests stuck until a browser refresh or worker restart.
+Completion reports do not require enabling duration tracking.
+
 Functions are proposals, not authorization: the server still validates arguments,
 owner access, current records, no-save instructions, and required confirmations
 through shared services. An invalid function never executes; useful conversational
@@ -347,6 +354,17 @@ new behavioral observations.
 - Track major future priorities with countdowns and preparation milestones,
   not just a reminder on the due date.
 - Support recurring workouts, bedtime routines, and other personal commitments.
+
+Timed local events can now repeat daily or weekly, including selected weekdays,
+an interval, and either a total occurrence count or an inclusive end date through
+conversation on web or Discord. For example: "Schedule gym every Monday at 3:30pm
+for one hour, for 12 weeks." The dashboard event form also offers daily/weekly
+repeats with a total count. Each series is bounded to 520 occurrences within
+30 years, keeping the same local start/end times across daylight-saving changes.
+Cancel one occurrence or the whole series with an exact preview and confirmation;
+history remains and affected reminders stop. Finishing a workout acknowledges
+only that occurrence, not the entire series. All-day recurrence, series editing,
+and open-ended repeats are not implemented.
 - Offer catch-up work, the gym, or a break when work finishes early. Ask for the
   user's choice and duration; do not silently fill every free interval with work.
 

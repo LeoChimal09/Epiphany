@@ -7,6 +7,9 @@ import {
   addDashboardTask,
   addDashboardWorkBlock,
   cancelDashboardEvent,
+  proposeDashboardEventCancellation,
+  confirmDashboardEventCancellation,
+  cancelDashboardEventCancellation,
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
@@ -37,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   noteUpdate: vi.fn(),
   categoryCreate: vi.fn(),
   eventCreate: vi.fn(),
+  eventCreateSeries: vi.fn(),
   eventCancel: vi.fn(),
   eventList: vi.fn(),
   blockCreate: vi.fn(),
@@ -78,7 +82,12 @@ beforeEach(() => {
       },
       notes: { create: mocks.noteCreate, list: mocks.noteList, update: mocks.noteUpdate },
       categories: { create: mocks.categoryCreate },
-      events: { create: mocks.eventCreate, cancel: mocks.eventCancel, list: mocks.eventList },
+      events: {
+        create: mocks.eventCreate,
+        createSeries: mocks.eventCreateSeries,
+        cancel: mocks.eventCancel,
+        list: mocks.eventList,
+      },
       workBlocks: { create: mocks.blockCreate, remove: mocks.blockRemove },
       confirmations: { propose: mocks.propose, confirm: mocks.confirm, cancel: mocks.cancel },
     },
@@ -86,6 +95,97 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it.each([undefined, "8"])(
+    "saves a one-off event regardless of repeat count (%s)",
+    async (repeatCount) => {
+      mocks.eventCreate.mockResolvedValue({ id: "one-off" });
+      expect(
+        await addDashboardEvent(
+          form({
+            title: "Dentist",
+            date: "2026-10-30",
+            startTime: "15:30",
+            endTime: "16:30",
+            repeatFrequency: "none",
+            ...(repeatCount ? { repeatCount } : {}),
+          }),
+        ),
+      ).toEqual({ ok: true, message: "Event saved." });
+      expect(mocks.eventCreate).toHaveBeenCalledOnce();
+      expect(mocks.eventCreateSeries).not.toHaveBeenCalled();
+    },
+  );
+  it("creates a finite weekly series without silently saving just one event", async () => {
+    mocks.eventCreateSeries.mockResolvedValue([{ id: "one" }, { id: "two" }, { id: "three" }]);
+    expect(
+      await addDashboardEvent(
+        form({
+          title: "Gym",
+          date: "2026-10-25",
+          startTime: "15:30",
+          endTime: "16:30",
+          repeatFrequency: "weekly",
+          repeatCount: "3",
+        }),
+      ),
+    ).toEqual({ ok: true, message: "3 recurring event occurrences saved." });
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+    expect(mocks.eventCreateSeries).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        title: "Gym",
+        startDate: "2026-10-25",
+        startTime: "15:30",
+        endTime: "16:30",
+        timezone: "America/Chicago",
+        recurrence: { frequency: "weekly", count: 3 },
+      }),
+    );
+  });
+
+  it.each(["", "0", "521", "1.5"])(
+    "rejects an invalid recurrence count (%s) before writing",
+    async (repeatCount) => {
+      expect(
+        await addDashboardEvent(
+          form({
+            title: "Gym",
+            date: "2026-10-25",
+            startTime: "15:30",
+            endTime: "16:30",
+            repeatFrequency: "weekly",
+            repeatCount,
+          }),
+        ),
+      ).toMatchObject({ ok: false });
+      expect(mocks.eventCreate).not.toHaveBeenCalled();
+      expect(mocks.eventCreateSeries).not.toHaveBeenCalled();
+    },
+  );
+
+  it("previews the exact cancellation scope and executes only after confirmation", async () => {
+    mocks.propose.mockResolvedValue({
+      confirmationId: "cancel-1",
+      payloadHash: "bound-hash",
+      preview: { summary: "Cancel all 3 gym occurrences" },
+    });
+    const proposed = await proposeDashboardEventCancellation("event-1", "series");
+    expect(mocks.propose).toHaveBeenCalledWith(principal, {
+      action: "event.cancel_series",
+      payload: { eventId: "event-1", scope: "series" },
+    });
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    if (!proposed.ok) throw new Error("Missing proposal");
+    mocks.confirm.mockResolvedValue({ result: { canceled: "events", count: 3 } });
+    expect(await confirmDashboardEventCancellation(proposed.proposal)).toMatchObject({ ok: true });
+    expect(mocks.confirm).toHaveBeenCalledWith(principal, {
+      confirmationId: "cancel-1",
+      payloadHash: "bound-hash",
+    });
+    await cancelDashboardEventCancellation("cancel-2");
+    expect(mocks.cancel).toHaveBeenCalledWith(principal, "cancel-2");
+  });
+
   it("saves split reminders with the task rather than as a separate type or workspace setting", async () => {
     mocks.taskCreate.mockResolvedValue(task);
     expect(

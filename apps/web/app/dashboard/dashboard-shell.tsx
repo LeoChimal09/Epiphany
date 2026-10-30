@@ -31,6 +31,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
   Timer,
   Trash2,
@@ -49,7 +50,9 @@ import {
   addDashboardNote,
   addDashboardTask,
   askEpi,
-  cancelDashboardEvent,
+  proposeDashboardEventCancellation,
+  confirmDashboardEventCancellation,
+  cancelDashboardEventCancellation,
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
@@ -150,6 +153,7 @@ export function DashboardShell({
   const [calendarEntryType, setCalendarEntryType] = useState<"task" | "todo" | "event">("task");
   const [eventAllDay, setEventAllDay] = useState(false);
   const [eventTimingMode, setEventTimingMode] = useState<"end" | "duration">("end");
+  const [eventRepeat, setEventRepeat] = useState<"none" | "daily" | "weekly">("none");
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
@@ -368,7 +372,7 @@ export function DashboardShell({
           return result.ok
             ? {
                 ...result,
-                message: `Event saved. Showing it on the calendar for ${formatDayLabel(eventDate, "long")}.`,
+                message: `${result.message} Showing the calendar for ${formatDayLabel(eventDate, "long")}.`,
               }
             : result;
         },
@@ -380,6 +384,7 @@ export function DashboardShell({
             setCalendarEntryType("task");
             setEventAllDay(false);
             setEventTimingMode("end");
+            setEventRepeat("none");
             setCalendarFocusDate(eventDate);
             setWeekStart(eventWeek);
             setView("week");
@@ -410,6 +415,7 @@ export function DashboardShell({
     setCalendarEntryType("task");
     setEventAllDay(false);
     setEventTimingMode("end");
+    setEventRepeat("none");
     setComposer("task");
   }
 
@@ -600,14 +606,43 @@ export function DashboardShell({
   }
 
   function removeScheduleItem(item: TimelineItem) {
-    changeSchedule(() =>
-      item.kind === "event" ? cancelDashboardEvent(item.id) : removeDashboardWorkBlock(item.id),
-    );
+    if (item.kind === "event") cancelListedEvent(item.id);
+    else changeSchedule(() => removeDashboardWorkBlock(item.id));
   }
 
-  function cancelListedEvent(id: string) {
-    changeSchedule(() => cancelDashboardEvent(id), {
-      onSuccess: () => setEventListRefresh((current) => current + 1),
+  function cancelListedEvent(id: string, scope: "occurrence" | "series" = "occurrence") {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardEventCancellation(id, scope);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: scope === "series" ? "Cancel the recurring series?" : "Cancel this occurrence?",
+          description: `${proposal.summary}. History is kept and remaining reminders stop.`,
+          confirmLabel: "Confirm cancellation",
+          onConfirm: () =>
+            changeSchedule(() => confirmDashboardEventCancellation(proposal), {
+              onSuccess: () => setEventListRefresh((current) => current + 1),
+            }),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardEventCancellation(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "The cancellation was not confirmed. Its preview will expire automatically.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not prepare cancellation. Nothing was changed.", error: true });
+      }
     });
   }
 
@@ -841,6 +876,14 @@ export function DashboardShell({
             ) : null}
           </div>
           <div className={styles.sidebarFooter}>
+            <Link href="/dashboard/planning" className={styles.sidebarLink}>
+              <SlidersHorizontal size={15} aria-hidden="true" />
+              Scheduling preferences
+            </Link>
+            <Link href="/dashboard/calendars" className={styles.sidebarLink}>
+              <CalendarClock size={15} aria-hidden="true" />
+              Connected calendars
+            </Link>
             <span className={styles.timezone}>
               <Globe2 size={13} aria-hidden="true" />
               {data.timezone}
@@ -867,6 +910,19 @@ export function DashboardShell({
                 {view === "today" ? formatDayLabel(today, "long").toUpperCase() : "YOUR WORKSPACE"}
               </p>
               <h1>{title}</h1>
+              <p className={styles.headingDescription}>
+                {isAssistant
+                  ? "Less juggling. More headspace. Start with whatever is on your mind."
+                  : isSchedule
+                    ? "Make space for your commitments, your focus, and yourself."
+                    : view === "notes"
+                      ? "A home for the thoughts you want to come back to."
+                      : view === "completed" || view === "history"
+                        ? "Look at how far you've come. Your past work lives here."
+                        : view === "category"
+                          ? "Your tasks and thoughts, together in one place."
+                          : "Big plans or small wins. Take it one thing at a time."}
+              </p>
             </div>
             <div className={styles.headerActions}>
               <button
@@ -934,14 +990,14 @@ export function DashboardShell({
           </header>
 
           <dl className={styles.summary}>
-            <div>
+            <div data-summary="tasks">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <ListChecks size={19} />
               </span>
               <dt>Open tasks & todos</dt>
               <dd>{open.length}</dd>
             </div>
-            <div>
+            <div data-summary="work">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <Timer size={19} />
               </span>
@@ -951,7 +1007,7 @@ export function DashboardShell({
                 <span> min</span>
               </dd>
             </div>
-            <div>
+            <div data-summary="notes">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <NotebookText size={19} />
               </span>
@@ -1014,6 +1070,7 @@ export function DashboardShell({
                           );
                           setEventAllDay(false);
                           setEventTimingMode("end");
+                          setEventRepeat("none");
                         }}
                       >
                         <option value="task">Task — deadline or effort estimate</option>
@@ -1092,7 +1149,10 @@ export function DashboardShell({
                             name="allDay"
                             type="checkbox"
                             checked={eventAllDay}
-                            onChange={(event) => setEventAllDay(event.currentTarget.checked)}
+                            onChange={(event) => {
+                              setEventAllDay(event.currentTarget.checked);
+                              setEventRepeat("none");
+                            }}
                           />
                           <span>All-day event</span>
                         </label>
@@ -1143,6 +1203,9 @@ export function DashboardShell({
                           Location (optional)
                           <input name="location" maxLength={300} />
                         </label>
+                        {!eventAllDay ? (
+                          <EventRepeatFields frequency={eventRepeat} onChange={setEventRepeat} />
+                        ) : null}
                         <p className={styles.fullWidth}>
                           An event reserves calendar time from its start through its end. Use a task
                           when you only need a due date. Events already receive a warning 30 minutes
@@ -1151,7 +1214,7 @@ export function DashboardShell({
                       </>
                     )}
                     <div className={styles.fullWidth}>
-                      <SplitReminderFields key={calendarEntryType} />
+                      <SplitReminderFields key={calendarEntryType} itemType={calendarEntryType} />
                     </div>
                     <div className={styles.formFooter}>
                       <button className={styles.primaryButton} type="submit">
@@ -1214,10 +1277,20 @@ export function DashboardShell({
                       <button
                         key={value}
                         type="button"
-                        className={styles.secondaryButton}
+                        className={`${styles.secondaryButton} ${styles.typeFilter}`}
+                        data-kind={value}
                         aria-pressed={taskFilter === value}
                         onClick={() => setTaskFilter(value)}
                       >
+                        {value === "all" ? (
+                          <ListChecks size={15} aria-hidden="true" />
+                        ) : value === "planned" ? (
+                          <CalendarClock size={15} aria-hidden="true" />
+                        ) : value === "todo" ? (
+                          <CircleCheck size={15} aria-hidden="true" />
+                        ) : (
+                          <CalendarDays size={15} aria-hidden="true" />
+                        )}
                         {label}
                       </button>
                     ))}
@@ -1596,6 +1669,37 @@ export function DashboardShell({
   );
 }
 
+export function EventRepeatFields({
+  frequency,
+  onChange,
+}: {
+  frequency: "none" | "daily" | "weekly";
+  onChange: (value: "none" | "daily" | "weekly") => void;
+}) {
+  return (
+    <>
+      <label>
+        Repeat
+        <select
+          name="repeatFrequency"
+          value={frequency}
+          onChange={(event) => onChange(event.target.value as typeof frequency)}
+        >
+          <option value="none">Does not repeat</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+        </select>
+      </label>
+      {frequency !== "none" ? (
+        <label>
+          Total occurrences (including the first)
+          <input name="repeatCount" type="number" min={1} max={520} defaultValue={8} required />
+        </label>
+      ) : null}
+    </>
+  );
+}
+
 function CategorySelect({
   categories,
   name,
@@ -1629,7 +1733,7 @@ function EventList({
   result: DashboardEventsResult | null;
   search: string;
   pending: boolean;
-  onCancel: (id: string) => void;
+  onCancel: (id: string, scope?: "occurrence" | "series") => void;
   clearSearch: () => void;
 }) {
   if (!result) {
@@ -1656,12 +1760,12 @@ function EventList({
       {events.length ? (
         <ul className={styles.taskList}>
           {events.map((event) => (
-            <li key={event.id} className={styles.task}>
+            <li key={event.id} className={styles.task} data-kind="event">
               <div className={styles.taskContent}>
                 <h2>{event.title}</h2>
                 <div className={styles.taskMeta}>
-                  <span>
-                    <strong>Type:</strong> Event
+                  <span className={styles.eventTag}>
+                    <CalendarDays size={13} aria-hidden="true" /> Event
                   </span>
                   <span>
                     <strong>Date:</strong> {formatEventDate(event)}
@@ -1681,14 +1785,26 @@ function EventList({
                   ) : null}
                 </div>
               </div>
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                disabled={pending}
-                onClick={() => onCancel(event.id)}
-              >
-                Cancel event
-              </button>
+              <div className={styles.rowActions}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  disabled={pending}
+                  onClick={() => onCancel(event.id)}
+                >
+                  {event.seriesId ? "Cancel occurrence" : "Cancel event"}
+                </button>
+                {event.seriesId ? (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={pending}
+                    onClick={() => onCancel(event.id, "series")}
+                  >
+                    Cancel series
+                  </button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
@@ -1977,7 +2093,7 @@ function TaskRow({
             <textarea name="details" rows={3} maxLength={10000} defaultValue={task.details ?? ""} />
           </label>
           <div className={styles.fullWidth}>
-            <SplitReminderFields count={task.splitReminderCount ?? null} />
+            <SplitReminderFields count={task.splitReminderCount ?? null} itemType={editType} />
           </div>
           <div className={styles.rowActions}>
             <button className={styles.primaryButton} disabled={pending} type="submit">
@@ -1999,7 +2115,7 @@ function TaskRow({
       </li>
     );
   return (
-    <li className={styles.task}>
+    <li className={styles.task} data-kind={task.taskType}>
       {task.status === "open" ? (
         <input
           className={styles.taskCheckbox}
@@ -2027,8 +2143,13 @@ function TaskRow({
               <strong>Archived:</strong> {formatDate(task.archivedAt, timezone)}
             </span>
           ) : null}
-          <span className={styles.noteTag}>
-            <strong>Type:</strong> {task.taskType === "todo" ? "Todo" : "Task"}
+          <span className={task.taskType === "todo" ? styles.todoTag : styles.deadlineTag}>
+            {task.taskType === "todo" ? (
+              <CircleCheck size={13} aria-hidden="true" />
+            ) : (
+              <CalendarClock size={13} aria-hidden="true" />
+            )}
+            {task.taskType === "todo" ? "Todo" : "Deadline task"}
           </span>
           {task.status === "completed" ? (
             <span className={styles.completedTag}>
@@ -2160,7 +2281,7 @@ function NoteCard({
   const [editing, setEditing] = useState(false);
   if (editing)
     return (
-      <li className={styles.note}>
+      <li className={styles.note} data-kind={note.kind}>
         <form
           className={styles.inlineEditor}
           onSubmit={(event) => {
@@ -2213,7 +2334,7 @@ function NoteCard({
       </li>
     );
   return (
-    <li className={styles.note}>
+    <li className={styles.note} data-kind={note.kind}>
       <div className={styles.noteMeta}>
         <span className={note.kind === "idea" ? styles.ideaTag : styles.noteTag}>
           {note.kind === "idea" ? (

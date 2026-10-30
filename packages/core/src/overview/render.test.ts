@@ -42,6 +42,7 @@ const event = (over: Partial<CalendarEvent>): CalendarEvent => ({
   id: "e1",
   ownerId: "o",
   title: "Event",
+  seriesId: null,
   location: null,
   startsAt: at("2026-10-14T20:00:00.000Z"),
   endsAt: at("2026-10-14T21:30:00.000Z"),

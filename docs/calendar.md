@@ -51,6 +51,29 @@ a real Google account yet; the live checks that remain are listed at the end.
 
 ## Owner setup
 
+### Repeating local events
+
+On the dashboard, choose Event, supply start/end times, then choose daily or
+weekly Repeat and a total occurrence count (including the first). In either chat
+you can also specify weekdays, an interval, or an inclusive end date:
+"Gym Monday and Wednesday, 3:30 to 4:30pm, starting November 2 through December 16."
+Missing bounds require clarification; series are limited to 520 occurrences within
+30 years. Dates are materialized in MySQL with stable IDs and local wall times,
+so DST does not shift a 3:30pm workout.
+
+Use the event list's **Cancel occurrence** or **Cancel series**, or ask Epi in
+conversation. Both show the exact scope and require a version-bound confirmation
+before changing anything. Cancellation retains history and stops remaining
+scheduled reminders. Completion/arrival acknowledges only the identified event;
+it does not cancel later workouts or require opting into duration tracking.
+
+These are local Epiphany series: the existing writer mirrors individual
+occurrences as separate Google events, not a Google RRULE series. External
+calendar series remain read-only. All-day recurrence, open-ended rules, editing
+a series, and "this and following" edits are not supported yet.
+
+### Connect Google
+
 1. **Google Cloud console** (<https://console.cloud.google.com/>): create or pick a project.
 2. **APIs & Services > Library**: enable **Google Calendar API**.
 3. **APIs & Services > OAuth consent screen** (Google Auth platform): app type **External**, add an app

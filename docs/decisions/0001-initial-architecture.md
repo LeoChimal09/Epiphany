@@ -172,3 +172,19 @@ values above match the owner's selections on 2026-10-13. Export scope and the
 exact component layout are drafts the owner did not explicitly choose. The
 MySQL support dates come from endoflife.date and the MySQL announcements; the
 Railway MySQL version is **not yet verified**.
+
+## 2026-10-30: Bounded Local Event Recurrence
+
+The owner requested repeatable gym schedules and occurrence/series removal.
+Persist finite daily/weekly occurrences as ordinary events sharing a local
+`series_id`, rather than introducing an open-ended background expansion job.
+Keep local wall-clock start/end times stable across DST; reject invalid future
+times before any writes. Accept an explicit count or inclusive end date, with a
+520-occurrence/30-year per-series bound to prevent accidental unbounded writes.
+This covers ten years of weekly appointments; larger plans must be split.
+
+Cancellation of one occurrence or all scheduled occurrences requires the existing
+10-minute, owner/version-bound confirmation flow. Keep history and stop affected
+scheduled reminders in the same transaction. Completion acknowledges only one
+occurrence. External series, all-day recurrence, and series editing stay out of
+this slice; Google mirrors the ordinary occurrences through the existing writer.

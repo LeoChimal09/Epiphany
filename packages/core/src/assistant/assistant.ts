@@ -9,7 +9,14 @@ import {
   type Principal,
   type Services,
 } from "../services";
-import { addDays, dateKeyOf, localWallToUtc, parseTimeOfDay, type DateKey } from "../planning/time";
+import {
+  addDays,
+  dateKeyOf,
+  localParts,
+  localWallToUtc,
+  parseTimeOfDay,
+  type DateKey,
+} from "../planning/time";
 import {
   computeAvailability,
   DEFAULT_TASK_MINUTES,
@@ -977,6 +984,37 @@ export function createAssistant(options: AssistantOptions) {
       .filter((memory) => memory.text.length > 0);
   }
 
+  async function proposeCancellation(
+    principal: Principal,
+    userText: string,
+    state: ConversationState,
+    eventId: string,
+    scope: "occurrence" | "series",
+  ) {
+    const proposal = await services.confirmations.propose(principal, {
+      action: "event.cancel_series",
+      payload: { eventId, scope },
+    });
+    const summary = String(proposal.preview.summary);
+    return finish(
+      state,
+      userText,
+      {
+        text: `${summary}. Nothing has changed yet. Should I cancel ${scope === "series" ? "these occurrences" : "this occurrence"}?`,
+        outcome: "confirmation_needed",
+        changed: false,
+      },
+      {
+        pending: {
+          confirmationId: proposal.confirmationId,
+          payloadHash: proposal.payloadHash,
+          summary: summary.slice(0, 400),
+          expiresAt: proposal.expiresAt.toISOString(),
+        },
+      },
+    );
+  }
+
   // Removes the task's remaining planned work blocks once it is done. The blocks are marked
   // removed, not deleted, so history keeps them.
   async function clearPlannedBlocks(principal: Principal, taskId: string): Promise<number> {
@@ -1402,13 +1440,14 @@ export function createAssistant(options: AssistantOptions) {
     // Saying "don't save this" or "just chatting" is honored whatever the model decided.
     if (
       (intent.kind === "create_task" ||
+        intent.kind === "create_event" ||
         intent.kind === "create_note" ||
         intent.kind === "develop_idea" ||
         intent.kind === "capture") &&
       asksNotToSave(userText)
     ) {
       return reply({
-        text: "Okay, I won't save that. We're just talking, and nothing was added to your tasks or notes.",
+        text: "Okay, I won't save that. We're just talking, and nothing was added to your tasks, notes, or events.",
         outcome: "answered",
         changed: false,
       });
@@ -1534,6 +1573,22 @@ export function createAssistant(options: AssistantOptions) {
       case "create_event": {
         const startsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.startTime), timezone);
         const endsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.endTime), timezone);
+        if (intent.recurrence) {
+          const events = await services.events.createSeries(principal, {
+            title: intent.title,
+            startDate: intent.date,
+            startTime: intent.startTime,
+            endTime: intent.endTime,
+            timezone,
+            location: intent.location,
+            recurrence: intent.recurrence,
+          });
+          return reply({
+            text: `I saved ${events.length} ${intent.recurrence.frequency} occurrences of "${intent.title}", from ${dayLabel(dateKeyOf(events[0]!.startsAt, timezone))} through ${dayLabel(dateKeyOf(events.at(-1)!.startsAt, timezone))}, at ${intent.startTime} to ${intent.endTime} (${timezone}). You can ask to cancel one occurrence or the whole series; I'll show the scope before confirming.`,
+            outcome: "created",
+            changed: true,
+          });
+        }
         const event = await services.events.create(principal, {
           title: intent.title,
           startsAt,
@@ -2006,6 +2061,10 @@ export function createAssistant(options: AssistantOptions) {
             changed: false,
           });
         }
+        const event = await services.events.get(principal, last.subjectId);
+        if (event.seriesId) {
+          return proposeCancellation(principal, userText, state, event.id, "occurrence");
+        }
         try {
           await services.events.cancel(principal, last.subjectId);
         } catch (error) {
@@ -2115,26 +2174,66 @@ export function createAssistant(options: AssistantOptions) {
       case "recategorize":
         return recategorize(principal, userText, intent, state, openTasks, notes);
 
+      case "cancel_event":
       case "acknowledge_event": {
         const last = state.lastReminder;
         const today = dateKeyOf(clock(), timezone);
-        const rows = await services.events.list(principal, {
-          from: localWallToUtc(addDays(today, -1), 0, timezone),
-          to: localWallToUtc(addDays(today, 7), 0, timezone),
+        const eventRows = await services.events.list(principal, {
+          from: localWallToUtc(intent.date ?? addDays(today, -1), 0, timezone),
+          to: localWallToUtc(
+            intent.date ? addDays(intent.date, 1) : addDays(today, 60),
+            0,
+            timezone,
+          ),
+          limit: 500,
         });
-        const found = resolveReference(intent.reference, rows, {
+        const rows = intent.startTime
+          ? eventRows.filter((event) => {
+              const { hour, minute } = localParts(event.startsAt, timezone);
+              return hour * 60 + minute === parseTimeOfDay(intent.startTime!);
+            })
+          : eventRows;
+        let found = resolveReference(intent.reference, rows, {
           listed:
             last?.subjectType === "event"
               ? rows.filter((event) => event.id === last.subjectId)
-              : [],
+              : state.listed.flatMap((item) => rows.filter((event) => event.id === item.id)),
         });
-        if (found.kind === "many") return clarify(found.items);
+        if (!intent.reference.trim() && (intent.date || intent.startTime) && rows.length) {
+          found =
+            rows.length === 1 ? { kind: "one", item: rows[0]! } : { kind: "many", items: rows };
+        }
+        if (found.kind === "many") {
+          const matches = found.items;
+          const reminded = matches.find((event) => event.id === last?.subjectId);
+          if (
+            intent.kind === "cancel_event" &&
+            intent.scope === "series" &&
+            matches[0]?.seriesId &&
+            matches.every((event) => event.seriesId === matches[0]!.seriesId)
+          ) {
+            found = { kind: "one", item: matches[0] };
+          } else if (reminded && !intent.date) {
+            found = { kind: "one", item: reminded };
+          }
+        }
+        if (found.kind === "many") {
+          return clarify(
+            found.items.map((event) => ({
+              ...event,
+              title: `${event.title.slice(0, 240)} (${dayWord(event.startsAt)}, ${clockLabel(event.startsAt)})`,
+            })),
+          );
+        }
         if (found.kind === "none")
           return reply({
             text: "Which event do you mean? I haven't changed any tasks or events.",
             outcome: "clarification",
             changed: false,
           });
+        if (intent.kind === "cancel_event") {
+          return proposeCancellation(principal, userText, state, found.item.id, intent.scope);
+        }
         const result = await services.events.acknowledge(principal, found.item.id);
         return reply(
           {
@@ -2378,19 +2477,22 @@ export function createAssistant(options: AssistantOptions) {
           if (!(error instanceof ConfirmationError)) throw error;
           const text =
             error.failure === "expired"
-              ? "That confirmation expired, so nothing was deleted. Ask me again if you still want it."
-              : `Nothing was deleted. ${error.message}`;
+              ? "That confirmation expired, so nothing was changed. Ask me again if you still want it."
+              : `Nothing was changed. ${error.message}`;
           return reply({ text, outcome: "failed", changed: false }, { pending: null });
         }
         const gone = outcome.result;
         return reply(
           {
-            text: gone.cleared
-              ? "Done. I've forgotten what I learned about how long things take. Estimates go back to what you set."
-              : gone.deleted === "preference"
-                ? "Done. I've forgotten that."
-                : "Done. The note is deleted.",
-            outcome: "deleted",
+            text:
+              gone.canceled === "events"
+                ? `Done. I canceled ${gone.count} event occurrence${gone.count === 1 ? "" : "s"}. They stay in history, and remaining reminders stop.`
+                : gone.cleared
+                  ? "Done. I've forgotten what I learned about how long things take. Estimates go back to what you set."
+                  : gone.deleted === "preference"
+                    ? "Done. I've forgotten that."
+                    : "Done. The note is deleted.",
+            outcome: gone.canceled ? "completed" : "deleted",
             changed: true,
           },
           { pending: null },

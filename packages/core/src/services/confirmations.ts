@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../db/client";
 import { newId, NotFoundError, recordAction } from "../db/domain";
 import {
   confirmations,
+  calendarEventRefs,
+  events,
+  reminders,
   notes,
   observations,
   preferences,
@@ -47,6 +50,7 @@ interface Executor<P> {
     principal: Principal,
     payload: P,
     confirmationId: string,
+    now: Date,
   ) => Promise<Record<string, unknown>>;
   // Replaces the stored preview once executed so deleted content is not kept in a copy.
   scrub: (preview: Record<string, unknown>) => Record<string, unknown>;
@@ -169,7 +173,129 @@ const memoryClear: Executor<{ scope: "observations" }> = {
   scrub: () => ({ summary: "Forgot what I'd learned (reports removed)" }),
 };
 
+const eventCancellationSchema = z
+  .object({
+    eventId: z.uuid(),
+    scope: z.enum(["occurrence", "series"]),
+  })
+  .strict();
+type EventCancellation = z.infer<typeof eventCancellationSchema>;
+
+async function cancellationEvents(tx: Tx, ownerId: string, payload: EventCancellation) {
+  const [event] = await tx
+    .select()
+    .from(events)
+    .where(and(eq(events.id, payload.eventId), eq(events.ownerId, ownerId)))
+    .for("update");
+  if (!event) throw new NotFoundError("Event");
+  if (payload.scope === "series" && !event.seriesId) {
+    throw new ValidationError(["This event is not part of a local recurring series."]);
+  }
+  const rows = await tx
+    .select()
+    .from(events)
+    .where(
+      and(
+        eq(events.ownerId, ownerId),
+        payload.scope === "series" ? eq(events.seriesId, event.seriesId!) : eq(events.id, event.id),
+        eq(events.status, "scheduled"),
+      ),
+    )
+    .orderBy(asc(events.id))
+    .for("update");
+  if (!rows.length) throw new ValidationError(["These events are already canceled."]);
+  const external = await tx
+    .select({ id: calendarEventRefs.id })
+    .from(calendarEventRefs)
+    .where(
+      and(
+        eq(calendarEventRefs.ownerId, ownerId),
+        inArray(
+          calendarEventRefs.eventId,
+          rows.map((row) => row.id),
+        ),
+        eq(calendarEventRefs.ownership, "external"),
+      ),
+    )
+    .limit(1);
+  if (external.length)
+    throw new ValidationError(["Cancel externally managed events in their source calendar."]);
+  return rows;
+}
+
+const eventCancellation: Executor<EventCancellation> = {
+  schema: eventCancellationSchema,
+  async targets(tx, ownerId, payload) {
+    return (await cancellationEvents(tx, ownerId, payload)).map((row) => ({
+      entityType: "event",
+      entityId: row.id,
+      version: row.version,
+    }));
+  },
+  async preview(tx, ownerId, payload) {
+    const rows = await cancellationEvents(tx, ownerId, payload);
+    const sorted = rows.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+    const first = sorted[0]!;
+    const label = (date: Date) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: first.timezone,
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(date);
+    return {
+      summary:
+        payload.scope === "series"
+          ? `Cancel all ${rows.length} scheduled occurrences of "${first.title}", ${label(first.startsAt)} through ${label(sorted.at(-1)!.startsAt)} (${first.timezone})`
+          : `Cancel only "${first.title}" on ${label(first.startsAt)} (${first.timezone}); other occurrences stay scheduled`,
+      consequences: ["Canceled events stay in history. Their remaining reminders stop."],
+    };
+  },
+  async execute(tx, principal, payload, confirmationId, now) {
+    const rows = await cancellationEvents(tx, principal.ownerId, payload);
+    const ids = rows.map((row) => row.id);
+    await tx
+      .update(events)
+      .set({
+        status: "canceled",
+        canceledAt: now,
+        version: sql`${events.version} + 1`,
+      })
+      .where(and(eq(events.ownerId, principal.ownerId), inArray(events.id, ids)));
+    await tx
+      .update(reminders)
+      .set({
+        status: "canceled",
+        detail: "event canceled",
+        version: sql`${reminders.version} + 1`,
+      })
+      .where(
+        and(
+          eq(reminders.ownerId, principal.ownerId),
+          eq(reminders.subjectType, "event"),
+          inArray(reminders.subjectId, ids),
+          eq(reminders.status, "scheduled"),
+        ),
+      );
+    for (const event of rows) {
+      await recordAction(
+        tx,
+        { ...principal, now },
+        {
+          action: "event.cancel",
+          entityType: "event",
+          entityId: event.id,
+          before: { status: event.status, seriesId: event.seriesId },
+          after: { status: "canceled", scope: payload.scope, confirmationId },
+        },
+      );
+    }
+    return { canceled: "events", count: rows.length, scope: payload.scope };
+  },
+  scrub: (preview) => preview,
+};
+
 const EXECUTORS: Partial<Record<ActionName, Executor<never>>> = {
+  "event.cancel_series": eventCancellation as unknown as Executor<never>,
   "memory.clear": memoryClear as unknown as Executor<never>,
   "note.delete": noteDelete as unknown as Executor<never>,
   "preference.delete": preferenceDelete as unknown as Executor<never>,
@@ -367,6 +493,7 @@ export function createConfirmationService(db: Database, clock: () => Date = () =
           { ...principal, source: principal.source },
           row.payload,
           row.id,
+          now,
         );
         await tx
           .update(confirmations)

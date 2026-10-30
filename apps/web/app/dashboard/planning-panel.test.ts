@@ -76,6 +76,10 @@ describe("planning UI", () => {
     expect(html).toContain("End (AM/PM)");
     expect(html).toContain('aria-label="End time"');
     expect(html).not.toContain("<details open");
+    expect(html).toContain('data-tone="work"');
+    expect(html).toContain('data-tone="routine"');
+    expect(html).toContain('data-tone="advanced"');
+    expect(html).toContain("Sleep, meals, and protected personal time");
   });
 });
 

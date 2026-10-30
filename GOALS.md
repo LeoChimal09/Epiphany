@@ -328,6 +328,84 @@ and fixed narrow agenda text wrapping. Focused tests and the full automated
 
 ## Progress Record
 
+### 2026-10-30: Application-Wide Visual Refresh
+
+Owner-requested visual refresh across sign-in, dashboard navigation/headers,
+chat, task/todo/event records, notes/ideas, calendar views, scheduling preferences,
+calendar connections, confirmations, notifications, and the dashboard error page.
+Shared global design tokens replace the disconnected black/gray palettes with
+layered slate surfaces, violet actions, mint highlights, and warmer note accents.
+Typography, spacing, focus states, empty states, selected navigation, and form
+surfaces are consistent. Settings and calendar links are also discoverable in the
+desktop sidebar. Existing workflows, authorization, and saved records are unchanged.
+
+Verification: `bun run check`, 192 dashboard tests, `git diff --check`, and
+`NEXT_DIST_DIR=.next-gate bun run build` passed. Five database-backed tests were
+skipped without the disposable test database; no schema changes were made in this
+slice. Local Chromium smoke checks covered desktop/mobile sign-in, all six main
+views, event composition, expanded settings, and calendar connections. Additional
+checks at 320/390/768/1024/1440 pixels verified chat layout; checks covered
+conditional repeat/reminder controls, mobile task readability, reduced motion,
+and absence of browser runtime errors. Browser screenshots were inspected; this
+caught and corrected squeezed mobile task cards, misplaced chat send controls with
+voice enabled, and clipped settings time fields. Browser checks did not submit
+record/settings changes, send AI messages, or invoke voice/provider APIs.
+No application dependencies were added, and nothing was committed or deployed.
+
+### 2026-10-30: Conditional Controls, Visual Clarity, And Local Schema Recovery
+
+The event composer now shows a required occurrence count only after daily or weekly
+repetition is selected, and resets repetition when switching item types or all-day
+mode. Todos no longer offer deadline-only split reminders; events label their
+default as off rather than implying inheritance of the task default. Disabled
+workspace split reminders hide the count without submitting an invalid hidden
+edit. Task, todo, and event cards, badges, and selected filters now use distinct
+accents plus icons/text. Scheduling disclosures have distinct icons, subtitles,
+accent colors, open indicators, and keyboard focus styling.
+
+The reported record/schedule loading failures also exposed the unapplied
+`0014_sweet_omega_red` migration on the configured loopback database. Applied that
+additive migration locally; `bun run db:status` reports none pending. Actual
+owner-scoped task, note, category, event, work-block, preference, and calendar
+overview reads through the shared services passed without changing records.
+This does not migrate any remote deployment.
+
+Verification: 89 focused dashboard/reminder/action tests, `bun run check`,
+`bun run db:check`, `git diff --check`, and the isolated production build
+(`NEXT_DIST_DIR=.next-gate bun run build`) passed. No browser interaction, live
+Discord/model, or remote deployment acceptance was performed. Nothing committed
+or deployed; running remote services still need the migration and updated code.
+
+### 2026-10-30: Conversation Recovery And Local Repeating Events
+
+Owner-requested fix/feature slice, without marking any additional goal complete:
+the shared OpenAI adapter now fits optional context to the input budget, preserving
+the current message, latest reminder, and pending confirmation. Short requests
+no longer fail indefinitely because older conversation/records filled the cap.
+The fixed prompt is also shorter; completion reports must not be interpreted as
+consent to enable duration tracking. Event acknowledgments can resolve explicit
+dates/times and numbered occurrence follow-ups without completing unrelated tasks.
+
+Timed local events now support bounded daily/weekly recurrence, intervals, chosen
+weekdays, and a count or inclusive end date. The dashboard form offers simple
+daily/weekly repeats. Occurrences are saved atomically, keep local wall times
+across DST, and survive restarts. Cancellation previews one occurrence or the
+entire series, uses the existing owner/version/expiry-bound confirmation, keeps
+history, and stops affected scheduled reminders. See [calendar](docs/calendar.md)
+and the [recurrence decision](docs/decisions/0001-initial-architecture.md#2026-10-30-bounded-local-event-recurrence).
+
+Verification: `bun run check`, `bun run db:check`, the release gate's complete
+disposable-MySQL suite (none skipped), clean/upgrade/idempotent migration tests,
+and production build passed. Generated migration metadata initially failed
+formatting; it was formatted and the full check passed afterward. Final focused
+assistant/provider/intent/tool regressions passed, covering crowded web/Discord
+topic changes, date/time event completion, recurring occurrence selection, and
+safe cancellation. Fixtures were removed and their absence verified by the tests.
+No live-model/Discord/Google or browser interaction checks were run. Nothing was
+committed or deployed; apply additive migration `0014_sweet_omega_red` before
+deploying both services. Open-ended/all-day recurrence and series editing remain
+unsupported; the 520-occurrence/30-year bound is documented rather than silent.
+
 Current next goal: **06 - Connect Discord And Create The Workspace**.
 
 Official checked-off goals are **01 (architecture), 02 (skeleton), 03 (database), 04 (secure access),

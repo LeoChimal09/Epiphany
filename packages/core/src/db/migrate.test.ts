@@ -100,19 +100,18 @@ describe("diffMigrations (no database)", () => {
 
   it("recognizes the verified released 0011 without replaying it or hiding later migrations", () => {
     const files = loadMigrationFiles(realFolder);
-    const applied = files
-      .filter((entry) => entry.tag !== "0013_backfill_task_types")
-      .map((entry) => ({
-        when: entry.when,
-        hash:
-          entry.tag === "0011_nebulous_outlaw_kid"
-            ? "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a"
-            : entry.hash,
-      }));
+    const pendingIndex = files.findIndex((entry) => entry.tag === "0013_backfill_task_types");
+    const applied = files.slice(0, pendingIndex).map((entry) => ({
+      when: entry.when,
+      hash:
+        entry.tag === "0011_nebulous_outlaw_kid"
+          ? "bae9bfd4833e56f2b357448350f7d29f036c46124a7600c51d6d581d35bf071a"
+          : entry.hash,
+    }));
     const status = diffMigrations(files, applied);
     expect(status.problems).toEqual([]);
     expect(status.applied).toContain("0011_nebulous_outlaw_kid");
-    expect(status.pending).toEqual(["0013_backfill_task_types"]);
+    expect(status.pending).toEqual(files.slice(pendingIndex).map((entry) => entry.tag));
   });
 
   it.each([{ tag: "other_migration" }, { when: 1793049246427 }, { hash: "changed-current-file" }])(
@@ -247,7 +246,7 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
     expect(before[0]?.task_type).toBe("task");
     const status = await getMigrationStatus(pool, realFolder);
     expect(status.problems).toEqual([]);
-    expect(status.pending).toEqual(["0012_simple_patriot", "0013_backfill_task_types"]);
+    expect(status.pending).toEqual(all.slice(installed).map((entry) => entry.tag));
     await runMigrations(pool, realFolder);
     const [after] = await pool.query<RowDataPacket[]>(
       "SELECT task_type, priority, split_reminder_count FROM tasks WHERE id = 'task-done'",
@@ -286,7 +285,12 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
     );
     const status = await getMigrationStatus(pool, realFolder);
     expect(status.problems).toEqual([]);
-    expect(status.pending).toEqual(["0012_simple_patriot", "0013_backfill_task_types"]);
+    const all = loadMigrationFiles(realFolder);
+    expect(status.pending).toEqual(
+      all
+        .slice(all.findIndex((entry) => entry.tag === "0012_simple_patriot"))
+        .map((entry) => entry.tag),
+    );
     expect((await runMigrations(pool, realFolder)).applied).toEqual(status.pending);
     const [after] = await pool.query<RowDataPacket[]>("SELECT * FROM tasks ORDER BY id");
     expect(
@@ -299,7 +303,7 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
       `SELECT * FROM \`${MIGRATIONS_TABLE}\` ORDER BY id`,
     );
     expect(historyAfter.slice(0, historyBefore.length)).toEqual(historyBefore);
-    expect(historyAfter).toHaveLength(historyBefore.length + 2);
+    expect(historyAfter).toHaveLength(historyBefore.length + status.pending.length);
     expect((await getMigrationStatus(pool, realFolder)).problems).toEqual([]);
     expect((await runMigrations(pool, realFolder)).applied).toEqual([]);
   });
@@ -337,7 +341,7 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
   const ADDED_COLUMNS: Record<string, string[]> = {
     owners: ["avatar_hash"],
     tasks: ["review_note", "priority", "task_type", "split_reminder_count"],
-    events: ["split_reminder_count"],
+    events: ["split_reminder_count", "series_id"],
   };
 
   function withoutAddedColumns(
@@ -425,9 +429,14 @@ describe.skipIf(!dbTestsEnabled)("migration runner against MySQL", () => {
         const [eventSplits] = await upgradePool.query<RowDataPacket[]>(
           "SELECT split_reminder_count FROM events",
         );
-        expect(
-          [...taskSplits, ...eventSplits].every((row) => row.split_reminder_count === null),
-        ).toBe(true);
+        for (const [table, splits] of [
+          ["tasks", taskSplits],
+          ["events", eventSplits],
+        ] as const) {
+          if (!("split_reminder_count" in (before[table]?.[0] as object))) {
+            expect(splits.every((row) => row.split_reminder_count === null)).toBe(true);
+          }
+        }
         expect((await getMigrationStatus(upgradePool, realFolder)).pending).toEqual([]);
         expect((await runMigrations(upgradePool, realFolder)).applied).toEqual([]);
       } finally {

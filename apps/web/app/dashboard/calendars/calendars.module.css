@@ -1,41 +1,72 @@
 .page {
-  --surface: #181818;
-  --line: rgba(255, 255, 255, 0.12);
-  --muted: #b3b3b3;
-  --accent: #2d7dff;
-  --danger: #e0474c;
-  --success: #1db954;
-  --warn: #e3b341;
+  --surface: var(--epi-surface);
+  --line: var(--epi-line);
+  --muted: var(--epi-muted);
+  --accent: var(--epi-primary);
+  --danger: var(--epi-danger);
+  --success: var(--epi-success);
+  --warn: var(--epi-warn);
   color-scheme: dark;
   box-sizing: border-box;
   min-height: 100dvh;
-  max-width: 760px;
+  max-width: 920px;
   margin: 0 auto;
-  padding: 24px 16px 64px;
-  color: #fff;
-  background: #121212;
-  font:
-    15px/1.5 "Trebuchet MS",
-    "Gill Sans",
-    sans-serif;
+  padding: 40px 24px 80px;
+  color: var(--epi-ink);
+  font: 15px/1.6 var(--epi-font);
+}
+.header {
+  margin-bottom: 24px;
+  padding: 26px 28px;
+  border: 1px solid #a78bfa40;
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse at 100% 0%, #7fe3d11a, transparent 70%),
+    linear-gradient(120deg, #262442, #19263b);
 }
 
 .header h1 {
-  margin: 8px 0 16px;
-  font-size: 26px;
+  margin: 16px 0 8px;
+  font-size: clamp(28px, 4vw, 36px);
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+.header p {
+  margin: 0;
+  color: var(--muted);
+}
+.headerIcon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-top: 20px;
+  border: 1px solid #a78bfa60;
+  border-radius: 16px;
+  color: var(--epi-accent);
+  background: #a78bfa1a;
 }
 
 .back {
-  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--epi-accent);
   text-decoration: none;
+  font-size: 13px;
+}
+.back:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .card {
   margin-bottom: 16px;
-  padding: 16px;
+  padding: 24px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  border-radius: 18px;
+  background: linear-gradient(140deg, #a78bfa0a, transparent), var(--surface);
+  box-shadow: var(--epi-shadow);
 }
 
 .card h2 {
@@ -84,7 +115,20 @@
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding: 6px 0;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--epi-input);
+}
+.row input {
+  margin-top: 6px;
+  accent-color: var(--epi-accent);
+}
+.row > span,
+.blockRow > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .blockRow {
@@ -106,25 +150,64 @@
 .primary,
 .secondary,
 .danger {
-  display: inline-block;
-  padding: 8px 14px;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 9px 16px;
+  border-radius: 12px;
   border: 1px solid transparent;
   color: #fff;
   font: inherit;
   text-decoration: none;
   cursor: pointer;
+  font-weight: 600;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
 }
 
 .primary {
-  background: var(--accent);
+  border-color: #a78bfa70;
+  background: linear-gradient(135deg, var(--accent), #5655c6);
+  box-shadow: 0 4px 14px #7351d730;
+}
+.primary:hover {
+  background: #6240bd;
 }
 
 .secondary {
-  border-color: var(--line);
-  background: transparent;
+  border-color: var(--epi-line-strong);
+  background: var(--epi-raised);
+}
+.secondary:hover {
+  border-color: var(--epi-accent);
 }
 
 .danger {
-  background: var(--danger);
+  color: var(--danger);
+  border-color: #ff9aab70;
+  background: #ff9aab14;
+}
+.danger:hover {
+  background: #ff9aab26;
+}
+.page button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.page code {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .page {
+    padding: 20px 16px 48px;
+  }
+  .header,
+  .card {
+    padding: 20px;
+  }
+  .actions > * {
+    flex: 1 1 100%;
+  }
 }

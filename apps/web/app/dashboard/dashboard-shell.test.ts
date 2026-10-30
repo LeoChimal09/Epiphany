@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DashboardShell } from "./dashboard-shell";
+import { DashboardShell, EventRepeatFields } from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
@@ -10,6 +10,27 @@ vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("./voice-actions", () => ({}));
 
 describe("compact assistant dashboard", () => {
+  it("hides the occurrence count until a repeat schedule is selected", () => {
+    const oneOff = renderToStaticMarkup(
+      createElement(EventRepeatFields, {
+        frequency: "none",
+        onChange: () => {},
+      }),
+    );
+    expect(oneOff).toContain('name="repeatFrequency"');
+    expect(oneOff).not.toContain('name="repeatCount"');
+    for (const frequency of ["daily", "weekly"] as const) {
+      const repeating = renderToStaticMarkup(
+        createElement(EventRepeatFields, {
+          frequency,
+          onChange: () => {},
+        }),
+      );
+      expect(repeating).toContain(`value="${frequency}" selected`);
+      expect(repeating).toContain('name="repeatCount"');
+      expect(repeating).toContain('required=""');
+    }
+  });
   it("renders only five upcoming tasks while retaining the full task count and navigation", () => {
     const tasks: DashboardTask[] = Array.from({ length: 40 }, (_, index) => ({
       id: `task-${index}`,
@@ -59,5 +80,9 @@ describe("compact assistant dashboard", () => {
     expect(html).toContain("<span>Calendar</span>");
     expect(html).not.toContain("<span>Today</span>");
     expect(html).not.toContain("<span>Week</span>");
+    expect(html).toContain('data-kind="task"');
+    expect(html).toContain("Deadline task");
+    expect(html).toContain('href="/dashboard/planning"');
+    expect(html).toContain('href="/dashboard/calendars"');
   });
 });
