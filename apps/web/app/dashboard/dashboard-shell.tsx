@@ -15,7 +15,6 @@ import {
   CalendarDays,
   Check,
   CircleCheck,
-  Clock,
   FileText,
   Folder,
   Globe2,
@@ -768,7 +767,7 @@ export function DashboardShell({
             <Sparkles size={17} />
           </span>
           <span>
-            Epiphany<span className={styles.brandCaption}> Personal workspace</span>
+            Epiphany<span className={styles.brandCaption}> Personal field station</span>
           </span>
         </Link>
         <div className={styles.rowActions}>
@@ -907,7 +906,9 @@ export function DashboardShell({
           <header className={styles.heading}>
             <div>
               <p className={styles.eyebrow}>
-                {view === "today" ? formatDayLabel(today, "long").toUpperCase() : "YOUR WORKSPACE"}
+                {view === "today"
+                  ? formatDayLabel(today, "long").toUpperCase()
+                  : "PERSONAL OPERATIONS / EPIPHANY"}
               </p>
               <h1>{title}</h1>
               <p className={styles.headingDescription}>
@@ -994,14 +995,14 @@ export function DashboardShell({
               <span className={styles.summaryIcon} aria-hidden="true">
                 <ListChecks size={19} />
               </span>
-              <dt>Open tasks & todos</dt>
+              <dt>{data.tasksTruncated ? "Loaded open tasks & todos" : "Open tasks & todos"}</dt>
               <dd>{open.length}</dd>
             </div>
             <div data-summary="work">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <Timer size={19} />
               </span>
-              <dt>Estimated work</dt>
+              <dt>{data.tasksTruncated ? "Loaded estimated work" : "Estimated work"}</dt>
               <dd>
                 {estimatedMinutes}
                 <span> min</span>
@@ -1011,7 +1012,7 @@ export function DashboardShell({
               <span className={styles.summaryIcon} aria-hidden="true">
                 <NotebookText size={19} />
               </span>
-              <dt>Saved notes</dt>
+              <dt>{data.notesTruncated ? "Loaded notes" : "Saved notes"}</dt>
               <dd>{data.notes.length}</dd>
             </div>
           </dl>
@@ -1762,28 +1763,37 @@ function EventList({
           {events.map((event) => (
             <li key={event.id} className={styles.task} data-kind="event">
               <div className={styles.taskContent}>
-                <h2>{event.title}</h2>
-                <div className={styles.taskMeta}>
+                <div className={styles.recordTopline}>
                   <span className={styles.eventTag}>
                     <CalendarDays size={13} aria-hidden="true" /> Event
                   </span>
-                  <span>
-                    <strong>Date:</strong> {formatEventDate(event)}
-                  </span>
-                  <span>
-                    <strong>Time:</strong> {formatEventTime(event)}
-                  </span>
-                  {!event.allDay ? (
-                    <span>
-                      <strong>Duration:</strong> {formatEventDuration(event)}
-                    </span>
-                  ) : null}
-                  {event.location ? (
-                    <span>
-                      <strong>Location:</strong> {event.location}
-                    </span>
+                  {event.seriesId ? (
+                    <span className={styles.recordLabel}>Recurring series</span>
                   ) : null}
                 </div>
+                <h2>{event.title}</h2>
+                <dl className={styles.recordFacts}>
+                  <div>
+                    <dt>Date</dt>
+                    <dd>{formatEventDate(event)}</dd>
+                  </div>
+                  <div>
+                    <dt>Time</dt>
+                    <dd>{formatEventTime(event)}</dd>
+                  </div>
+                  {!event.allDay ? (
+                    <div>
+                      <dt>Duration</dt>
+                      <dd>{formatEventDuration(event)}</dd>
+                    </div>
+                  ) : null}
+                  {event.location ? (
+                    <div>
+                      <dt>Location</dt>
+                      <dd>{event.location}</dd>
+                    </div>
+                  ) : null}
+                </dl>
               </div>
               <div className={styles.rowActions}>
                 <button
@@ -1979,7 +1989,7 @@ function TaskList({
   );
 }
 
-function TaskRow({
+export function TaskRow({
   task,
   categories,
   timezone,
@@ -2131,18 +2141,7 @@ function TaskRow({
         </span>
       )}
       <div className={styles.taskContent}>
-        <h2>{task.title}</h2>
-        {task.details ? (
-          <p>
-            <strong>Details:</strong> {task.details}
-          </p>
-        ) : null}
-        <div className={styles.taskMeta}>
-          {task.archivedAt ? (
-            <span className={styles.archivedTag}>
-              <strong>Archived:</strong> {formatDate(task.archivedAt, timezone)}
-            </span>
-          ) : null}
+        <div className={styles.recordTopline}>
           <span className={task.taskType === "todo" ? styles.todoTag : styles.deadlineTag}>
             {task.taskType === "todo" ? (
               <CircleCheck size={13} aria-hidden="true" />
@@ -2152,44 +2151,70 @@ function TaskRow({
             {task.taskType === "todo" ? "Todo" : "Deadline task"}
           </span>
           {task.status === "completed" ? (
-            <span className={styles.completedTag}>
-              <CircleCheck size={13} aria-hidden="true" />
-              <strong>Completed:</strong> {formatDate(task.completedAt, timezone)}
+            <span className={styles.completedTag}>Completed</span>
+          ) : countdown ? (
+            <span className={overdue ? styles.overdue : styles.countdown}>{countdown}</span>
+          ) : (
+            <span className={styles.recordLabel}>
+              {task.taskType === "todo" ? "No deadline" : "Deadline not set"}
             </span>
+          )}
+          {task.taskType === "task" && task.priority === "major" ? (
+            <span className={styles.majorTag}>Major priority</span>
+          ) : null}
+        </div>
+        <h2>{task.title}</h2>
+        {task.status === "open" && task.reviewNote ? (
+          <p className={styles.reviewTag}>
+            <TriangleAlert size={13} aria-hidden="true" />
+            Needs review: {task.reviewNote}
+          </p>
+        ) : null}
+        <dl className={styles.recordFacts}>
+          {task.status === "completed" ? (
+            <div>
+              <dt>Completed</dt>
+              <dd>{formatDate(task.completedAt, timezone)}</dd>
+            </div>
           ) : task.taskType === "task" ? (
-            <span className={overdue ? styles.overdue : styles.deadline}>
-              <CalendarClock size={13} aria-hidden="true" />
-              <strong>Deadline:</strong> {formatDate(task.dueAt, timezone, task.dueDateOnly)}
-            </span>
-          ) : null}
-          {countdown ? (
-            <span className={styles.countdown}>
-              <strong>Status:</strong> {countdown}
-            </span>
-          ) : null}
-          {task.status === "open" && task.reviewNote ? (
-            <span className={styles.reviewTag}>
-              <TriangleAlert size={13} aria-hidden="true" />
-              Needs review: {task.reviewNote}
-            </span>
-          ) : null}
-          {task.taskType === "task" ? (
-            <span className={task.priority === "major" ? styles.majorTag : undefined}>
-              <strong>Priority:</strong> {task.priority === "major" ? "Major" : "Minor"}
-            </span>
+            <div>
+              <dt>Deadline</dt>
+              <dd className={overdue ? styles.overdue : undefined}>
+                {formatDate(task.dueAt, timezone, task.dueDateOnly)}
+              </dd>
+            </div>
           ) : null}
           {task.estimatedMinutes ? (
-            <span>
-              <Clock size={13} aria-hidden="true" />
-              <strong>Estimated effort:</strong> {task.estimatedMinutes} min
-            </span>
+            <div>
+              <dt>Estimated effort</dt>
+              <dd>{task.estimatedMinutes} min</dd>
+            </div>
           ) : null}
-          <span>
-            <Folder size={13} aria-hidden="true" />
-            <strong>Category:</strong>{" "}
-            {categories.find((category) => category.id === task.categoryId)?.name ?? "Inbox"}
-          </span>
-        </div>
+          <div>
+            <dt>Category</dt>
+            <dd>
+              {categories.find((category) => category.id === task.categoryId)?.name ?? "Inbox"}
+            </dd>
+          </div>
+          {task.taskType === "task" ? (
+            <div>
+              <dt>Priority</dt>
+              <dd>{task.priority === "major" ? "Major" : "Minor"}</dd>
+            </div>
+          ) : null}
+          {task.archivedAt ? (
+            <div>
+              <dt>Archived</dt>
+              <dd>{formatDate(task.archivedAt, timezone)}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {task.details ? (
+          <details className={styles.recordDetails}>
+            <summary>Task details</summary>
+            <p>{task.details}</p>
+          </details>
+        ) : null}
       </div>
       <div className={styles.rowActions}>
         {task.status === "open" ? (
@@ -2347,7 +2372,25 @@ function NoteCard({
         <time dateTime={note.createdAt}>{formatDate(note.createdAt, timezone)}</time>
       </div>
       {note.title ? <h2>{note.title}</h2> : null}
-      {note.kind === "idea" ? <IdeaBody body={note.body} /> : <p>{note.body}</p>}
+      {note.kind === "idea" ? (
+        <>
+          <p className={styles.notePreview}>
+            {note.body
+              .split("\n")
+              .filter((line) => line.trim() && !line.startsWith("## "))
+              .join(" ")}
+          </p>
+          <IdeaBody body={note.body} />
+        </>
+      ) : (
+        <>
+          <p className={styles.notePreview}>{note.body}</p>
+          <details className={styles.recordDetails}>
+            <summary>Read full note</summary>
+            <p>{note.body}</p>
+          </details>
+        </>
+      )}
       <div className={styles.noteFooter}>
         <span>
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}

@@ -40,7 +40,7 @@ export default async function LoginPage({
       <div className={styles.layout}>
         <section className={styles.intro} aria-labelledby="welcome-heading">
           <p className={styles.kicker}>
-            <Sparkles size={16} aria-hidden="true" /> A little clarity, every day
+            <Sparkles size={16} aria-hidden="true" /> Personal field station
           </p>
           <h2 id="welcome-heading">
             Make room for

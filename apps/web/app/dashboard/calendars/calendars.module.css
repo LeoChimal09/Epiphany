@@ -18,11 +18,11 @@
 .header {
   margin-bottom: 24px;
   padding: 26px 28px;
-  border: 1px solid #a78bfa40;
-  border-radius: 22px;
+  border: 1px solid var(--epi-line-strong);
+  border-left: 5px solid var(--accent);
+  border-radius: 4px;
   background:
-    radial-gradient(ellipse at 100% 0%, #7fe3d11a, transparent 70%),
-    linear-gradient(120deg, #262442, #19263b);
+    repeating-linear-gradient(0deg, #91e5ba03 0 1px, transparent 1px 5px), var(--epi-panel);
 }
 
 .header h1 {
@@ -41,10 +41,10 @@
   width: 48px;
   height: 48px;
   margin-top: 20px;
-  border: 1px solid #a78bfa60;
-  border-radius: 16px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
   color: var(--epi-accent);
-  background: #a78bfa1a;
+  background: var(--epi-accent-tint);
 }
 
 .back {
@@ -64,14 +64,16 @@
   margin-bottom: 16px;
   padding: 24px;
   border: 1px solid var(--line);
-  border-radius: 18px;
-  background: linear-gradient(140deg, #a78bfa0a, transparent), var(--surface);
+  border-radius: 4px;
+  background: var(--surface);
   box-shadow: var(--epi-shadow);
 }
 
 .card h2 {
   margin: 0 0 8px;
   font-size: 17px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .muted {
@@ -118,7 +120,7 @@
   padding: 12px;
   margin: 8px 0;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--epi-input);
 }
 .row input {
@@ -168,12 +170,13 @@
 }
 
 .primary {
-  border-color: #a78bfa70;
-  background: linear-gradient(135deg, var(--accent), #5655c6);
-  box-shadow: 0 4px 14px #7351d730;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--epi-on-accent);
+  box-shadow: 3px 3px 0 #edbd5820;
 }
 .primary:hover {
-  background: #6240bd;
+  background: var(--epi-accent);
 }
 
 .secondary {

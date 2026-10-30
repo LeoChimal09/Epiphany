@@ -1,11 +1,11 @@
 .section,
 .group {
-  --section-accent: #a6caff;
-  --section-tint: #192638;
+  --section-accent: #a8d1e8;
+  --section-tint: #193744;
   margin: 12px 0;
   border: 1px solid var(--epi-line);
   border-left: 4px solid var(--section-accent);
-  border-radius: 18px;
+  border-radius: 4px;
   background: var(--epi-surface);
   box-shadow: 0 6px 20px #03081414;
 }
@@ -18,8 +18,8 @@
   --section-tint: #183229;
 }
 .group[data-tone="routine"] {
-  --section-accent: #d6bbff;
-  --section-tint: #2b223b;
+  --section-accent: #aed2c1;
+  --section-tint: #243d35;
 }
 .group[data-tone="advanced"] {
   --section-accent: #b7c8df;
@@ -33,7 +33,7 @@
   cursor: pointer;
   font-weight: 700;
   padding: 20px;
-  border-radius: 16px;
+  border-radius: 3px;
   color: var(--section-accent);
   background: var(--section-tint);
   list-style: none;

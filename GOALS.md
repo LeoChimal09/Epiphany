@@ -328,6 +328,32 @@ and fixed narrow agenda text wrapping. Focused tests and the full automated
 
 ## Progress Record
 
+### 2026-10-30: Retro Field-Station Theme And Record Layouts
+
+Owner-requested original retro-futuristic visual direction: blue-steel panels,
+amber controls, mint terminal labels, grid backgrounds, restrained static scan
+textures, and instrument-style summary strips. Applied through shared tokens and
+the sign-in, dashboard/chat, calendar, settings, connections, and error surfaces;
+no third-party game artwork, logos, fonts, or assets are used.
+
+Tasks and history now separate type/urgency, title, labeled facts, and actions.
+Overdue status uses warning color; completed rows do not retain overdue urgency.
+Full task instructions remain in keyboard-operable disclosures. Events use
+labeled date/time/duration/location facts and identify recurring occurrences.
+Notes/ideas show three-line previews with full content still expandable.
+Summary labels distinguish loaded counts when records are truncated.
+
+Verification: `bun run check`, 195 dashboard tests, production build with
+`NEXT_DIST_DIR=.next-gate bun run build`, and `git diff --check` passed.
+Five database-backed tests were skipped without the disposable database; this
+slice changes no schema or domain behavior. Chromium desktop/mobile smoke checks
+passed across sign-in, all main views, event composition, expanded settings, and
+calendar connections. Checked chat at five widths (320–1440 pixels), mobile task
+readability, conditional controls, reduced motion, and no browser runtime errors.
+Screenshots were inspected. No record/settings changes or paid AI/voice calls
+were made; the browser session was revoked and replay rejected after logout.
+No application dependencies added; nothing committed or deployed.
+
 ### 2026-10-30: Application-Wide Visual Refresh
 
 Owner-requested visual refresh across sign-in, dashboard navigation/headers,

@@ -155,6 +155,10 @@ export function AssistantChat({
       ) : null}
       {messages.length === 0 ? (
         <div className={styles.chatEmpty}>
+          <div className={styles.terminalLabel}>
+            <span>COMMUNICATIONS / EPI</span>
+            <span>TEXT INTERFACE</span>
+          </div>
           <span className={styles.chatEmptyIcon} aria-hidden="true">
             <Sparkles size={26} />
           </span>
