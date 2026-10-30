@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseDateKey, parseTimeOfDay, type DateKey } from "../planning/time";
 import { VOICE_ACTIONS, type VoiceAction } from "./workspace";
 import { isSettableKey, parseSettingValue, type SettableKey } from "./settings";
+import { recurrenceInput, type Recurrence } from "../planning/recurrence";
 
 // What a model may ask for. It never produces instants, ids it was not shown, or SQL: only
 // these shapes, which the assistant validates and maps onto the permissioned services.
@@ -56,7 +57,20 @@ export type Intent =
       priority?: "minor" | "major";
     }
   | { kind: "reopen_task"; reference: string; targetId?: string }
-  | { kind: "acknowledge_event"; reference: string; targetId?: string }
+  | {
+      kind: "acknowledge_event";
+      reference: string;
+      targetId?: string;
+      date?: DateKey;
+      startTime?: string;
+    }
+  | {
+      kind: "cancel_event";
+      reference: string;
+      scope: "occurrence" | "series";
+      date?: DateKey;
+      startTime?: string;
+    }
   | {
       kind: "create_event";
       title: string;
@@ -64,6 +78,7 @@ export type Intent =
       startTime: string;
       endTime: string;
       location?: string;
+      recurrence?: Recurrence;
     }
   | {
       kind: "create_note";
@@ -149,6 +164,7 @@ export const INTENT_KINDS = [
   "update_task",
   "reopen_task",
   "acknowledge_event",
+  "cancel_event",
   "delete_note",
   "setup_workspace",
   "snooze",
@@ -202,6 +218,8 @@ export const intentWireSchema = z
     start_time: z.string().nullable(),
     end_time: z.string().nullable(),
     location: z.string().max(300).nullable(),
+    recurrence: recurrenceInput.nullable().default(null),
+    scope: z.enum(["occurrence", "series"]).nullable().default(null),
     estimated_minutes: z.number().int().min(1).max(100_000).nullable(),
     priority: z.enum(["minor", "major"]).nullable(),
     task_type: z.enum(["task", "todo"]).nullable().default(null),
@@ -365,6 +383,31 @@ export function toIntent(raw: unknown): Intent {
         startTime,
         endTime,
         ...(location ? { location } : {}),
+        ...(wire.recurrence ? { recurrence: wire.recurrence } : {}),
+      };
+    }
+    case "acknowledge_event":
+    case "cancel_event": {
+      const eventDate = date(wire.event_date, "event_date");
+      const startTime = present(wire.start_time);
+      if (startTime) {
+        try {
+          parseTimeOfDay(startTime);
+        } catch {
+          throw new IntentError("start_time is not a valid time");
+        }
+      }
+      if (wire.kind === "cancel_event" && !wire.scope) throw new IntentError("scope is required");
+      return {
+        ...(wire.kind === "cancel_event"
+          ? { kind: "cancel_event" as const, scope: wire.scope! }
+          : {
+              kind: "acknowledge_event" as const,
+              ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+            }),
+        reference: present(wire.reference) ?? "",
+        ...(eventDate ? { date: eventDate } : {}),
+        ...(startTime ? { startTime } : {}),
       };
     }
     case "create_note":
@@ -425,7 +468,6 @@ export function toIntent(raw: unknown): Intent {
     }
     case "complete_task":
     case "reopen_task":
-    case "acknowledge_event":
     case "delete_note": {
       const targetId = present(wire.target_id);
       return {

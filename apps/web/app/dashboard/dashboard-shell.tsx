@@ -15,7 +15,6 @@ import {
   CalendarDays,
   Check,
   CircleCheck,
-  Clock,
   FileText,
   Folder,
   Globe2,
@@ -31,6 +30,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
   Timer,
   Trash2,
@@ -49,7 +49,9 @@ import {
   addDashboardNote,
   addDashboardTask,
   askEpi,
-  cancelDashboardEvent,
+  proposeDashboardEventCancellation,
+  confirmDashboardEventCancellation,
+  cancelDashboardEventCancellation,
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
@@ -150,6 +152,7 @@ export function DashboardShell({
   const [calendarEntryType, setCalendarEntryType] = useState<"task" | "todo" | "event">("task");
   const [eventAllDay, setEventAllDay] = useState(false);
   const [eventTimingMode, setEventTimingMode] = useState<"end" | "duration">("end");
+  const [eventRepeat, setEventRepeat] = useState<"none" | "daily" | "weekly">("none");
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
@@ -368,7 +371,7 @@ export function DashboardShell({
           return result.ok
             ? {
                 ...result,
-                message: `Event saved. Showing it on the calendar for ${formatDayLabel(eventDate, "long")}.`,
+                message: `${result.message} Showing the calendar for ${formatDayLabel(eventDate, "long")}.`,
               }
             : result;
         },
@@ -380,6 +383,7 @@ export function DashboardShell({
             setCalendarEntryType("task");
             setEventAllDay(false);
             setEventTimingMode("end");
+            setEventRepeat("none");
             setCalendarFocusDate(eventDate);
             setWeekStart(eventWeek);
             setView("week");
@@ -410,6 +414,7 @@ export function DashboardShell({
     setCalendarEntryType("task");
     setEventAllDay(false);
     setEventTimingMode("end");
+    setEventRepeat("none");
     setComposer("task");
   }
 
@@ -600,14 +605,43 @@ export function DashboardShell({
   }
 
   function removeScheduleItem(item: TimelineItem) {
-    changeSchedule(() =>
-      item.kind === "event" ? cancelDashboardEvent(item.id) : removeDashboardWorkBlock(item.id),
-    );
+    if (item.kind === "event") cancelListedEvent(item.id);
+    else changeSchedule(() => removeDashboardWorkBlock(item.id));
   }
 
-  function cancelListedEvent(id: string) {
-    changeSchedule(() => cancelDashboardEvent(id), {
-      onSuccess: () => setEventListRefresh((current) => current + 1),
+  function cancelListedEvent(id: string, scope: "occurrence" | "series" = "occurrence") {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardEventCancellation(id, scope);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: scope === "series" ? "Cancel the recurring series?" : "Cancel this occurrence?",
+          description: `${proposal.summary}. History is kept and remaining reminders stop.`,
+          confirmLabel: "Confirm cancellation",
+          onConfirm: () =>
+            changeSchedule(() => confirmDashboardEventCancellation(proposal), {
+              onSuccess: () => setEventListRefresh((current) => current + 1),
+            }),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardEventCancellation(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "The cancellation was not confirmed. Its preview will expire automatically.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not prepare cancellation. Nothing was changed.", error: true });
+      }
     });
   }
 
@@ -733,10 +767,10 @@ export function DashboardShell({
             <Sparkles size={17} />
           </span>
           <span>
-            Epiphany<span className={styles.brandCaption}> Personal workspace</span>
+            Epiphany<span className={styles.brandCaption}> Personal field station</span>
           </span>
         </Link>
-        <div className={styles.rowActions}>
+        <div className={styles.topbarActions}>
           <DeadlineNotifications
             tasks={data.tasks}
             timezone={data.timezone}
@@ -841,6 +875,14 @@ export function DashboardShell({
             ) : null}
           </div>
           <div className={styles.sidebarFooter}>
+            <Link href="/dashboard/planning" className={styles.sidebarLink}>
+              <SlidersHorizontal size={15} aria-hidden="true" />
+              Scheduling preferences
+            </Link>
+            <Link href="/dashboard/calendars" className={styles.sidebarLink}>
+              <CalendarClock size={15} aria-hidden="true" />
+              Connected calendars
+            </Link>
             <span className={styles.timezone}>
               <Globe2 size={13} aria-hidden="true" />
               {data.timezone}
@@ -864,9 +906,24 @@ export function DashboardShell({
           <header className={styles.heading}>
             <div>
               <p className={styles.eyebrow}>
-                {view === "today" ? formatDayLabel(today, "long").toUpperCase() : "YOUR WORKSPACE"}
+                {view === "today"
+                  ? formatDayLabel(today, "long").toUpperCase()
+                  : "PERSONAL OPERATIONS / EPIPHANY"}
               </p>
               <h1>{title}</h1>
+              <p className={styles.headingDescription}>
+                {isAssistant
+                  ? "Less juggling. More headspace. Start with whatever is on your mind."
+                  : isSchedule
+                    ? "Make space for your commitments, your focus, and yourself."
+                    : view === "notes"
+                      ? "A home for the thoughts you want to come back to."
+                      : view === "completed" || view === "history"
+                        ? "Look at how far you've come. Your past work lives here."
+                        : view === "category"
+                          ? "Your tasks and thoughts, together in one place."
+                          : "Big plans or small wins. Take it one thing at a time."}
+              </p>
             </div>
             <div className={styles.headerActions}>
               <button
@@ -934,28 +991,28 @@ export function DashboardShell({
           </header>
 
           <dl className={styles.summary}>
-            <div>
+            <div data-summary="tasks">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <ListChecks size={19} />
               </span>
-              <dt>Open tasks & todos</dt>
+              <dt>{data.tasksTruncated ? "Loaded open tasks & todos" : "Open tasks & todos"}</dt>
               <dd>{open.length}</dd>
             </div>
-            <div>
+            <div data-summary="work">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <Timer size={19} />
               </span>
-              <dt>Estimated work</dt>
+              <dt>{data.tasksTruncated ? "Loaded estimated work" : "Estimated work"}</dt>
               <dd>
                 {estimatedMinutes}
                 <span> min</span>
               </dd>
             </div>
-            <div>
+            <div data-summary="notes">
               <span className={styles.summaryIcon} aria-hidden="true">
                 <NotebookText size={19} />
               </span>
-              <dt>Saved notes</dt>
+              <dt>{data.notesTruncated ? "Loaded notes" : "Saved notes"}</dt>
               <dd>{data.notes.length}</dd>
             </div>
           </dl>
@@ -1014,6 +1071,7 @@ export function DashboardShell({
                           );
                           setEventAllDay(false);
                           setEventTimingMode("end");
+                          setEventRepeat("none");
                         }}
                       >
                         <option value="task">Task — deadline or effort estimate</option>
@@ -1092,7 +1150,10 @@ export function DashboardShell({
                             name="allDay"
                             type="checkbox"
                             checked={eventAllDay}
-                            onChange={(event) => setEventAllDay(event.currentTarget.checked)}
+                            onChange={(event) => {
+                              setEventAllDay(event.currentTarget.checked);
+                              setEventRepeat("none");
+                            }}
                           />
                           <span>All-day event</span>
                         </label>
@@ -1143,6 +1204,9 @@ export function DashboardShell({
                           Location (optional)
                           <input name="location" maxLength={300} />
                         </label>
+                        {!eventAllDay ? (
+                          <EventRepeatFields frequency={eventRepeat} onChange={setEventRepeat} />
+                        ) : null}
                         <p className={styles.fullWidth}>
                           An event reserves calendar time from its start through its end. Use a task
                           when you only need a due date. Events already receive a warning 30 minutes
@@ -1151,7 +1215,7 @@ export function DashboardShell({
                       </>
                     )}
                     <div className={styles.fullWidth}>
-                      <SplitReminderFields key={calendarEntryType} />
+                      <SplitReminderFields key={calendarEntryType} itemType={calendarEntryType} />
                     </div>
                     <div className={styles.formFooter}>
                       <button className={styles.primaryButton} type="submit">
@@ -1214,10 +1278,20 @@ export function DashboardShell({
                       <button
                         key={value}
                         type="button"
-                        className={styles.secondaryButton}
+                        className={`${styles.secondaryButton} ${styles.typeFilter}`}
+                        data-kind={value}
                         aria-pressed={taskFilter === value}
                         onClick={() => setTaskFilter(value)}
                       >
+                        {value === "all" ? (
+                          <ListChecks size={15} aria-hidden="true" />
+                        ) : value === "planned" ? (
+                          <CalendarClock size={15} aria-hidden="true" />
+                        ) : value === "todo" ? (
+                          <CircleCheck size={15} aria-hidden="true" />
+                        ) : (
+                          <CalendarDays size={15} aria-hidden="true" />
+                        )}
                         {label}
                       </button>
                     ))}
@@ -1596,6 +1670,37 @@ export function DashboardShell({
   );
 }
 
+export function EventRepeatFields({
+  frequency,
+  onChange,
+}: {
+  frequency: "none" | "daily" | "weekly";
+  onChange: (value: "none" | "daily" | "weekly") => void;
+}) {
+  return (
+    <>
+      <label>
+        Repeat
+        <select
+          name="repeatFrequency"
+          value={frequency}
+          onChange={(event) => onChange(event.target.value as typeof frequency)}
+        >
+          <option value="none">Does not repeat</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+        </select>
+      </label>
+      {frequency !== "none" ? (
+        <label>
+          Total occurrences (including the first)
+          <input name="repeatCount" type="number" min={1} max={520} defaultValue={8} required />
+        </label>
+      ) : null}
+    </>
+  );
+}
+
 function CategorySelect({
   categories,
   name,
@@ -1629,7 +1734,7 @@ function EventList({
   result: DashboardEventsResult | null;
   search: string;
   pending: boolean;
-  onCancel: (id: string) => void;
+  onCancel: (id: string, scope?: "occurrence" | "series") => void;
   clearSearch: () => void;
 }) {
   if (!result) {
@@ -1656,39 +1761,60 @@ function EventList({
       {events.length ? (
         <ul className={styles.taskList}>
           {events.map((event) => (
-            <li key={event.id} className={styles.task}>
+            <li key={event.id} className={styles.task} data-kind="event">
               <div className={styles.taskContent}>
-                <h2>{event.title}</h2>
-                <div className={styles.taskMeta}>
-                  <span>
-                    <strong>Type:</strong> Event
+                <div className={styles.recordTopline}>
+                  <span className={styles.eventTag}>
+                    <CalendarDays size={13} aria-hidden="true" /> Event
                   </span>
-                  <span>
-                    <strong>Date:</strong> {formatEventDate(event)}
-                  </span>
-                  <span>
-                    <strong>Time:</strong> {formatEventTime(event)}
-                  </span>
-                  {!event.allDay ? (
-                    <span>
-                      <strong>Duration:</strong> {formatEventDuration(event)}
-                    </span>
-                  ) : null}
-                  {event.location ? (
-                    <span>
-                      <strong>Location:</strong> {event.location}
-                    </span>
+                  {event.seriesId ? (
+                    <span className={styles.recordLabel}>Recurring series</span>
                   ) : null}
                 </div>
+                <h2>{event.title}</h2>
+                <dl className={styles.recordFacts}>
+                  <div>
+                    <dt>Date</dt>
+                    <dd>{formatEventDate(event)}</dd>
+                  </div>
+                  <div>
+                    <dt>Time</dt>
+                    <dd>{formatEventTime(event)}</dd>
+                  </div>
+                  {!event.allDay ? (
+                    <div>
+                      <dt>Duration</dt>
+                      <dd>{formatEventDuration(event)}</dd>
+                    </div>
+                  ) : null}
+                  {event.location ? (
+                    <div>
+                      <dt>Location</dt>
+                      <dd>{event.location}</dd>
+                    </div>
+                  ) : null}
+                </dl>
               </div>
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                disabled={pending}
-                onClick={() => onCancel(event.id)}
-              >
-                Cancel event
-              </button>
+              <div className={styles.rowActions}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  disabled={pending}
+                  onClick={() => onCancel(event.id)}
+                >
+                  {event.seriesId ? "Cancel occurrence" : "Cancel event"}
+                </button>
+                {event.seriesId ? (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={pending}
+                    onClick={() => onCancel(event.id, "series")}
+                  >
+                    Cancel series
+                  </button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
@@ -1863,7 +1989,7 @@ function TaskList({
   );
 }
 
-function TaskRow({
+export function TaskRow({
   task,
   categories,
   timezone,
@@ -1977,7 +2103,7 @@ function TaskRow({
             <textarea name="details" rows={3} maxLength={10000} defaultValue={task.details ?? ""} />
           </label>
           <div className={styles.fullWidth}>
-            <SplitReminderFields count={task.splitReminderCount ?? null} />
+            <SplitReminderFields count={task.splitReminderCount ?? null} itemType={editType} />
           </div>
           <div className={styles.rowActions}>
             <button className={styles.primaryButton} disabled={pending} type="submit">
@@ -1999,7 +2125,7 @@ function TaskRow({
       </li>
     );
   return (
-    <li className={styles.task}>
+    <li className={styles.task} data-kind={task.taskType}>
       {task.status === "open" ? (
         <input
           className={styles.taskCheckbox}
@@ -2015,60 +2141,80 @@ function TaskRow({
         </span>
       )}
       <div className={styles.taskContent}>
-        <h2>{task.title}</h2>
-        {task.details ? (
-          <p>
-            <strong>Details:</strong> {task.details}
-          </p>
-        ) : null}
-        <div className={styles.taskMeta}>
-          {task.archivedAt ? (
-            <span className={styles.archivedTag}>
-              <strong>Archived:</strong> {formatDate(task.archivedAt, timezone)}
-            </span>
-          ) : null}
-          <span className={styles.noteTag}>
-            <strong>Type:</strong> {task.taskType === "todo" ? "Todo" : "Task"}
+        <div className={styles.recordTopline}>
+          <span className={task.taskType === "todo" ? styles.todoTag : styles.deadlineTag}>
+            {task.taskType === "todo" ? (
+              <CircleCheck size={13} aria-hidden="true" />
+            ) : (
+              <CalendarClock size={13} aria-hidden="true" />
+            )}
+            {task.taskType === "todo" ? "Todo" : "Deadline task"}
           </span>
           {task.status === "completed" ? (
-            <span className={styles.completedTag}>
-              <CircleCheck size={13} aria-hidden="true" />
-              <strong>Completed:</strong> {formatDate(task.completedAt, timezone)}
+            <span className={styles.completedTag}>Completed</span>
+          ) : countdown ? (
+            <span className={overdue ? styles.overdue : styles.countdown}>{countdown}</span>
+          ) : (
+            <span className={styles.recordLabel}>
+              {task.taskType === "todo" ? "No deadline" : "Deadline not set"}
             </span>
+          )}
+          {task.taskType === "task" && task.priority === "major" ? (
+            <span className={styles.majorTag}>Major priority</span>
+          ) : null}
+        </div>
+        <h2>{task.title}</h2>
+        {task.status === "open" && task.reviewNote ? (
+          <p className={styles.reviewTag}>
+            <TriangleAlert size={13} aria-hidden="true" />
+            Needs review: {task.reviewNote}
+          </p>
+        ) : null}
+        <dl className={styles.recordFacts}>
+          {task.status === "completed" ? (
+            <div>
+              <dt>Completed</dt>
+              <dd>{formatDate(task.completedAt, timezone)}</dd>
+            </div>
           ) : task.taskType === "task" ? (
-            <span className={overdue ? styles.overdue : styles.deadline}>
-              <CalendarClock size={13} aria-hidden="true" />
-              <strong>Deadline:</strong> {formatDate(task.dueAt, timezone, task.dueDateOnly)}
-            </span>
-          ) : null}
-          {countdown ? (
-            <span className={styles.countdown}>
-              <strong>Status:</strong> {countdown}
-            </span>
-          ) : null}
-          {task.status === "open" && task.reviewNote ? (
-            <span className={styles.reviewTag}>
-              <TriangleAlert size={13} aria-hidden="true" />
-              Needs review: {task.reviewNote}
-            </span>
-          ) : null}
-          {task.taskType === "task" ? (
-            <span className={task.priority === "major" ? styles.majorTag : undefined}>
-              <strong>Priority:</strong> {task.priority === "major" ? "Major" : "Minor"}
-            </span>
+            <div>
+              <dt>Deadline</dt>
+              <dd className={overdue ? styles.overdue : undefined}>
+                {formatDate(task.dueAt, timezone, task.dueDateOnly)}
+              </dd>
+            </div>
           ) : null}
           {task.estimatedMinutes ? (
-            <span>
-              <Clock size={13} aria-hidden="true" />
-              <strong>Estimated effort:</strong> {task.estimatedMinutes} min
-            </span>
+            <div>
+              <dt>Estimated effort</dt>
+              <dd>{task.estimatedMinutes} min</dd>
+            </div>
           ) : null}
-          <span>
-            <Folder size={13} aria-hidden="true" />
-            <strong>Category:</strong>{" "}
-            {categories.find((category) => category.id === task.categoryId)?.name ?? "Inbox"}
-          </span>
-        </div>
+          <div>
+            <dt>Category</dt>
+            <dd>
+              {categories.find((category) => category.id === task.categoryId)?.name ?? "Inbox"}
+            </dd>
+          </div>
+          {task.taskType === "task" ? (
+            <div>
+              <dt>Priority</dt>
+              <dd>{task.priority === "major" ? "Major" : "Minor"}</dd>
+            </div>
+          ) : null}
+          {task.archivedAt ? (
+            <div>
+              <dt>Archived</dt>
+              <dd>{formatDate(task.archivedAt, timezone)}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {task.details ? (
+          <details className={styles.recordDetails}>
+            <summary>Task details</summary>
+            <p>{task.details}</p>
+          </details>
+        ) : null}
       </div>
       <div className={styles.rowActions}>
         {task.status === "open" ? (
@@ -2160,7 +2306,7 @@ function NoteCard({
   const [editing, setEditing] = useState(false);
   if (editing)
     return (
-      <li className={styles.note}>
+      <li className={styles.note} data-kind={note.kind}>
         <form
           className={styles.inlineEditor}
           onSubmit={(event) => {
@@ -2213,7 +2359,7 @@ function NoteCard({
       </li>
     );
   return (
-    <li className={styles.note}>
+    <li className={styles.note} data-kind={note.kind}>
       <div className={styles.noteMeta}>
         <span className={note.kind === "idea" ? styles.ideaTag : styles.noteTag}>
           {note.kind === "idea" ? (
@@ -2226,7 +2372,25 @@ function NoteCard({
         <time dateTime={note.createdAt}>{formatDate(note.createdAt, timezone)}</time>
       </div>
       {note.title ? <h2>{note.title}</h2> : null}
-      {note.kind === "idea" ? <IdeaBody body={note.body} /> : <p>{note.body}</p>}
+      {note.kind === "idea" ? (
+        <>
+          <p className={styles.notePreview}>
+            {note.body
+              .split("\n")
+              .filter((line) => line.trim() && !line.startsWith("## "))
+              .join(" ")}
+          </p>
+          <IdeaBody body={note.body} />
+        </>
+      ) : (
+        <>
+          <p className={styles.notePreview}>{note.body}</p>
+          <details className={styles.recordDetails}>
+            <summary>Read full note</summary>
+            <p>{note.body}</p>
+          </details>
+        </>
+      )}
       <div className={styles.noteFooter}>
         <span>
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}

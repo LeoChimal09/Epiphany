@@ -1,4 +1,76 @@
+:root {
+  color-scheme: dark;
+  --epi-bg: #0b1820;
+  --epi-surface: #132b38;
+  --epi-raised: #1c3b4b;
+  --epi-input: #0b202b;
+  --epi-line: #365361;
+  --epi-line-strong: #68818a;
+  --epi-ink: #f4eedc;
+  --epi-muted: #c1ccca;
+  --epi-subtle: #a2b7ba;
+  --epi-primary: #edbd58;
+  --epi-accent: #ffd780;
+  --epi-mint: #91e5ba;
+  --epi-danger: #ff9aab;
+  --epi-success: #81e8b9;
+  --epi-warn: #ffd780;
+  --epi-on-accent: #152732;
+  --epi-accent-tint: #edbd5817;
+  --epi-panel: linear-gradient(115deg, #1d3c4c, #102833);
+  --epi-shadow: 0 16px 40px rgb(3 8 20 / 24%);
+  --epi-font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --epi-mono: "Cascadia Code", "Courier New", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  background: #121212;
+  color: var(--epi-ink);
+  background:
+    linear-gradient(#91e5ba05 1px, transparent 1px),
+    linear-gradient(90deg, #91e5ba05 1px, transparent 1px), var(--epi-bg);
+  background-size: 40px 40px;
+  font: 15px/1.6 var(--epi-font);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+a,
+input,
+textarea,
+select,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--epi-accent);
+  outline-offset: 4px;
+}
+
+::selection {
+  color: var(--epi-on-accent);
+  background: var(--epi-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

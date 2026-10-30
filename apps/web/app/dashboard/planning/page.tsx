@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { parsePlanningPreferences } from "@epiphany/core/planning";
 import { parseReminderSettings } from "@epiphany/core/reminders";
 import { dashboardContext } from "../server-data";
@@ -18,9 +19,13 @@ export default async function PlanningPage() {
     <main className={styles.page}>
       <header className={styles.header}>
         <Link href="/dashboard" className={styles.back}>
-          Back to dashboard
+          <ArrowLeft size={15} aria-hidden="true" /> Back to dashboard
         </Link>
+        <span className={styles.headerIcon}>
+          <SlidersHorizontal size={23} aria-hidden="true" />
+        </span>
         <h1>Scheduling preferences</h1>
+        <p>A plan that fits your life, not the other way around.</p>
       </header>
       <p className={styles.muted}>Times use AM/PM in {timezone}.</p>
       <BriefingSettings

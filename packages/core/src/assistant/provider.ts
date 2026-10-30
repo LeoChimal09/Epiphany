@@ -56,6 +56,8 @@ export interface InterpretRequest {
   } | null;
   // An observed flat list count, not an AI guess about the number of tasks.
   listedEntryCount?: number;
+  // Optional context was omitted to fit the request budget; missing records are not proof of absence.
+  contextLimited?: boolean;
 }
 
 export interface InterpretResult {

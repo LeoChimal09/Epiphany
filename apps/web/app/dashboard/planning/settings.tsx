@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { BriefcaseBusiness, Clock3, Moon, SlidersHorizontal } from "lucide-react";
 import type {
   PlanningPreferences,
   PlanningSettingKey,
@@ -68,8 +69,23 @@ function Section({
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
-    <details className={styles.section}>
-      <summary>{title}</summary>
+    <details
+      className={styles.section}
+      data-tone={setting === "planning.preferred_hours" ? "work" : undefined}
+    >
+      <summary>
+        {setting === "planning.preferred_hours" ? (
+          <BriefcaseBusiness size={22} aria-hidden="true" />
+        ) : (
+          <Clock3 size={20} aria-hidden="true" />
+        )}
+        <span className={styles.summaryText}>
+          <strong>{title}</strong>
+          {setting === "planning.preferred_hours" ? (
+            <small>When Epi can plan tasks for you</small>
+          ) : null}
+        </span>
+      </summary>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -166,8 +182,14 @@ export function PlanningSettings({
           </div>
         ))}
       </Section>
-      <details className={styles.group}>
-        <summary>Daily routine</summary>
+      <details className={styles.group} data-tone="routine">
+        <summary>
+          <Moon size={22} aria-hidden="true" />
+          <span className={styles.summaryText}>
+            <strong>Daily routine</strong>
+            <small>Sleep, meals, and protected personal time</small>
+          </span>
+        </summary>
         <Section
           title="Sleep"
           setting="planning.sleep"
@@ -289,8 +311,14 @@ export function PlanningSettings({
           </button>
         </Section>
       </details>
-      <details className={styles.group}>
-        <summary>More planning options</summary>
+      <details className={styles.group} data-tone="advanced">
+        <summary>
+          <SlidersHorizontal size={22} aria-hidden="true" />
+          <span className={styles.summaryText}>
+            <strong>More planning options</strong>
+            <small>Event buffers, travel, and minimum work blocks</small>
+          </span>
+        </summary>
         <Section
           title="Event buffer"
           setting="planning.buffer_minutes"

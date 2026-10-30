@@ -40,6 +40,7 @@ import {
 import { createConfirmationService, type Proposal } from "./confirmations";
 import {
   createEventInput,
+  createEventSeriesInput,
   createNoteInput,
   createTaskInput,
   createWorkBlockInput,
@@ -68,6 +69,7 @@ import {
 import { assertPrincipal } from "./principal";
 import { createCalendarService, type CalendarServiceOptions } from "./calendar";
 import { z } from "zod";
+import { createEventSeries } from "./event-series";
 
 export {
   AccessDeniedError,
@@ -445,11 +447,20 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         const { actor } = gate(principal, "event.create");
         return createEvent(db, actor, parseInput(createEventInput, input));
       },
+      async createSeries(principal: unknown, input: unknown): Promise<CalendarEvent[]> {
+        const { actor } = gate(principal, "event.create");
+        return createEventSeries(db, actor, parseInput(createEventSeriesInput, input));
+      },
       // Events are not synced to an external calendar yet, so cancellation applies directly.
       // When external references exist, pass external: true to route this through confirmation.
       async cancel(principal: unknown, eventId: unknown, context: DecisionContext = {}) {
-        const { actor } = gate(principal, "event.cancel", context);
-        return cancelEvent(db, actor, parseInput(idInput, eventId));
+        const { actor, principal: p } = gate(principal, "event.cancel", context);
+        const id = parseInput(idInput, eventId);
+        const event = await getEvent(db, actor.ownerId, id);
+        if (event.seriesId) {
+          authorize(p, "event.cancel_series");
+        }
+        return cancelEvent(db, actor, id);
       },
     },
 

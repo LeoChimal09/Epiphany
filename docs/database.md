@@ -11,7 +11,7 @@ drizzle-kit into `packages/core/drizzle/` and applied by Epiphany's own runner.
 | `owners`         | The owner identity (display name, timezone, optional Discord user ID and avatar hash). |
 | `categories`     | Categories per owner. The Inbox is the row with `system_key = 'inbox'`.        |
 | `tasks`          | Assignments and to-dos. `status` is `open`/`completed`; `archived_at` is separate. `source_text`/`source_ref` link the message it came from; `review_note` flags what needs the owner's eye (cleared when a deadline is set). |
-| `events`         | Fixed events. `status` is `scheduled`/`canceled`.                              |
+| `events`         | Fixed events. `status` is `scheduled`/`canceled`; nullable `series_id` groups materialized local recurring occurrences. |
 | `work_blocks`    | Movable planned time, optionally tied to a task: `planned`/`completed`/`removed`. |
 | `notes`          | Notes and ideas, categorized (default Inbox).                                  |
 | `preferences`    | Explicit key/value preferences, `proposed` or `confirmed`.                     |
@@ -54,6 +54,20 @@ Design rules:
 | `bun run db:test:down`   | Stop it and discard its data.                                             |
 
 There is no `db:push`. Routine app restarts never create tables; migration is an explicit step.
+
+### Local recurring events (0014)
+
+`0014_sweet_omega_red` adds nullable `events.series_id` and an owner/series index;
+existing events remain unchanged with a null series ID. Apply pending migrations
+before deploying the updated dashboard and worker.
+
+The shared event service validates the full finite recurrence and every local
+wall-clock interval before inserting occurrences and history in one transaction.
+Each occurrence has its own ID, version, reminders, and calendar synchronization
+reference. Rules are retained in creation history; occurrences are not generated
+by an in-memory timer and survive restarts. Confirmed cancellation locks the
+exact owner-scoped occurrence/series versions, retains rows, and cancels affected
+scheduled reminders atomically.
 
 ## Connecting with DBeaver
 

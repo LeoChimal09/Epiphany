@@ -21,6 +21,7 @@ const examples = {
   update_task: { reference: "Return drill", task_type: "task", due_date: "2026-10-24" },
   reopen_task: { reference: "Return drill" },
   acknowledge_event: { reference: "Study group" },
+  cancel_event: { reference: "Study group", scope: "occurrence", event_date: "2026-10-23" },
   delete_note: { reference: "Tool library" },
   setup_workspace: {},
   snooze: {},
@@ -76,5 +77,20 @@ describe("minimal action tools", () => {
       noteKind: "idea",
       feedback: "How would returns work?",
     });
+  });
+
+  it("validates date/time-only event references without inventing a title", () => {
+    expect(
+      toolToIntent("acknowledge_event", {
+        event_date: "2026-10-29",
+        start_time: "15:30",
+      }),
+    ).toEqual({
+      kind: "acknowledge_event",
+      reference: "",
+      date: "2026-10-29",
+      startTime: "15:30",
+    });
+    expect(() => toolToIntent("acknowledge_event", { start_time: "25:00" })).toThrow(IntentError);
   });
 });

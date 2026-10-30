@@ -1,12 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import { BellRing, Sunrise } from "lucide-react";
 import { saveBriefingSetting, saveSplitReminderSetting } from "./actions";
 import styles from "../planning/settings.module.css";
 import workspaceStyles from "../workspace.module.css";
 
-export function SplitReminderFields({ count = null }: { count?: number | null }) {
+export function SplitReminderFields({
+  count = null,
+  itemType = "task",
+}: {
+  count?: number | null;
+  itemType?: "task" | "todo" | "event";
+}) {
   const [mode, setMode] = useState(count === null ? "default" : count === 0 ? "off" : "custom");
+  if (itemType === "todo") {
+    return (
+      <p className={workspaceStyles.fullWidth}>
+        Todos have no deadline, so split reminders do not apply.
+      </p>
+    );
+  }
   return (
     <div className={workspaceStyles.fields}>
       <label>
@@ -16,7 +30,9 @@ export function SplitReminderFields({ count = null }: { count?: number | null })
           value={mode}
           onChange={(event) => setMode(event.target.value)}
         >
-          <option value="default">Use workspace default</option>
+          <option value="default">
+            {itemType === "event" ? "Off (event default)" : "Use workspace default"}
+          </option>
           <option value="off">Off for this item</option>
           <option value="custom">Add split reminders for this item</option>
         </select>
@@ -37,9 +53,8 @@ export function SplitReminderFields({ count = null }: { count?: number | null })
       ) : null}
       <p className={workspaceStyles.fullWidth}>
         Saved with this item. Splits run before the task deadline or event start, within your awake
-        window. Original alerts stay unchanged; quiet hours and the daily limit still apply. Events
-        default to off unless you choose a count here. A todo needs a deadline before split
-        reminders can run.
+        window. Original alerts stay unchanged; quiet hours and the daily limit still apply.
+        {itemType === "event" ? " Events default to off unless you choose a count here." : ""}
       </p>
     </div>
   );
@@ -61,8 +76,15 @@ export function SplitReminderSettings({
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
-    <details className={styles.section}>
-      <summary>Optional split-day reminders</summary>
+    <details className={styles.section} data-tone="reminders">
+      <summary>
+        <BellRing size={22} aria-hidden="true" />
+        <span className={styles.summaryText}>
+          <strong>Optional split-day reminders</strong>
+          <small>Extra check-ins before task deadlines</small>
+        </span>
+        <span className={styles.stateTag}>{enabled ? "On" : "Off"}</span>
+      </summary>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -70,7 +92,7 @@ export function SplitReminderSettings({
           setMessage("");
           try {
             const result = await saveSplitReminderSetting(
-              { enabled, count: Number(count) },
+              { enabled, count: enabled ? Number(count) : value.count },
               savedVersion,
             );
             setFailed(!result.ok);
@@ -109,18 +131,20 @@ export function SplitReminderSettings({
             />{" "}
             Add split-day reminders
           </label>
-          <label>
-            Extra reminders per task (1–100){" "}
-            <input
-              type="number"
-              min={1}
-              max={100}
-              step={1}
-              required
-              value={count}
-              onChange={(event) => setCount(event.target.value)}
-            />
-          </label>
+          {enabled ? (
+            <label>
+              Extra reminders per task (1–100){" "}
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                required
+                value={count}
+                onChange={(event) => setCount(event.target.value)}
+              />
+            </label>
+          ) : null}
           <button type="submit">{pending ? "Saving..." : "Save split reminder settings"}</button>
         </fieldset>
         {message ? <p role={failed ? "alert" : "status"}>{message}</p> : null}
@@ -146,8 +170,15 @@ export function BriefingSettings({
   const [failed, setFailed] = useState(false);
 
   return (
-    <details className={styles.section}>
-      <summary>Morning briefing</summary>
+    <details className={styles.section} data-tone="briefing">
+      <summary>
+        <Sunrise size={22} aria-hidden="true" />
+        <span className={styles.summaryText}>
+          <strong>Morning briefing</strong>
+          <small>A daily overview of your plan</small>
+        </span>
+        <span className={styles.stateTag}>{enabled ? time : "Off"}</span>
+      </summary>
       <form
         onSubmit={async (event) => {
           event.preventDefault();

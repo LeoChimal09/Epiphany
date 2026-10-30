@@ -10,6 +10,26 @@ import {
   type Weekday,
 } from "./time";
 import type { FixedEvent } from "./availability";
+import { z } from "zod";
+
+export const MAX_SERIES_OCCURRENCES = 520;
+export const recurrenceInput = z
+  .object({
+    frequency: z.enum(["daily", "weekly"]),
+    interval: z.number().int().min(1).max(52).optional(),
+    weekdays: z.array(z.enum(WEEKDAYS)).min(1).max(7).optional(),
+    count: z.number().int().min(1).max(MAX_SERIES_OCCURRENCES).optional(),
+    until: z.iso.date().optional(),
+  })
+  .strict()
+  .refine((value) => value.count !== undefined || value.until !== undefined, {
+    message: "specify an occurrence count or an end date",
+  })
+  .refine((value) => value.frequency === "weekly" || value.weekdays === undefined, {
+    message: "weekdays apply only to weekly recurrence",
+  });
+
+export type Recurrence = z.infer<typeof recurrenceInput>;
 
 export type SeriesException =
   | { date: DateKey; kind: "skipped" }

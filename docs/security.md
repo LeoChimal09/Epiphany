@@ -51,8 +51,13 @@ only when **confirmed** with that ID and hash, and only if all of these hold:
 - Confirming and executing happen in one transaction.
 
 A newer proposal for the same payload supersedes the older one, so a stale "yes" cannot approve
-it. The only confirmable action implemented so far is `note.delete`; the others in the matrix are
-classified but have no handler yet and are refused with a clear message.
+it. Confirmable handlers include `note.delete`, `preference.delete`, `memory.clear`,
+and `event.cancel_series` (one local occurrence or all scheduled occurrences).
+Recurring cancellation binds every affected event's ID/version and owner, retains
+history, and cancels its scheduled reminders atomically. Direct `events.cancel`
+cannot bypass confirmation for an occurrence with a local series ID. Imported
+external events remain read-only through this flow. Other unimplemented handlers
+are refused with a clear message.
 
 ## Shared channels
 

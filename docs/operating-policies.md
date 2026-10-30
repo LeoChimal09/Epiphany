@@ -156,6 +156,8 @@ universal language understanding.
 
 Goal 01 chose the confirmation expiry, retention defaults, backup/RPO/RTO values,
 and text-AI budget in [the architecture decision record](decisions/0001-initial-architecture.md).
-Conflict handling, recurrence, outage grace periods, retry bounds, catch-up limits,
-and voice budgets remain undecided. Record chosen values and their rationale in a
-decision record rather than silently selecting them in code.
+External-calendar conflict/recurrence policy, outage grace periods, retry bounds,
+catch-up limits, and voice budgets remain undecided. The bounded local recurrence
+slice (520 occurrences within 30 years, confirmed occurrence/series cancellation)
+is recorded in [the architecture decision record](decisions/0001-initial-architecture.md#2026-10-30-bounded-local-event-recurrence).
+Record chosen values and their rationale rather than silently selecting them in code.

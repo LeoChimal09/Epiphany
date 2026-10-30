@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectDatabase, type DatabaseHandle } from "../db/client";
 import { createOwner } from "../db/domain";
 import { runMigrations } from "../db/migrate";
-import { actionHistory, confirmations, notes, tasks, workBlocks } from "../db/schema";
+import { actionHistory, confirmations, events, notes, tasks, workBlocks } from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
+import { scheduleReminder } from "../reminders/store";
 import {
   computeAvailability,
   parsePlanningPreferences,
@@ -72,6 +73,159 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
   const count = async (
     table: typeof tasks | typeof notes | typeof workBlocks | typeof actionHistory,
   ) => (await handle.db.select().from(table)).length;
+
+  const gymSeries = (recurrence: unknown = { frequency: "weekly", count: 3 }) =>
+    services.events.createSeries(owner, {
+      title: "Gym",
+      timezone: "America/Chicago",
+      startDate: "2026-10-25",
+      startTime: "15:30",
+      endTime: "16:30",
+      recurrence,
+    });
+
+  it("persists recurring occurrences at the same local time across DST and service restart", async () => {
+    const series = await gymSeries();
+    expect(series.map((event) => event.startsAt.toISOString())).toEqual([
+      "2026-10-25T20:30:00.000Z",
+      "2026-11-01T21:30:00.000Z",
+      "2026-11-08T21:30:00.000Z",
+    ]);
+    expect(new Set(series.map((event) => event.seriesId)).size).toBe(1);
+    expect(series[0]!.seriesId).not.toBeNull();
+    const restarted = createServices(handle.db);
+    expect(await restarted.events.get(owner, series[1]!.id)).toEqual(series[1]);
+    expect(
+      await restarted.events.list(strangerOwner, {
+        from: "2026-10-01T00:00:00Z",
+        to: "2026-11-20T00:00:00Z",
+      }),
+    ).toEqual([]);
+    expect(
+      (await handle.db.select().from(actionHistory)).filter((row) => row.action === "event.create"),
+    ).toHaveLength(3);
+  });
+
+  it("supports chosen weekdays and an inclusive series end date without inventing extra occurrences", async () => {
+    const series = await gymSeries({
+      frequency: "weekly",
+      weekdays: ["mon", "wed"],
+      until: "2026-11-04",
+    });
+    expect(series.map((event) => event.startsAt.toISOString().slice(0, 10))).toEqual([
+      "2026-10-26",
+      "2026-10-28",
+      "2026-11-02",
+      "2026-11-04",
+    ]);
+  });
+
+  it("rejects unbounded, oversized, and DST-gap series without partially saving", async () => {
+    for (const recurrence of [
+      { frequency: "weekly" },
+      { frequency: "weekly", count: 521 },
+      { frequency: "daily", until: "2030-01-01" },
+    ]) {
+      await expect(gymSeries(recurrence)).rejects.toBeInstanceOf(ValidationError);
+    }
+    await expect(
+      services.events.createSeries(owner, {
+        title: "DST gap",
+        timezone: "America/Chicago",
+        startDate: "2027-03-07",
+        startTime: "02:30",
+        endTime: "03:30",
+        recurrence: { frequency: "weekly", count: 2 },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await handle.db.select().from(events)).toEqual([]);
+  });
+
+  it("confirms one occurrence separately from the entire series, stopping only affected reminders", async () => {
+    const series = await gymSeries();
+    const other = await services.events.create(owner, {
+      title: "Unrelated event",
+      timezone: "America/Chicago",
+      startsAt: "2026-11-01T21:30:00Z",
+      endsAt: "2026-11-01T22:30:00Z",
+    });
+    for (const event of series) {
+      await scheduleReminder(handle.db, ownerId, {
+        message: "Gym check-in",
+        dueAt: event.endsAt,
+        kind: "check_in",
+        subjectType: "event",
+        subjectId: event.id,
+        dedupeKey: `fixture:${event.id}`,
+      });
+    }
+    await expect(services.events.cancel(owner, series[0]!.id)).rejects.toHaveProperty(
+      "name",
+      "ConfirmationRequiredError",
+    );
+    const proposal = await services.confirmations.propose(owner, {
+      action: "event.cancel_series",
+      payload: { eventId: series[0]!.id, scope: "occurrence" },
+    });
+    expect(proposal.preview.summary).toContain("Cancel only");
+    expect((await services.events.get(owner, series[0]!.id)).status).toBe("scheduled");
+    await services.confirmations.confirm(owner, proposal);
+    expect(
+      (await Promise.all(series.map((event) => services.events.get(owner, event.id)))).map(
+        (event) => event.status,
+      ),
+    ).toEqual(["canceled", "scheduled", "scheduled"]);
+    const jobs = await services.reminders.recent(owner);
+    expect(jobs.filter((job) => job.status === "canceled").map((job) => job.subjectId)).toEqual([
+      series[0]!.id,
+    ]);
+
+    const all = await services.confirmations.propose(owner, {
+      action: "event.cancel_series",
+      payload: { eventId: series[1]!.id, scope: "series" },
+    });
+    expect(all.preview.summary).toContain("all 2 scheduled occurrences");
+    expect((await services.confirmations.confirm(owner, all)).result).toMatchObject({
+      canceled: "events",
+      count: 2,
+    });
+    expect(
+      (await Promise.all(series.map((event) => services.events.get(owner, event.id)))).every(
+        (event) => event.status === "canceled",
+      ),
+    ).toBe(true);
+    expect((await services.events.get(owner, other.id)).status).toBe("scheduled");
+    expect((await services.reminders.recent(owner)).every((job) => job.status === "canceled")).toBe(
+      true,
+    );
+  });
+
+  it("binds series cancellation to the owner, current versions, expiry, and one approval", async () => {
+    const [event] = await gymSeries();
+    const input = {
+      action: "event.cancel_series" as const,
+      payload: { eventId: event!.id, scope: "series" },
+    };
+    await expect(services.confirmations.propose(strangerOwner, input)).rejects.toHaveProperty(
+      "name",
+      "NotFoundError",
+    );
+    const stale = await services.confirmations.propose(owner, input);
+    await handle.db.update(events).set({ version: 2 }).where(eq(events.id, event!.id));
+    await expect(services.confirmations.confirm(owner, stale)).rejects.toBeInstanceOf(
+      ConfirmationError,
+    );
+    const expired = await services.confirmations.propose(owner, input);
+    now = new Date(now.getTime() + CONFIRMATION_TTL_MS + 1);
+    await expect(services.confirmations.confirm(owner, expired)).rejects.toBeInstanceOf(
+      ConfirmationError,
+    );
+    const current = await services.confirmations.propose(owner, input);
+    await services.confirmations.confirm(owner, current);
+    await expect(services.confirmations.confirm(owner, current)).rejects.toBeInstanceOf(
+      ConfirmationError,
+    );
+  });
 
   describe("authentication and ownership", () => {
     it("lets the owner read and write fixture records", async () => {

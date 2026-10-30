@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Bot, CircleAlert, CircleCheck, SendHorizontal, Sparkles, UserRound } from "lucide-react";
+import {
+  Bot,
+  CalendarDays,
+  CircleAlert,
+  CircleCheck,
+  Lightbulb,
+  ListChecks,
+  Plus,
+  SendHorizontal,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 import type { AssistantReply } from "@epiphany/core/assistant";
 import { PushToTalk, StopSpeaking, useSpokenReplies } from "./voice-controls";
 import styles from "./workspace.module.css";
@@ -17,10 +28,10 @@ export interface ChatMessage {
 export type AssistantSetup = "ready" | "needs_key" | "misconfigured";
 
 const SUGGESTIONS = [
-  "What's on my plate?",
-  "What does my week look like?",
-  "Add a task: read chapter 4 by Friday",
-  "Idea: an app that tracks workouts against free time",
+  { text: "What's on my plate?", icon: ListChecks },
+  { text: "What does my week look like?", icon: CalendarDays },
+  { text: "Add a task: read chapter 4 by Friday", icon: Plus },
+  { text: "Idea: an app that tracks workouts against free time", icon: Lightbulb },
 ];
 const MAX_LENGTH = 8000;
 
@@ -144,6 +155,10 @@ export function AssistantChat({
       ) : null}
       {messages.length === 0 ? (
         <div className={styles.chatEmpty}>
+          <div className={styles.terminalLabel}>
+            <span>COMMUNICATIONS / EPI</span>
+            <span>TEXT INTERFACE</span>
+          </div>
           <span className={styles.chatEmptyIcon} aria-hidden="true">
             <Sparkles size={26} />
           </span>
@@ -154,10 +169,11 @@ export function AssistantChat({
           </p>
           {ready ? (
             <ul className={styles.suggestions} aria-label="Examples">
-              {SUGGESTIONS.map((text) => (
+              {SUGGESTIONS.map(({ text, icon: Icon }) => (
                 <li key={text}>
                   <button type="button" onClick={() => send(text)} disabled={asking}>
-                    {text}
+                    <Icon size={17} aria-hidden="true" />
+                    <span>{text}</span>
                   </button>
                 </li>
               ))}

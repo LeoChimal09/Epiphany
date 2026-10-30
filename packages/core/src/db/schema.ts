@@ -123,6 +123,7 @@ export const events = mysqlTable(
   {
     id: id(),
     ownerId: ownerId(),
+    seriesId: char("series_id", { length: 36 }),
     title: varchar("title", { length: 300 }).notNull(),
     location: varchar("location", { length: 300 }),
     startsAt: utc("starts_at").notNull(),
@@ -138,6 +139,7 @@ export const events = mysqlTable(
   },
   (t) => [
     index("events_owner_status_start_idx").on(t.ownerId, t.status, t.startsAt),
+    index("events_owner_series_idx").on(t.ownerId, t.seriesId),
     check("events_ends_not_before_starts", sql`${t.endsAt} >= ${t.startsAt}`),
     check(
       "events_canceled_at_matches_status",

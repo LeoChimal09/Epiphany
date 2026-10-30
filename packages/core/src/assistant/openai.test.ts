@@ -200,6 +200,63 @@ describe("OpenAI conversational adapter", () => {
     expect(JSON.parse(String(cappedInit.body)).max_completion_tokens).toBe(321);
   });
 
+  it("fits accumulated context under the default cap without changing the current request or state", async () => {
+    const fetchImpl = vi.fn(async () => completion({ content: "Which workout do you mean?" }));
+    const crowded: InterpretRequest = {
+      ...request,
+      message: "Epi my event at 330 is done",
+      history: Array.from({ length: 8 }, (_, index) => ({
+        role: index % 2 ? "assistant" : "user",
+        text: "Earlier task discussion. ".repeat(20),
+      })),
+      openTasks: Array.from({ length: 40 }, (_, index) => ({
+        id: `task-${index}`,
+        title: `Unrelated task ${index} ${"long title ".repeat(20)}`,
+        due: null,
+      })),
+      recentNotes: Array.from({ length: 20 }, (_, index) => ({
+        id: `note-${index}`,
+        title: "An earlier note ".repeat(20),
+      })),
+      lastReminder: {
+        reminderId: "reminder-1",
+        subjectType: "event",
+        subjectId: "gym-1",
+        title: "Gym workout",
+      },
+      pending: "Confirm the current setting",
+    };
+    const before = structuredClone(crowded);
+    await provider(fetchImpl, { maxInputTokens: 8000 }).interpret(crowded);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    const content = body.messages[1].content;
+    expect(
+      Math.ceil((SYSTEM_PROMPT.length + JSON.stringify(body.tools).length + content.length) / 4),
+    ).toBeLessThanOrEqual(8000);
+    expect(JSON.parse(content)).toMatchObject({
+      message: crowded.message,
+      lastReminder: crowded.lastReminder,
+      pending: crowded.pending,
+      contextLimited: true,
+    });
+    expect(crowded).toEqual(before);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a truly oversized current message before dispatch and accepts the next short one", async () => {
+    const fetchImpl = vi.fn(async () => completion({ content: "What should the note say?" }));
+    const capped = provider(fetchImpl, { maxInputTokens: 8000 });
+    await expect(
+      capped.interpret({ ...request, message: "x".repeat(32_000) }),
+    ).rejects.toMatchObject({ tooLarge: true });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(
+      (await capped.interpret({ ...request, message: "Save a note about dinner" })).intent,
+    ).toMatchObject({ kind: "respond" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [429, true],
     [500, true],

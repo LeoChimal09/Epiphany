@@ -16,7 +16,12 @@ import {
   type Principal,
   type Services,
 } from "../services";
-import { createAssistant, emptyConversation, type Assistant } from "./assistant";
+import {
+  createAssistant,
+  emptyConversation,
+  type Assistant,
+  type ConversationState,
+} from "./assistant";
 import { parseConversationState } from "./state";
 import { COURSE_LIST_PASTE } from "./course-list.fixture";
 import { dateKeyOf } from "../planning/time";
@@ -24,6 +29,7 @@ import { parseReminderSettings, runReminderCycle, syncReminders } from "../remin
 import { createBudget, createMemoryUsageStore, type UsageStore } from "./budget";
 import type { Intent } from "./intent";
 import type { WorkspaceSetupResult } from "./workspace";
+import { createOpenAiProvider } from "./openai";
 import {
   createScriptedProvider,
   ProviderUnavailableError,
@@ -119,6 +125,196 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
     await services.tasks.create(owner, { title: "Biology reading" });
     return owner;
   }
+
+  it.each(["dashboard", "discord"] as const)(
+    "recovers a crowded %s conversation and switches from event completion to notes and todos",
+    async (source) => {
+      const principal = await issueOwnerPrincipal(handle.db, ownerId, {
+        source,
+        audience: "private",
+        initiator: "assistant",
+      });
+      const event = await services.events.create(principal, {
+        title: "Gym workout",
+        startsAt: "2026-10-14T20:30:00Z",
+        endsAt: "2026-10-14T21:30:00Z",
+        timezone: TZ,
+      });
+      for (let index = 0; index < 25; index++) {
+        await services.tasks.create(principal, {
+          title: `Old task ${index} ${"long unrelated task context ".repeat(9)}`,
+        });
+      }
+      const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const sent = JSON.parse(body.messages[1].content);
+        const estimated = Math.ceil(
+          (body.messages[0].content.length +
+            body.messages[1].content.length +
+            JSON.stringify(body.tools).length) /
+            4,
+        );
+        expect(estimated).toBeLessThanOrEqual(8000);
+        const action = sent.message.includes("workout")
+          ? {
+              name: "acknowledge_event",
+              args: { reference: "Gym workout", event_date: "2026-10-14" },
+            }
+          : sent.message.includes("note")
+            ? { name: "create_note", args: { details: "Bring a water bottle" } }
+            : { name: "create_task", args: { title: "Buy bananas", task_type: "todo" } };
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: { name: action.name, arguments: JSON.stringify(action.args) },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        );
+      });
+      const assistant = createAssistant({
+        services,
+        timezone: TZ,
+        clock: () => now,
+        budget: budget(),
+        provider: createOpenAiProvider({
+          apiKey: "synthetic-fixture-key",
+          model: "fixture",
+          pricing: { inputPerMillion: 0, outputPerMillion: 0 },
+          maxInputTokens: 8000,
+          fetch: fetchImpl as unknown as typeof fetch,
+        }),
+      });
+      let state: ConversationState = {
+        ...emptyConversation(),
+        turns: Array.from({ length: 8 }, (_, index) => ({
+          role: index % 2 ? ("assistant" as const) : ("user" as const),
+          text: "Previous task conversation. ".repeat(18),
+        })),
+        lastReminder: {
+          reminderId: "fixture-reminder",
+          kind: "event_checkin",
+          subjectType: "event" as const,
+          subjectId: event.id,
+          title: event.title,
+        },
+      };
+      for (const [message, outcome] of [
+        ["I'm done with today's gym workout", "completed"],
+        ["Save a note: Bring a water bottle", "created"],
+        ["Add buy bananas to my todo", "created"],
+      ]) {
+        const result = await assistant.handle(principal, message!, state);
+        expect(result.reply).toMatchObject({ outcome, changed: true });
+        state = result.state;
+      }
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      expect((await services.events.get(principal, event.id)).status).toBe("scheduled");
+      expect((await services.notes.list(principal)).map((note) => note.body)).toContain(
+        "Bring a water bottle",
+      );
+      const rows = await services.tasks.list(principal);
+      expect(rows.find((task) => task.title === "Buy bananas")).toMatchObject({
+        taskType: "todo",
+        status: "open",
+      });
+      expect(
+        rows
+          .filter((task) => task.title.startsWith("Old task"))
+          .every((task) => task.status === "open"),
+      ).toBe(true);
+    },
+  );
+
+  it("creates a recurring workout and confirms cancellation of just one occurrence", async () => {
+    const { assistant } = build((request) =>
+      request.message.includes("Cancel")
+        ? {
+            kind: "cancel_event",
+            reference: "Gym workout",
+            date: "2026-10-21",
+            scope: "occurrence",
+          }
+        : request.message.includes("done")
+          ? { kind: "acknowledge_event", reference: "Gym workout", date: "2026-10-14" }
+          : {
+              kind: "create_event",
+              title: "Gym workout",
+              date: "2026-10-14",
+              startTime: "15:30",
+              endTime: "16:30",
+              recurrence: { frequency: "weekly", count: 3 },
+            },
+    );
+    const unsaved = await say(assistant, "Just chatting, don't save this weekly gym plan");
+    expect(unsaved.reply.changed).toBe(false);
+    const created = await say(assistant, "Schedule gym Wednesdays 330-430 for three weeks");
+    expect(created.reply).toMatchObject({ outcome: "created", changed: true });
+    expect(created.reply.text).toContain("3 weekly occurrences");
+    const done = await say(assistant, "I'm done with today's gym workout", created.state);
+    expect(done.reply).toMatchObject({ outcome: "completed", changed: true });
+    const proposal = await say(assistant, "Cancel gym on October 21 only", done.state);
+    expect(proposal.reply).toMatchObject({ outcome: "confirmation_needed", changed: false });
+    expect(parseConversationState(proposal.state)).not.toBeNull();
+    const confirmed = await say(assistant, "yes", proposal.state);
+    expect(confirmed.reply).toMatchObject({ outcome: "completed", changed: true });
+    expect(confirmed.reply.text).toContain("1 event occurrence");
+    const rows = await services.events.list(assistantPrincipal, {
+      from: "2026-10-14T00:00:00Z",
+      to: "2026-11-14T00:00:00Z",
+      includeInactive: true,
+    });
+    expect(rows.map((event) => event.status)).toEqual(["scheduled", "canceled", "scheduled"]);
+  });
+
+  it("distinguishes recurring occurrences by date and resolves a numbered follow-up", async () => {
+    const series = await services.events.createSeries(assistantPrincipal, {
+      title: "Gym workout",
+      timezone: TZ,
+      startDate: "2026-10-14",
+      startTime: "15:30",
+      endTime: "16:30",
+      recurrence: { frequency: "weekly", count: 3 },
+    });
+    const { assistant } = build((request) =>
+      request.message.includes("330")
+        ? {
+            kind: "acknowledge_event",
+            reference: request.message.includes("dentist") ? "Dentist" : "",
+            date: "2026-10-14",
+            startTime: "15:30",
+          }
+        : {
+            kind: "acknowledge_event",
+            reference: request.message.includes("second") ? "the second one" : "Gym workout",
+          },
+    );
+    const asked = await say(assistant, "The gym workout is done");
+    expect(asked.reply.outcome).toBe("clarification");
+    expect(asked.reply.text).toContain("Oct 14");
+    expect(asked.reply.text).toContain("Oct 21");
+    const resolved = await say(assistant, "the second one", asked.state);
+    expect(resolved.reply).toMatchObject({ outcome: "completed", changed: true });
+    const history = await services.history.list(assistantPrincipal);
+    expect(
+      history
+        .filter((entry) => entry.action === "event.acknowledge")
+        .map((entry) => entry.entityId),
+    ).toEqual([series[1]!.id]);
+    const timed = await say(assistant, "My event at 330 is done", resolved.state);
+    expect(timed.reply).toMatchObject({ outcome: "completed", changed: true });
+    const mismatched = await say(assistant, "My dentist event at 330 is done", timed.state);
+    expect(mismatched.reply).toMatchObject({ outcome: "clarification", changed: false });
+    expect((await services.events.get(assistantPrincipal, series[0]!.id)).status).toBe("scheduled");
+  });
 
   describe("developing saved ideas", () => {
     it("resumes a saved idea after a fresh conversation and sends its body on the next turn", async () => {
@@ -769,7 +965,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(await noteCount()).toBe(1);
     });
 
-    it("refuses an expired confirmation and says nothing was deleted", async () => {
+    it("refuses an expired confirmation and says nothing was changed", async () => {
       await noteFixture();
       const { assistant } = build(script);
       const asked = await say(assistant, "delete the old brainstorm");
@@ -777,7 +973,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       const late = await say(assistant, "yes", asked.state);
       expect(late.reply).toMatchObject({ outcome: "failed", changed: false });
       expect(late.reply.text).toContain("expired");
-      expect(late.reply.text).toContain("nothing was deleted");
+      expect(late.reply.text).toContain("nothing was changed");
       expect(await noteCount()).toBe(1);
     });
 

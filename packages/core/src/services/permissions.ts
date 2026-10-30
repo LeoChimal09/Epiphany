@@ -37,6 +37,7 @@ export const ACTIONS = {
   "event.create": { kind: "apply" },
   "event.acknowledge": { kind: "apply" },
   "event.cancel": { kind: "apply", confirmWhenExternal: true },
+  "event.cancel_series": { kind: "destructive" },
   "category.create": { kind: "apply" },
   "reminder.snooze": { kind: "apply" },
   "reminder.create": { kind: "apply" },
