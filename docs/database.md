@@ -10,7 +10,7 @@ drizzle-kit into `packages/core/drizzle/` and applied by Epiphany's own runner.
 | ---------------- | ----------------------------------------------------------------------------- |
 | `owners`         | The owner identity (display name, timezone, optional Discord user ID and avatar hash). |
 | `categories`     | Categories per owner. The Inbox is the row with `system_key = 'inbox'`.        |
-| `tasks`          | Assignments and to-dos. `status` is `open`/`completed`; `archived_at` is separate. `source_text`/`source_ref` link the message it came from; `review_note` flags what needs the owner's eye (cleared when a deadline is set). |
+| `tasks`          | Assignments and to-dos. `status` is `open`/`completed`/`canceled`; `archived_at` is separate. `source_text`/`source_ref` link the message it came from; `review_note` flags what needs the owner's eye (cleared when a deadline is set). |
 | `events`         | Fixed events. `status` is `scheduled`/`canceled`; nullable `series_id` groups materialized local recurring occurrences. |
 | `work_blocks`    | Movable planned time, optionally tied to a task: `planned`/`completed`/`removed`. |
 | `notes`          | Notes and ideas, categorized (default Inbox).                                  |
@@ -30,11 +30,13 @@ Design rules:
 
 - IDs are UUID strings. Times are UTC `DATETIME(3)`; every connection sets its session time
   zone to UTC. Display timezones come from the owner/event, never from the database.
-- Completing a task, canceling an event, and removing a work block are three separate
-  operations (`packages/core/src/db/domain.ts`). Each changes only its own row, keeps the row,
-  and writes history in the same transaction. `CHECK` constraints stop MySQL from storing a
-  status without its matching timestamp. Cascading work-block cleanup on completion is
-  deliberately **not** implemented; it arrives with weekly planning (Goal 14).
+- Completing/canceling a task retires all of its planned work blocks and cancels unsent
+  subject reminders atomically, retaining the deadline and history. Cancellation does not
+  claim completion. Reopening does not recreate retired blocks or replay sent reminders.
+- Event acknowledgement records a version-bound done marker in action history and stops
+  check-ins; it retains the historical appointment. Cancellation is a separate operation.
+  Time edits preview one exact occurrence, require confirmation, and cancel obsolete reminders.
+  Imported external appointments remain read-only.
 - Foreign keys never cascade deletes. Deleting records is a later, confirmed operation.
 - `updated_at` and `version` are maintained by the shared services, not triggers. If you edit
   a row by hand in a SQL client, set them yourself.
@@ -54,6 +56,33 @@ Design rules:
 | `bun run db:test:down`   | Stop it and discard its data.                                             |
 
 There is no `db:push`. Routine app restarts never create tables; migration is an explicit step.
+
+### Task cancellation (0015)
+
+`0015_wakeful_wiccan` appends `canceled` to the task status enum without rewriting existing
+records. Apply it before deploying either updated process. It leaves completed timestamps,
+deadlines, categories, and history intact. Clean-install and previous-schema upgrade tests
+use disposable MySQL fixtures; never reset a live database to deploy this change.
+
+### SQLite cost assessment (2026-11-04)
+
+SQLite is a reasonable candidate for a small owner-only deployment: it can remove the
+separate database service's running cost. It does not remove dashboard, worker, AI,
+storage, or backup costs; actual savings require a breakdown of the hosting bill.
+No live database or billing settings were changed during this assessment.
+
+The current deployment uses separate Railway web and worker services sharing MySQL.
+A local SQLite file is not a network database and cannot simply replace `DATABASE_URL`
+across isolated services/volumes. A safe switch would first choose either one host with
+both processes sharing durable local storage, or a separately evaluated remote SQLite
+service with a compatible driver and concurrency guarantees.
+
+This is not a driver-only replacement: the schema, MySQL migrations, row locks,
+JSON expressions, date handling, reminder claiming, and budget reservations need an
+SQLite implementation and concurrency tests. Existing records would need a backed-up,
+validated export/import with counts, foreign keys, UTC values, encrypted calendar
+tokens, and a rollback plan. Keep MySQL until that deployment and data-migration
+decision is made; do not delete the existing database to reduce costs.
 
 ### Local recurring events (0014)
 

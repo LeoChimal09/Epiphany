@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` MODIFY COLUMN `status` enum('open','completed','canceled') NOT NULL DEFAULT 'open';

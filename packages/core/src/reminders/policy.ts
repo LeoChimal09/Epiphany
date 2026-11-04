@@ -290,7 +290,11 @@ export function decideDelivery(input: DecisionInput): Decision {
   const limit = maxLatenessMs(reminder.kind, settings);
   if (latenessMs > limit) return { action: "skip", reason: "stale" };
 
-  if (reminder.urgency === "normal" && inQuietHours(now, timezone, settings.quietHours)) {
+  if (
+    reminder.kind !== "briefing" &&
+    reminder.urgency === "normal" &&
+    inQuietHours(now, timezone, settings.quietHours)
+  ) {
     const until = quietHoursEnd(now, timezone, settings.quietHours);
     // If waiting would make it too late to matter, drop it instead of sending it at the wrong time.
     if (until.getTime() - reminder.dueAt.getTime() > limit)

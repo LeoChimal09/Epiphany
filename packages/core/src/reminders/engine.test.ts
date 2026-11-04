@@ -82,7 +82,69 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       .set({ createdAt: at("2026-10-14T12:00:00Z") })
       .where(eq(tasks.id, id));
 
+  it("fails closed on live eligibility before delivery, including callback errors", async () => {
+    const now = at("2026-10-16T18:00:00Z");
+    for (const [index, eligible] of [
+      async () => false,
+      async () => {
+        throw new Error("unavailable");
+      },
+    ].entries()) {
+      await services.reminders.create(owner, {
+        kind: "check_in",
+        at: now,
+        message: `Optional question ${index}`,
+      });
+      expect(
+        await runReminderCycle({
+          db: handle.db,
+          ownerId,
+          now,
+          timezone: TZ,
+          settings: settings(),
+          delivery,
+          eligible,
+        }),
+      ).toMatchObject({ sent: 0, skipped: 1 });
+    }
+    expect(sent).toEqual([]);
+    expect((await rows()).every((row) => row.status === "skipped")).toBe(true);
+  });
+
   describe("scheduling", () => {
+    it.each([
+      ["2026-10-31T11:00:00Z", "2026-10-31T11:00:00.000Z"],
+      ["2026-11-02T12:00:00Z", "2026-11-02T12:00:00.000Z"],
+    ])("delivers a 6 AM briefing on time across DST (%s)", async (now, expected) => {
+      await sync(now, { briefingTime: "06:00" });
+      const briefing = (await rows()).find(
+        (row) => row.dedupeKey === `briefing:${now.slice(0, 10)}`,
+      )!;
+      expect(briefing.dueAt.toISOString()).toBe(expected);
+      expect(await cycle(now, { briefingTime: "06:00" })).toMatchObject({ sent: 1, deferred: 0 });
+      expect(sent[0]).not.toContain("late");
+    });
+
+    it("restores unsent alerts when a deadline is corrected back or a task is reopened, without replaying sent alerts", async () => {
+      const task = await addTask();
+      await sync("2026-10-16T12:00:00Z");
+      const first = (await rows()).find((row) => row.subjectId === task.id)!;
+      await services.tasks.update(owner, task.id, { dueAt: "2026-10-17T22:00:00Z" });
+      expect((await rows()).find((row) => row.id === first.id)?.status).toBe("canceled");
+      await services.tasks.update(owner, task.id, { dueAt: DUE });
+      await sync("2026-10-16T12:00:00Z");
+      expect((await rows()).find((row) => row.id === first.id)?.status).toBe("scheduled");
+      await services.tasks.complete(owner, task.id);
+      await services.tasks.reopen(owner, task.id);
+      await sync("2026-10-16T12:00:00Z");
+      expect((await rows()).find((row) => row.id === first.id)?.status).toBe("scheduled");
+      await cycle("2026-10-16T21:00:00Z");
+      await services.tasks.complete(owner, task.id);
+      await services.tasks.reopen(owner, task.id);
+      await sync("2026-10-16T21:00:00Z");
+      expect((await rows()).find((row) => row.id === first.id)?.status).toBe("sent");
+    });
+
     it("uses each task's split count independently without enabling workspace-wide splits", async () => {
       const a = await services.tasks.create(owner, {
         title: "Five splits",
@@ -352,11 +414,13 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       await sync("2026-10-14T15:00:00.000Z");
       await services.tasks.update(owner, task.id, { dueAt: "2026-10-20T22:00:00.000Z" });
       const moved = await sync("2026-10-14T15:30:00.000Z");
-      expect(moved).toMatchObject({ created: 1, canceled: 1 });
+      expect(moved).toMatchObject({ created: 1, canceled: 0 });
       const all = await rows();
       expect(all.filter((r) => r.status === "scheduled")).toHaveLength(1);
       expect(
-        all.filter((r) => r.status === "canceled").every((r) => r.detail === "deadline changed"),
+        all
+          .filter((r) => r.status === "canceled")
+          .every((r) => r.detail === "task deadline changed"),
       ).toBe(true);
 
       await services.tasks.complete(owner, task.id);
@@ -547,8 +611,8 @@ describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
       await sync("2026-10-14T15:00:00.000Z", { deadlineLeadHours: [24] });
       await services.tasks.complete(owner, task.id);
       const report = await cycle("2026-10-15T22:00:30.000Z");
-      expect(report).toMatchObject({ sent: 0, skipped: 1 });
-      expect((await rows())[0]?.detail).toBeDefined();
+      expect(report).toMatchObject({ sent: 0, skipped: 0 });
+      expect((await rows())[0]).toMatchObject({ status: "canceled", detail: "task completed" });
       expect(sent).toHaveLength(0);
     });
 

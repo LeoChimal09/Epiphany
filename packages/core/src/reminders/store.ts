@@ -55,7 +55,33 @@ export async function scheduleReminder(
       urgency: input.urgency ?? "normal",
       dueAt: input.dueAt,
     });
-  return result.affectedRows === 1;
+  if (result.affectedRows === 1) return true;
+  const [restored] = await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      attempts: 0,
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.dedupeKey, input.dedupeKey),
+        eq(reminders.status, "canceled"),
+        inArray(reminders.detail, [
+          "task completed",
+          "task canceled",
+          "task deadline changed",
+          "event rescheduled",
+        ]),
+      ),
+    );
+  return restored.affectedRows === 1;
 }
 
 export async function scheduleSplitReminder(

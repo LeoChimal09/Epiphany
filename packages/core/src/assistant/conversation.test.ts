@@ -28,6 +28,7 @@ async function fixture(response: unknown, savedNotes: unknown[] = []) {
     tasks,
     notes,
     events: { list: vi.fn(async () => []) },
+    workBlocks: { list: vi.fn(async () => []) },
     categories: { list: vi.fn(async () => []) },
     preferences: { list: vi.fn(async () => []) },
   } as unknown as Services;

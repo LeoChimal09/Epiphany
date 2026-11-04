@@ -1,14 +1,26 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { BriefcaseBusiness, Clock3, Moon, SlidersHorizontal } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
+import {
+  Brain,
+  CalendarClock,
+  Coffee,
+  Moon,
+  Shield,
+  SlidersHorizontal,
+  Timer,
+  Footprints,
+  BellRing,
+  type LucideIcon,
+} from "lucide-react";
 import type {
   PlanningPreferences,
   PlanningSettingKey,
   TimeWindow,
   Weekday,
 } from "@epiphany/core/planning";
-import { savePlanningSetting } from "./actions";
+import { saveLearningAllowance, saveLearningSetting, savePlanningSetting } from "./actions";
+import { clockSummary, DefaultEditor } from "./default-editor";
 import styles from "./settings.module.css";
 
 const DAYS: Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -51,77 +63,85 @@ function WindowFields({
   );
 }
 
-function Section({
+function Section<T>({
   title,
+  icon,
+  summary,
+  onReset,
   setting,
   value,
   version,
+  pausedVersion,
   children,
 }: {
   title: string;
-  setting: PlanningSettingKey;
-  value: unknown;
+  icon: LucideIcon;
+  summary: (saved: T) => string;
+  onReset: (saved: T) => void;
+  setting: PlanningSettingKey | "tracking.enabled" | "tracking.check_ins";
+  value: T;
   version?: number;
+  pausedVersion?: number;
   children: ReactNode;
 }) {
   const [savedVersion, setSavedVersion] = useState(version);
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [savedPausedVersion, setSavedPausedVersion] = useState(pausedVersion);
   return (
-    <details
-      className={styles.section}
-      data-tone={setting === "planning.preferred_hours" ? "work" : undefined}
+    <DefaultEditor
+      title={title}
+      icon={icon}
+      value={value}
+      summary={summary}
+      onReset={onReset}
+      onSave={async (draft) => {
+        const result =
+          setting === "tracking.enabled"
+            ? await saveLearningAllowance(
+                draft === true,
+                savedVersion,
+                savedPausedVersion,
+                draft === true,
+              )
+            : setting === "tracking.check_ins"
+              ? await saveLearningSetting(setting, draft === true, savedVersion, draft === true)
+              : await savePlanningSetting(setting, draft, savedVersion);
+        if (result.ok) {
+          setSavedVersion(result.version);
+          if ("pausedVersion" in result && typeof result.pausedVersion === "number")
+            setSavedPausedVersion(result.pausedVersion);
+        }
+        return result;
+      }}
     >
-      <summary>
-        {setting === "planning.preferred_hours" ? (
-          <BriefcaseBusiness size={22} aria-hidden="true" />
-        ) : (
-          <Clock3 size={20} aria-hidden="true" />
-        )}
-        <span className={styles.summaryText}>
-          <strong>{title}</strong>
-          {setting === "planning.preferred_hours" ? (
-            <small>When Epi can plan tasks for you</small>
-          ) : null}
-        </span>
-      </summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setPending(true);
-          setMessage("");
-          try {
-            const result = await savePlanningSetting(setting, value, savedVersion);
-            setFailed(!result.ok);
-            setMessage(result.ok ? "Saved." : result.error);
-            if (result.ok) setSavedVersion(result.version);
-          } catch {
-            setFailed(true);
-            setMessage("Could not confirm the save. Reload to check before trying again.");
-          } finally {
-            setPending(false);
-          }
-        }}
-      >
-        <fieldset disabled={pending} className={styles.fields}>
-          {children}
-          <button type="submit">{pending ? "Saving..." : `Save ${title.toLowerCase()}`}</button>
-        </fieldset>
-        {message ? <p role={failed ? "alert" : "status"}>{message}</p> : null}
-      </form>
-    </details>
+      {children}
+    </DefaultEditor>
   );
 }
 
 export function PlanningSettings({
   preferences,
   versions,
+  learning = { enabled: false, paused: false, insights: [] },
+  notifications,
 }: {
   preferences: PlanningPreferences;
   versions: Record<string, number>;
+  learning?: { enabled: boolean; paused: boolean; insights: string[]; checkIns?: boolean };
+  notifications?: ReactNode;
 }) {
+  const [tab, setTab] = useState("routine");
+  const tabsId = useId();
+  const [learn, setLearn] = useState(learning.enabled && !learning.paused);
+  const [checkIns, setCheckIns] = useState(learning.checkIns ?? false);
   const [hours, setHours] = useState(preferences.preferredHours);
+  const [limitHours, setLimitHours] = useState(
+    !DAYS.every(
+      (day) =>
+        preferences.preferredHours[day]?.length === 1 &&
+        preferences.preferredHours[day]?.[0]?.start === "00:00" &&
+        preferences.preferredHours[day]?.[0]?.end === "24:00",
+    ),
+  );
   const [sleep, setSleep] = useState(preferences.sleep ?? null);
   const [meals, setMeals] = useState(preferences.meals ?? []);
   const [protectedTime, setProtectedTime] = useState(
@@ -132,66 +152,185 @@ export function PlanningSettings({
   const [travelBefore, setTravelBefore] = useState(preferences.travelBeforeMinutes ?? 0);
   const [travelAfter, setTravelAfter] = useState(preferences.travelAfterMinutes ?? 0);
   return (
-    <div>
-      <Section
-        title="Work hours"
-        setting="planning.preferred_hours"
-        value={hours}
-        version={versions["planning.preferred_hours"]}
-      >
-        <p>
-          Epi plans work during these hours. Leave a day empty to mark it unavailable. Split
-          overnight hours across two days.
-        </p>
-        {DAYS.map((day) => (
-          <div key={day}>
-            <h3>{day.toUpperCase()}</h3>
-            {(hours[day] ?? []).map((window, index) => (
-              <div className={styles.row} key={index}>
-                <WindowFields
-                  value={window}
-                  onChange={(value) =>
-                    setHours({
-                      ...hours,
-                      [day]: hours[day]!.map((w, i) => (i === index ? value : w)),
-                    })
-                  }
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setHours({ ...hours, [day]: hours[day]!.filter((_, i) => i !== index) })
-                  }
-                >
-                  Remove window
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              disabled={(hours[day]?.length ?? 0) >= 8}
-              onClick={() =>
-                setHours({
-                  ...hours,
-                  [day]: [...(hours[day] ?? []), { start: "09:00", end: "17:00" }],
-                })
-              }
-            >
-              Add {day} window
-            </button>
-          </div>
+    <div className={styles.defaults}>
+      <nav className={styles.tabs} aria-label="Planning default groups">
+        {(
+          [
+            ["routine", "Routine", CalendarClock],
+            ["notifications", "Notifications", BellRing],
+            ["learning", "Learning", Brain],
+          ] as const
+        ).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={tab === key}
+            aria-controls={`${tabsId}-${key}`}
+            onClick={() => setTab(key)}
+          >
+            <Icon size={16} aria-hidden="true" />
+            {label}
+          </button>
         ))}
-      </Section>
-      <details className={styles.group} data-tone="routine">
-        <summary>
-          <Moon size={22} aria-hidden="true" />
-          <span className={styles.summaryText}>
-            <strong>Daily routine</strong>
-            <small>Sleep, meals, and protected personal time</small>
-          </span>
-        </summary>
+      </nav>
+      <section
+        hidden={tab !== "notifications"}
+        id={`${tabsId}-notifications`}
+        aria-label="Notification defaults"
+      >
+        {notifications}
+      </section>
+      <section hidden={tab !== "learning"} id={`${tabsId}-learning`} aria-label="Learning defaults">
+        <Section
+          title="Personal learning"
+          icon={Brain}
+          summary={(saved) => (saved ? "Allowed · reported durations and snoozes" : "Not allowed")}
+          onReset={setLearn}
+          setting="tracking.enabled"
+          value={learn}
+          version={versions["tracking.enabled"]}
+          pausedVersion={versions["tracking.paused"]}
+        >
+          <label>
+            <input
+              type="checkbox"
+              checked={learn}
+              onChange={(event) => setLearn(event.target.checked)}
+            />{" "}
+            Allow Epi to learn from what I tell it
+          </label>
+          <p>
+            Uses reported durations and snoozes for estimates, with occasional optional questions.
+            Preferences need your approval. No AI retraining or monitoring.
+          </p>
+          <p>
+            Save to give permission. Turning this off stops collection and use; ask Epi to forget
+            reports to erase them.
+          </p>
+          {learning.insights.length ? (
+            <ul>
+              {learning.insights.map((text) => (
+                <li key={text}>{text}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>Estimates need at least three similar reports.</p>
+          )}
+        </Section>
+        <Section
+          title="Discord check-ins"
+          icon={BellRing}
+          summary={(saved) =>
+            saved ? "Allowed · occasional private questions" : "Off · conversation only"
+          }
+          onReset={setCheckIns}
+          setting="tracking.check_ins"
+          value={checkIns}
+          version={versions["tracking.check_ins"]}
+        >
+          <label>
+            <input
+              type="checkbox"
+              checked={checkIns}
+              onChange={(event) => setCheckIns(event.target.checked)}
+            />{" "}
+            Allow Epi to message me first
+          </label>
+          <p>
+            With learning allowed, Epi may ask a new question in your private Discord check-ins
+            channel, no more than once every three days.
+          </p>
+          <p>
+            Only when your routine and calendar show at least 30 free minutes, outside quiet hours
+            and pauses. This is not online-status monitoring. No repeated topics or follow-up
+            nagging.
+          </p>
+          <p>
+            Answers can guide tone, reply length, and planning advice after you approve remembering
+            them. No answer is required.
+          </p>
+        </Section>
+      </section>
+      <section hidden={tab !== "routine"} id={`${tabsId}-routine`} aria-label="Routine defaults">
+        <p className={styles.groupNote}>
+          Usual availability, not calendar events. Individual plans can differ.
+        </p>
+        <Section
+          title="Planning hours"
+          icon={CalendarClock}
+          summary={(saved) =>
+            saved === null ? "Use free time around your routine" : "Custom weekly limits"
+          }
+          onReset={(saved) => {
+            setLimitHours(saved !== null);
+            if (saved) setHours(saved);
+          }}
+          setting="planning.preferred_hours"
+          value={limitHours ? hours : null}
+          version={versions["planning.preferred_hours"]}
+        >
+          <p>Optional limits for suggested tasks. Leave off to use your routine and calendar.</p>
+          <label>
+            <input
+              type="checkbox"
+              checked={limitHours}
+              onChange={(e) => setLimitHours(e.target.checked)}
+            />{" "}
+            Limit planning to specific hours
+          </label>
+          {limitHours ? (
+            <p>Leave a day empty to mark it unavailable. Split overnight hours across two days.</p>
+          ) : null}
+          {limitHours
+            ? DAYS.map((day) => (
+                <div key={day}>
+                  <h3>{day.toUpperCase()}</h3>
+                  {(hours[day] ?? []).map((window, index) => (
+                    <div className={styles.row} key={index}>
+                      <WindowFields
+                        value={window}
+                        onChange={(value) =>
+                          setHours({
+                            ...hours,
+                            [day]: hours[day]!.map((w, i) => (i === index ? value : w)),
+                          })
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHours({ ...hours, [day]: hours[day]!.filter((_, i) => i !== index) })
+                        }
+                      >
+                        Remove window
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={(hours[day]?.length ?? 0) >= 8}
+                    onClick={() =>
+                      setHours({
+                        ...hours,
+                        [day]: [...(hours[day] ?? []), { start: "09:00", end: "17:00" }],
+                      })
+                    }
+                  >
+                    Add {day} window
+                  </button>
+                </div>
+              ))
+            : null}
+        </Section>
         <Section
           title="Sleep"
+          icon={Moon}
+          summary={(saved) =>
+            saved
+              ? `${clockSummary(saved.start)} – ${clockSummary(saved.end)} · daily`
+              : "Not protected"
+          }
+          onReset={setSleep}
           setting="planning.sleep"
           value={sleep}
           version={versions["planning.sleep"]}
@@ -208,6 +347,15 @@ export function PlanningSettings({
         </Section>
         <Section
           title="Meals"
+          icon={Coffee}
+          summary={(saved) =>
+            saved.length
+              ? saved
+                  .map((meal) => `${clockSummary(meal.start)} – ${clockSummary(meal.end)}`)
+                  .join(" · ")
+              : "No meal breaks"
+          }
+          onReset={setMeals}
           setting="planning.meals"
           value={meals}
           version={versions["planning.meals"]}
@@ -234,6 +382,13 @@ export function PlanningSettings({
         </Section>
         <Section
           title="Protected time"
+          icon={Shield}
+          summary={(saved) =>
+            saved.length
+              ? `${saved.length} personal time ${saved.length === 1 ? "block" : "blocks"}`
+              : "No extra blocks"
+          }
+          onReset={setProtectedTime}
           setting="planning.protected_time"
           value={protectedTime}
           version={versions["planning.protected_time"]}
@@ -310,17 +465,14 @@ export function PlanningSettings({
             Add protected time
           </button>
         </Section>
-      </details>
-      <details className={styles.group} data-tone="advanced">
-        <summary>
-          <SlidersHorizontal size={22} aria-hidden="true" />
-          <span className={styles.summaryText}>
-            <strong>More planning options</strong>
-            <small>Event buffers, travel, and minimum work blocks</small>
-          </span>
-        </summary>
+        <h2 className={styles.groupHeading}>
+          Scheduling details <span>Optional defaults</span>
+        </h2>
         <Section
           title="Event buffer"
+          icon={SlidersHorizontal}
+          summary={(saved) => `${saved} min before and after events`}
+          onReset={setBuffer}
           setting="planning.buffer_minutes"
           value={buffer}
           version={versions["planning.buffer_minutes"]}
@@ -339,14 +491,15 @@ export function PlanningSettings({
         </Section>
         <Section
           title="Travel before events"
+          icon={Footprints}
+          summary={(saved) => (saved ? `${saved} min before every event` : "None")}
+          onReset={setTravelBefore}
           setting="planning.travel_before_minutes"
           value={travelBefore}
           version={versions["planning.travel_before_minutes"]}
         >
           <p>
-            Optional default for every timed event, including online events. Leave at zero and use
-            specific protected time if only some events require travel. Buffers are added outside
-            travel time.
+            Applies to every timed event, including online events. Leave at zero if travel varies.
           </p>
           <label>
             Minutes before each timed event{" "}
@@ -362,6 +515,9 @@ export function PlanningSettings({
         </Section>
         <Section
           title="Travel after events"
+          icon={Footprints}
+          summary={(saved) => (saved ? `${saved} min after every event` : "None")}
+          onReset={setTravelAfter}
           setting="planning.travel_after_minutes"
           value={travelAfter}
           version={versions["planning.travel_after_minutes"]}
@@ -380,6 +536,9 @@ export function PlanningSettings({
         </Section>
         <Section
           title="Minimum work block"
+          icon={Timer}
+          summary={(saved) => `${saved} min`}
+          onReset={setMinimum}
           setting="planning.min_block_minutes"
           value={minimum}
           version={versions["planning.min_block_minutes"]}
@@ -396,7 +555,7 @@ export function PlanningSettings({
             />
           </label>
         </Section>
-      </details>
+      </section>
     </div>
   );
 }

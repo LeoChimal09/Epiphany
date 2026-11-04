@@ -12,6 +12,8 @@ import type { DashboardTask } from "./model";
 
 export interface ScheduleEvent {
   id: string;
+  version?: number;
+  acknowledged?: boolean;
   seriesId?: string | null;
   title: string;
   location: string | null;

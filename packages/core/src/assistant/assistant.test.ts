@@ -126,6 +126,460 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
     return owner;
   }
 
+  it("moves the unique Godzilla event from today to Saturday at its saved time with no intake loop", async () => {
+    now = new Date("2026-11-04T19:34:00Z");
+    const event = await services.events.create(assistantPrincipal, {
+      title: "Watching Godzilla movie",
+      startsAt: "2026-11-04T19:00:00Z",
+      endsAt: "2026-11-04T21:00:00Z",
+      timezone: TZ,
+    });
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body));
+      const sent = JSON.parse(request.messages[1].content);
+      expect(sent.events).toContainEqual(
+        expect.objectContaining({
+          id: event.id,
+          title: event.title,
+          seriesId: null,
+        }),
+      );
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: {
+                      name: "reschedule_event",
+                      arguments: JSON.stringify({
+                        reference: "Godzilla event",
+                        due_date: "2026-11-07",
+                      }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+    });
+    const assistant = createAssistant({
+      services,
+      timezone: TZ,
+      clock: () => now,
+      budget: budget(),
+      provider: createOpenAiProvider({
+        apiKey: "synthetic-test-key",
+        model: "test-model",
+        pricing: { inputPerMillion: 0, outputPerMillion: 0 },
+        fetch: fetchImpl as unknown as typeof fetch,
+      }),
+    });
+    const preview = await say(
+      assistant,
+      "can you update my godzilla event and move the day to saturday same time",
+    );
+    expect(preview.reply).toMatchObject({ outcome: "confirmation_needed", changed: false });
+    expect(preview.reply.text).toContain("Nov 7");
+    expect((await services.events.get(assistantPrincipal, event.id)).startsAt).toEqual(
+      event.startsAt,
+    );
+    const saved = await say(assistant, "yes", preview.state);
+    expect(saved.reply.changed).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await services.events.get(assistantPrincipal, event.id)).toMatchObject({
+      startsAt: new Date("2026-11-07T19:00:00Z"),
+      endsAt: new Date("2026-11-07T21:00:00Z"),
+      version: 2,
+    });
+    const unchanged = await say(assistant, "move Godzilla to 11/7 same time");
+    expect(unchanged.reply).toMatchObject({ outcome: "answered", changed: false });
+    expect(
+      await services.events.list(assistantPrincipal, {
+        from: "2026-11-01T00:00:00Z",
+        to: "2026-11-10T00:00:00Z",
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("preserves local start time and elapsed duration for a date-only move across DST", async () => {
+    const event = await services.events.create(assistantPrincipal, {
+      title: "Movie",
+      startsAt: "2026-10-14T18:00:00Z",
+      endsAt: "2026-10-14T20:00:00Z",
+      timezone: TZ,
+    });
+    const { assistant } = build((request) =>
+      request.message === "yes"
+        ? { kind: "confirm" }
+        : { kind: "reschedule_event", reference: "Movie", newDate: "2026-11-07" },
+    );
+    const preview = await say(assistant, "move Movie to November 7 same time");
+    await say(assistant, "yes", preview.state);
+    expect(await services.events.get(assistantPrincipal, event.id)).toMatchObject({
+      startsAt: new Date("2026-11-07T19:00:00Z"),
+      endsAt: new Date("2026-11-07T21:00:00Z"),
+    });
+  });
+
+  it.each(["acknowledge_event", "cancel_event"] as const)(
+    "keeps numbered event disambiguation bound to %s, not an old reminder",
+    async (action) => {
+      const series = await services.events.createSeries(assistantPrincipal, {
+        title: "Gym",
+        timezone: TZ,
+        startDate: "2026-10-14",
+        startTime: "15:30",
+        endTime: "16:30",
+        recurrence: { frequency: "daily", count: 2 },
+      });
+      const { assistant, provider } = build((request) =>
+        request.message === "yes"
+          ? { kind: "confirm" }
+          : action === "cancel_event"
+            ? {
+                kind: action,
+                reference: request.message.includes("second") ? "the second one" : "Gym",
+                scope: "occurrence",
+              }
+            : {
+                kind: action,
+                reference: request.message.includes("second") ? "the second one" : "Gym",
+              },
+      );
+      const choose = await say(assistant, action === "cancel_event" ? "Cancel gym" : "Gym is done");
+      expect(choose.reply.outcome).toBe("clarification");
+      expect(choose.state.eventFocus).toMatchObject({
+        ids: series.map((event) => event.id),
+        action,
+      });
+      expect(parseConversationState(choose.state)).not.toBeNull();
+      const selected = await say(assistant, "the second one", choose.state);
+      expect(provider.calls[1]?.eventFocus).toMatchObject({
+        ids: series.map((event) => event.id),
+        action,
+      });
+      if (action === "cancel_event") {
+        expect(selected.reply).toMatchObject({ outcome: "confirmation_needed", changed: false });
+        const confirmed = await say(assistant, "yes", selected.state);
+        expect(confirmed.reply.changed).toBe(true);
+        expect((await services.events.get(assistantPrincipal, series[1]!.id)).status).toBe(
+          "canceled",
+        );
+        expect((await services.events.get(assistantPrincipal, series[0]!.id)).status).toBe(
+          "scheduled",
+        );
+      } else {
+        expect(selected.reply.changed).toBe(true);
+        const rows = await services.events.list(assistantPrincipal, {
+          from: "2026-10-14T00:00:00Z",
+          to: "2026-10-17T00:00:00Z",
+        });
+        expect(rows.map((event) => event.acknowledged)).toEqual([false, true]);
+      }
+    },
+  );
+
+  it("uses a just-created event for 'that event', while explicit dates override its focus", async () => {
+    const old = await services.events.create(assistantPrincipal, {
+      title: "Gym",
+      startsAt: "2026-10-13T20:00:00Z",
+      endsAt: "2026-10-13T21:00:00Z",
+      timezone: TZ,
+    });
+    const { assistant } = build((request) =>
+      request.message.includes("add")
+        ? {
+            kind: "create_event",
+            title: "Gym",
+            date: "2026-10-14",
+            startTime: "15:00",
+            endTime: "16:00",
+          }
+        : {
+            kind: "acknowledge_event",
+            reference: "that event",
+            ...(request.message.includes("yesterday") ? { date: "2026-10-13" } : {}),
+          },
+    );
+    const created = await say(assistant, "add gym today at three for an hour");
+    const selected = await say(assistant, "that event is done", created.state);
+    expect(selected.reply.changed).toBe(true);
+    expect(
+      (
+        await services.events.list(assistantPrincipal, {
+          from: "2026-10-13T00:00:00Z",
+          to: "2026-10-16T00:00:00Z",
+        })
+      ).map((event) => event.acknowledged),
+    ).toEqual([false, true]);
+    expect(
+      (await say(assistant, "yesterday's event was done too", selected.state)).reply.changed,
+    ).toBe(true);
+    expect((await services.events.get(assistantPrincipal, old.id)).status).toBe("scheduled");
+  });
+
+  it("re-reads an explicitly focused older event and rejects stale or other-owner focus", async () => {
+    const event = await services.events.create(assistantPrincipal, {
+      title: "Old meeting",
+      startsAt: "2026-10-10T20:00:00Z",
+      endsAt: "2026-10-10T21:00:00Z",
+      timezone: TZ,
+    });
+    const { assistant, provider } = build(() => ({ kind: "acknowledge_event", reference: "it" }));
+    const focus = { ownerId, ids: [event.id], expiresAt: "2026-10-14T16:00:00Z" };
+    for (const invalid of [
+      { ...focus, ownerId: strangerId },
+      { ...focus, expiresAt: "2026-10-14T14:00:00Z" },
+    ]) {
+      expect(
+        (await say(assistant, "it is done", { ...emptyConversation(), eventFocus: invalid })).reply
+          .changed,
+      ).toBe(false);
+    }
+    expect(
+      (await say(assistant, "it is done", { ...emptyConversation(), eventFocus: focus })).reply
+        .changed,
+    ).toBe(true);
+    expect(provider.calls.at(-1)?.events).toEqual([expect.objectContaining({ id: event.id })]);
+  });
+
+  it("spaces optional learning questions by three days and binds duration answers to completed work", async () => {
+    const owner = await seed();
+    await services.preferences.set(owner, {
+      key: "tracking.enabled",
+      value: true,
+      status: "confirmed",
+    });
+    const { assistant, provider } = build((request) =>
+      request.message.includes("minutes")
+        ? { kind: "report_duration", reference: "it", minutes: 45 }
+        : request.message.includes("learned")
+          ? { kind: "show_insights" }
+          : { kind: "complete_task", reference: "Chemistry lab report" },
+    );
+    const completed = await say(assistant, "Chemistry lab report is done");
+    expect(completed.state.learningQuestion?.taskId).toBe(
+      completed.state.lastChange?.kind === "completed" ? completed.state.lastChange.taskId : null,
+    );
+    expect(completed.reply.text).toContain("About how many minutes");
+    expect(await services.insights.list(owner)).toEqual([]);
+    const answer = await say(assistant, "It took 45 minutes", completed.state);
+    expect(answer.reply.changed).toBe(true);
+    expect(provider.calls.at(-1)?.learningQuestion).toContain("Chemistry lab report");
+    expect(await services.insights.list(owner)).toEqual([
+      expect.objectContaining({ key: "Chemistry lab report", value: 45 }),
+    ]);
+    expect(answer.state.learningQuestion).toBeNull();
+    const restarted = build(() => ({ kind: "show_insights" }));
+    expect(
+      (await say(restarted.assistant, "What have you learned?")).state.learningQuestion,
+    ).toBeUndefined();
+    now = new Date("2026-10-15T15:00:00Z");
+    expect(
+      (await say(restarted.assistant, "What have you learned?")).state.learningQuestion,
+    ).toBeUndefined();
+    now = new Date("2026-10-17T15:00:00Z");
+    expect(
+      (await say(restarted.assistant, "What have you learned?")).state.learningQuestion?.question,
+    ).toContain("focused work");
+  });
+
+  it("proposes preference answers for review even if the provider prematurely claims explicit consent", async () => {
+    await services.preferences.set(assistantPrincipal, {
+      key: "tracking.enabled",
+      value: true,
+      status: "confirmed",
+    });
+    const { assistant, provider } = build((request) =>
+      request.message === "yes"
+        ? { kind: "confirm" }
+        : request.message.includes("afternoons")
+          ? { kind: "remember", text: "I prefer focused work in the afternoon", explicit: true }
+          : { kind: "show_insights" },
+    );
+    const asked = await say(assistant, "What have you learned?");
+    expect(asked.state.learningQuestion?.question).toContain("focused work");
+    const answer = await say(assistant, "I prefer afternoons", asked.state);
+    expect(answer.reply).toMatchObject({ outcome: "confirmation_needed", changed: false });
+    expect(provider.calls.at(-1)?.learningQuestion).toContain("focused work");
+    expect(
+      (await services.preferences.list(assistantPrincipal)).filter((row) =>
+        row.key.startsWith("memory."),
+      ),
+    ).toEqual([expect.objectContaining({ status: "proposed" })]);
+    await say(assistant, "yes", answer.state);
+    expect(
+      (await services.preferences.list(assistantPrincipal)).filter((row) =>
+        row.key.startsWith("memory."),
+      ),
+    ).toEqual([expect.objectContaining({ status: "confirmed" })]);
+  });
+
+  it("does not ask or collect learning answers when disabled, paused, or explicitly no-save", async () => {
+    const { assistant } = build((request) =>
+      request.message.includes("minutes")
+        ? { kind: "report_duration", reference: "it", minutes: 30 }
+        : { kind: "show_insights" },
+    );
+    expect((await say(assistant, "What have you learned?")).state.learningQuestion).toBeNull();
+    await services.preferences.set(assistantPrincipal, {
+      key: "tracking.enabled",
+      value: true,
+      status: "confirmed",
+    });
+    const asked = await say(assistant, "What have you learned?");
+    expect(asked.state.learningQuestion).not.toBeNull();
+    const unsaved = await say(assistant, "Just chatting, don't save this: 30 minutes", asked.state);
+    expect(unsaved.reply.changed).toBe(false);
+    expect(await services.insights.list(assistantPrincipal)).toEqual([]);
+    await services.preferences.set(assistantPrincipal, {
+      key: "tracking.paused",
+      value: true,
+      status: "confirmed",
+    });
+    now = new Date("2026-10-15T15:00:00Z");
+    expect(
+      (await say(assistant, "What have you learned?", asked.state)).state.learningQuestion,
+    ).toBeNull();
+    expect((await say(assistant, "It took 30 minutes", asked.state)).reply.changed).toBe(false);
+    expect(await services.insights.list(assistantPrincipal)).toEqual([]);
+  });
+
+  it("cancels a to-do conversationally and reopens it without reporting completion", async () => {
+    const task = await services.tasks.create(assistantPrincipal, {
+      title: "Buy a notebook",
+      taskType: "todo",
+    });
+    const { assistant } = build((request) => ({
+      kind: request.message.includes("reopen") ? "reopen_task" : "cancel_task",
+      reference: "Buy a notebook",
+    }));
+    const canceled = await say(assistant, "Cancel buying a notebook");
+    expect(canceled.reply).toMatchObject({ changed: true });
+    expect((await services.tasks.get(assistantPrincipal, task.id)).status).toBe("canceled");
+    await say(assistant, "Actually reopen buying a notebook", canceled.state);
+    expect((await services.tasks.get(assistantPrincipal, task.id)).status).toBe("open");
+  });
+
+  it("does not cancel a task when the conversation explicitly says not to save", async () => {
+    const owner = await seed();
+    const before = await services.tasks.list(owner);
+    const { assistant } = build(() => ({ kind: "cancel_task", reference: "Chemistry lab report" }));
+    expect(
+      (await say(assistant, "Just chatting, don't save this: cancel chemistry")).reply,
+    ).toMatchObject({ changed: false, outcome: "answered" });
+    expect(await services.tasks.list(owner)).toEqual(before);
+  });
+
+  it("edits a deadline clock time without inventing a date and preserves the clock when changing its date", async () => {
+    const owner = await seed();
+    const { assistant } = build((request) => ({
+      kind: "update_task",
+      reference: "Chemistry lab report",
+      ...(request.message.includes("tomorrow") ? { dueDate: "2026-10-15" } : { dueTime: "18:30" }),
+    }));
+    expect((await say(assistant, "Change chemistry's deadline to 630pm")).reply.changed).toBe(true);
+    let task = (await services.tasks.list(owner)).find(
+      (task) => task.title === "Chemistry lab report",
+    )!;
+    expect(task.dueAt?.toISOString()).toBe("2026-10-16T23:30:00.000Z");
+    await say(assistant, "Make chemistry due tomorrow instead");
+    task = await services.tasks.get(owner, task.id);
+    expect(task.dueAt?.toISOString()).toBe("2026-10-15T23:30:00.000Z");
+  });
+
+  it("moves an existing task block in place without moving its deadline or creating another block", async () => {
+    const owner = await seed();
+    const task = (await services.tasks.list(owner)).find(
+      (task) => task.title === "Chemistry lab report",
+    )!;
+    const block = await services.workBlocks.create(owner, {
+      taskId: task.id,
+      title: task.title,
+      startsAt: "2026-10-14T20:00:00Z",
+      endsAt: "2026-10-14T21:00:00Z",
+    });
+    const { assistant } = build(() => ({
+      kind: "move_work",
+      reference: "Chemistry lab report",
+      newDate: "2026-10-15",
+      time: "16:00",
+    }));
+    const result = await say(assistant, "Move my chemistry work to tomorrow at 4");
+    expect(result.reply).toMatchObject({ changed: true, outcome: "completed" });
+    expect(await services.workBlocks.get(owner, block.id)).toMatchObject({
+      startsAt: new Date("2026-10-15T21:00:00Z"),
+      endsAt: new Date("2026-10-15T22:00:00Z"),
+      version: 2,
+    });
+    expect(await handle.db.select().from(workBlocks)).toHaveLength(1);
+    expect((await services.tasks.get(owner, task.id)).dueAt).toEqual(task.dueAt);
+    await expect(
+      services.workBlocks.update(owner, block.id, {
+        startsAt: "2026-10-16T20:00:00Z",
+        endsAt: "2026-10-16T21:00:00Z",
+        expectedVersion: 1,
+      }),
+    ).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
+  it("previews and confirms one event occurrence time edit, preserving duration and the rest of the series", async () => {
+    const series = await services.events.createSeries(assistantPrincipal, {
+      title: "Gym",
+      timezone: TZ,
+      startDate: "2026-10-14",
+      startTime: "15:30",
+      endTime: "16:30",
+      recurrence: { frequency: "weekly", count: 2 },
+    });
+    const { assistant } = build(() => ({
+      kind: "reschedule_event",
+      reference: "Gym",
+      date: "2026-10-14",
+      time: "17:00",
+    }));
+    const proposed = await say(assistant, "Move today's gym to 5pm");
+    expect(proposed.reply).toMatchObject({ outcome: "confirmation_needed", changed: false });
+    expect((await services.events.get(assistantPrincipal, series[0]!.id)).startsAt).toEqual(
+      series[0]!.startsAt,
+    );
+    const confirmed = await say(assistant, "yes", proposed.state);
+    expect(confirmed.reply).toMatchObject({ outcome: "completed", changed: true });
+    expect(await services.events.get(assistantPrincipal, series[0]!.id)).toMatchObject({
+      startsAt: new Date("2026-10-14T22:00:00Z"),
+      endsAt: new Date("2026-10-14T23:00:00Z"),
+    });
+    expect(await services.events.get(assistantPrincipal, series[1]!.id)).toEqual(series[1]);
+  });
+
+  it("clarifies ambiguous work blocks and leaves conflicting moves unchanged", async () => {
+    const owner = await seed();
+    for (const date of ["14", "15"]) {
+      await services.workBlocks.create(owner, {
+        title: "Chemistry lab report",
+        startsAt: `2026-10-${date}T20:00:00Z`,
+        endsAt: `2026-10-${date}T21:00:00Z`,
+      });
+    }
+    const { assistant } = build((request) => ({
+      kind: "move_work",
+      reference: "Chemistry lab report",
+      time: "23:30",
+      ...(request.message.includes("today") ? { date: "2026-10-14" } : {}),
+    }));
+    expect((await say(assistant, "Move chemistry to 1130pm")).reply.outcome).toBe("clarification");
+    const result = await say(assistant, "Move today's chemistry to 1130pm");
+    expect(result.reply).toMatchObject({ outcome: "failed", changed: false });
+    expect((await handle.db.select().from(workBlocks)).every((block) => block.version === 1)).toBe(
+      true,
+    );
+  });
+
   it.each(["dashboard", "discord"] as const)(
     "recovers a crowded %s conversation and switches from event completion to notes and todos",
     async (source) => {
@@ -2067,7 +2521,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       );
       const { assistant } = build(() => ({ kind: "complete_task", reference: "chemistry lab" }));
       const { reply } = await say(assistant, "finished the chem lab");
-      expect(reply.text).toContain("cleared 1 planned work block");
+      expect(reply.text).toContain("planned work blocks and remaining reminders are cleared");
       expect((await services.workBlocks.get(owner, block.id)).status).toBe("removed");
       const after = (await taskRows()).find((t) => t.id === task.id)!;
       expect(after.status).toBe("completed");
@@ -2121,7 +2575,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
 
       const blocks = await handle.db.select().from(workBlocks);
       expect(blocks).toHaveLength(plan.items.length);
-      // Nothing overlaps, and everything is inside the default weekday hours (3 to 9 PM Chicago).
+      // Routines, not an assumed work shift, bound default planning.
       const sorted = blocks.toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
       sorted.slice(1).forEach((block, i) => {
         expect(block.startsAt.getTime()).toBeGreaterThanOrEqual(sorted[i]!.endsAt.getTime());
@@ -2134,8 +2588,8 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
             hourCycle: "h23",
           }).format(block.startsAt),
         );
-        expect(hour).toBeGreaterThanOrEqual(15);
-        expect(hour).toBeLessThan(21);
+        expect(hour).toBeGreaterThanOrEqual(7);
+        expect(hour).toBeLessThan(23);
       }
     });
 
@@ -2208,7 +2662,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
         minutes: 60,
       }));
       expect((await say(early.assistant, "3am thursday")).reply.text).toContain(
-        "outside the hours you like to work",
+        "overlaps your sleep",
       );
       expect(await handle.db.select().from(workBlocks)).toHaveLength(1);
     });

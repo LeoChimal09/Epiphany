@@ -58,6 +58,15 @@ export type Intent =
     }
   | { kind: "reopen_task"; reference: string; targetId?: string }
   | {
+      kind: "reschedule_event" | "move_work";
+      reference: string;
+      date?: DateKey;
+      newDate?: DateKey;
+      time?: string;
+      endTime?: string;
+      minutes?: number;
+    }
+  | {
       kind: "acknowledge_event";
       reference: string;
       targetId?: string;
@@ -105,6 +114,7 @@ export type Intent =
   // Move an existing task or note to another category ("that's a chem thing", "put it in Work").
   | { kind: "recategorize"; reference: string; targetId?: string; category: string }
   | { kind: "complete_task"; reference: string; targetId?: string }
+  | { kind: "cancel_task"; reference: string; targetId?: string }
   | { kind: "delete_note"; reference: string; targetId?: string }
   // Set up (or repair) the owner's private Epiphany channels in a Discord server. `server` is a
   // server name the owner mentioned, if any.
@@ -161,7 +171,10 @@ export const INTENT_KINDS = [
   "capture",
   "recategorize",
   "complete_task",
+  "cancel_task",
   "update_task",
+  "reschedule_event",
+  "move_work",
   "reopen_task",
   "acknowledge_event",
   "cancel_event",
@@ -327,7 +340,8 @@ export function toIntent(raw: unknown): Intent {
       const dueDate = date(wire.due_date, "due_date");
       const dueTime = present(wire.due_time);
       if (dueTime !== undefined) {
-        if (!dueDate) throw new IntentError("due_time needs a due_date");
+        if (!dueDate && wire.kind === "create_task")
+          throw new IntentError("due_time needs a due_date");
         try {
           parseTimeOfDay(dueTime);
         } catch {
@@ -358,6 +372,30 @@ export function toIntent(raw: unknown): Intent {
         };
       }
       return { kind: "create_task", ...fields, title: need(wire.title, "title") };
+    }
+    case "reschedule_event":
+    case "move_work": {
+      const currentDate = date(wire.event_date, "event_date");
+      const newDate = date(wire.due_date, "due_date");
+      const time = present(wire.due_time);
+      const endTime = present(wire.end_time);
+      if (!newDate && !time && !endTime && !wire.estimated_minutes)
+        throw new IntentError("Provide a new date, time, or duration.");
+      try {
+        if (time) parseTimeOfDay(time);
+        if (endTime) parseTimeOfDay(endTime);
+      } catch {
+        throw new IntentError("Use valid 24-hour times.");
+      }
+      return {
+        kind: wire.kind,
+        reference: present(wire.reference) ?? "",
+        ...(time ? { time } : {}),
+        ...(currentDate ? { date: currentDate } : {}),
+        ...(newDate ? { newDate } : {}),
+        ...(endTime ? { endTime } : {}),
+        ...(wire.estimated_minutes ? { minutes: wire.estimated_minutes } : {}),
+      };
     }
     case "create_event": {
       const eventDate = date(wire.event_date, "event_date");
@@ -466,6 +504,7 @@ export function toIntent(raw: unknown): Intent {
         category: need(wire.category, "category"),
       };
     }
+    case "cancel_task":
     case "complete_task":
     case "reopen_task":
     case "delete_note": {

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DashboardShell, EventRepeatFields, TaskRow } from "./dashboard-shell";
+import { DashboardShell, EventRepeatFields, EventTimeEditor, TaskRow } from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
@@ -10,6 +10,26 @@ vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("./voice-actions", () => ({}));
 
 describe("compact assistant dashboard", () => {
+  it("offers a direct event date/time edit rather than requiring an assistant conversation", () => {
+    const html = renderToStaticMarkup(
+      createElement(EventTimeEditor, {
+        event: {
+          id: "godzilla",
+          version: 2,
+          title: "Watching Godzilla movie",
+          location: null,
+          startsAt: "2026-11-04T19:00:00Z",
+          endsAt: "2026-11-04T21:00:00Z",
+          allDay: false,
+          timezone: "America/Chicago",
+        },
+        pending: false,
+        onSave: () => {},
+      }),
+    );
+    expect(html).toContain("Edit date or time");
+    expect(html).not.toContain("<details");
+  });
   const task: DashboardTask = {
     id: "fixture",
     categoryId: "inbox",
@@ -40,6 +60,7 @@ describe("compact assistant dashboard", () => {
         onSelect: () => {},
         onComplete: () => {},
         onReopen: () => {},
+        onCancel: () => {},
         onSave: () => {},
       }),
     );
@@ -64,6 +85,14 @@ describe("compact assistant dashboard", () => {
     expect(html).not.toContain("Needs review");
     expect(html).not.toContain("Mark done");
     expect(html).toContain("Reopen");
+  });
+  it("keeps canceled task history distinct from completion and permits reopening", () => {
+    const active = renderTask(task);
+    expect(active).toContain(">Cancel</button>");
+    const canceled = renderTask({ ...task, status: "canceled" });
+    expect(canceled).toContain("Canceled, not completed");
+    expect(canceled).not.toContain("Mark done");
+    expect(canceled).toContain("Reopen");
   });
   it("keeps todo facts free of task-only deadline and priority fields", () => {
     const html = renderTask({
@@ -152,5 +181,8 @@ describe("compact assistant dashboard", () => {
     expect(html).toContain("Deadline task");
     expect(html).toContain('href="/dashboard/planning"');
     expect(html).toContain('href="/dashboard/calendars"');
+    expect(html).toContain("Personal field station");
+    expect(html).toContain("PERSONAL OPERATIONS / EPIPHANY");
+    expect(html).not.toContain('id="dashboard-categories" hidden=""');
   });
 });

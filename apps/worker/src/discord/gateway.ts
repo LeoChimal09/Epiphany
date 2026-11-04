@@ -41,7 +41,11 @@ import {
   type PendingTranscript,
 } from "./voice-discord";
 import { createReminderRunner } from "./reminders-discord";
-import { reminderIdFromMessage, withDeliveredReminders } from "./reminder-context";
+import {
+  createReplyContexts,
+  reminderIdFromMessage,
+  withDeliveredReminders,
+} from "./reminder-context";
 import {
   fitDiscordMessage,
   channelAnswerNotice,
@@ -130,6 +134,7 @@ export async function startDiscordGateway(
   const database = connectDatabase(options.databaseUrl, 3);
   const clock = options.clock ?? (() => new Date());
   const conversations = new Map<string, ConversationState>();
+  const replyContexts = createReplyContexts(clock);
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -243,6 +248,18 @@ export async function startDiscordGateway(
     ownerUserId,
     timezone: options.timezone,
     clock,
+    learningCheckIns: !!(aiConfig?.enabled && aiConfig.apiKey),
+    canAskLearning: () =>
+      ![...conversations.values()].some(
+        (state) =>
+          state.pending ||
+          state.pendingMemory ||
+          state.pendingSetting ||
+          state.pendingPlan ||
+          state.pendingCapture ||
+          (state.learningQuestion &&
+            Date.parse(state.learningQuestion.expiresAt) > clock().getTime()),
+      ),
     // Replies to a reminder ("done", "snooze", "not going") are understood in its context: the
     // The private-channel conversation remembers which reminder and which task or event it was about.
     onDelivered: (delivered, { channelId }) => {
@@ -307,6 +324,7 @@ export async function startDiscordGateway(
       reminderRunner.stop();
       client.destroy();
       conversations.clear();
+      replyContexts.clear();
       await database.close();
     },
   };
@@ -407,8 +425,14 @@ export async function startDiscordGateway(
             .filter((item) => item.author.id === epiUserId && reminderIdFromMessage(item.content))
             .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
             .first() ?? null);
-      if (message.reference) state = { ...state, lastReminder: null, listed: [] };
+      if (message.reference) state = emptyConversation();
       if (referenced?.author.id === epiUserId && referenced.channelId === message.channelId) {
+        if (message.reference) {
+          state = replyContexts.get(referenced.id, message.channelId) ?? {
+            ...emptyConversation(),
+            turns: [{ role: "assistant", text: referenced.content.slice(0, 1000) }],
+          };
+        }
         const id = reminderIdFromMessage(referenced.content);
         const reminder = id
           ? await createServices(database.db, { clock }).reminders.get(principal, id)
@@ -416,9 +440,13 @@ export async function startDiscordGateway(
         if (
           reminder?.status === "sent" &&
           reminder.sentAt &&
-          clock().getTime() - reminder.sentAt.getTime() <= 60 * 60_000
+          (message.reference || clock().getTime() - reminder.sentAt.getTime() <= 60 * 60_000)
         ) {
-          state = withDeliveredReminders(state, [reminder], reminder.sentAt);
+          state = withDeliveredReminders(
+            state,
+            [reminder],
+            message.reference ? clock() : reminder.sentAt,
+          );
         }
       }
     }
@@ -482,7 +510,11 @@ export async function startDiscordGateway(
         ? splitDiscordMessage(reply)
         : [fitDiscordMessage(reply)];
     for (const content of replies) {
-      await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
+      const sent = await message.reply({
+        content,
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+      replyContexts.remember(sent.id, message.channelId, result.state);
     }
     await speakIfEnabled(message, principal, reply);
     // A change made here shows up in the overview channels straight away.

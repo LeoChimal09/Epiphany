@@ -1,7 +1,7 @@
 # Epi Operating Policies
 
 These are planned behavior and verification requirements, not implemented
-capabilities. They supplement [the product plan](../README.md) and
+capabilities. They supplement [the product plan](product-plan.md) and
 [the build goals](../GOALS.md). Numerical targets remain open until explicitly
 chosen; their absence must not be presented as a configured safeguard. Values
 chosen in Goal 01 are targets, not implemented safeguards.

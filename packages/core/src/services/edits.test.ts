@@ -3,12 +3,21 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectDatabase, type DatabaseHandle } from "../db/client";
-import { createOwner } from "../db/domain";
+import { createOwner, newId } from "../db/domain";
 import { runMigrations } from "../db/migrate";
-import { actionHistory, categories, notes, tasks, workBlocks } from "../db/schema";
+import {
+  actionHistory,
+  categories,
+  events,
+  notes,
+  reminders,
+  tasks,
+  workBlocks,
+} from "../db/schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "../db/test-support";
 import {
   AccessDeniedError,
+  ConfirmationError,
   createServices,
   issueOwnerPrincipal,
   ValidationError,
@@ -63,6 +72,159 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
     (await handle.db.select().from(tasks).where(eq(tasks.id, id)))[0]!;
   const noteRow = async (id: string) =>
     (await handle.db.select().from(notes).where(eq(notes.id, id)))[0]!;
+
+  it.each(["task", "todo"] as const)(
+    "cancels a %s without claiming it was completed and allows deliberate reopening",
+    async (taskType) => {
+      const task = await services.tasks.create(owner, {
+        title: "Abandoned item",
+        taskType,
+        ...(taskType === "task" ? { estimatedMinutes: 45 } : {}),
+      });
+      const block = await services.workBlocks.create(owner, {
+        taskId: task.id,
+        startsAt: "2026-10-14T20:00:00Z",
+        endsAt: "2026-10-14T21:00:00Z",
+      });
+      await expect(services.tasks.cancel(stranger, task.id)).rejects.toThrow(NOT_FOUND);
+      await services.tasks.cancel(owner, task.id);
+      expect(await taskRow(task.id)).toMatchObject({
+        status: "canceled",
+        completedAt: null,
+        archivedAt: null,
+      });
+      expect((await services.tasks.list(owner)).some((row) => row.id === task.id)).toBe(false);
+      expect((await services.workBlocks.get(owner, block.id)).status).toBe("removed");
+      expect((await history(task.id)).some((action) => action.action === "task.cancel")).toBe(true);
+      await expect(services.tasks.complete(owner, task.id)).rejects.toBeInstanceOf(ValidationError);
+      expect((await services.tasks.reopen(owner, task.id)).task.status).toBe("open");
+      expect((await services.workBlocks.get(owner, block.id)).status).toBe("removed");
+    },
+  );
+
+  it("returns an event's persisted done marker while preserving its historical appointment", async () => {
+    const event = await services.events.create(owner, {
+      title: "Yesterday's meeting",
+      timezone: "America/Chicago",
+      startsAt: "2026-10-12T20:00:00Z",
+      endsAt: "2026-10-12T21:00:00Z",
+    });
+    await services.events.acknowledge(owner, event.id);
+    expect(
+      (await history(event.id)).find((entry) => entry.action === "event.acknowledge")?.after,
+    ).toEqual({ version: event.version });
+    const listed = await services.events.list(owner, {
+      from: "2026-10-12T00:00:00Z",
+      to: "2026-10-14T00:00:00Z",
+    });
+    expect(listed).toEqual([
+      expect.objectContaining({ id: event.id, status: "scheduled", acknowledged: true }),
+    ]);
+    expect((await services.events.acknowledge(owner, event.id)).changed).toBe(false);
+  });
+
+  it("completes through the shared service, clearing every planned split block and only this task's unsent reminders", async () => {
+    const task = await services.tasks.create(owner, {
+      title: "Essay",
+      dueAt: "2027-02-01T22:00:00Z",
+    });
+    const other = await services.tasks.create(owner, { title: "Other", estimatedMinutes: 30 });
+    const blocks = await Promise.all(
+      ["2026-10-12", "2027-01-21"].map((date, index) =>
+        services.workBlocks.create(owner, {
+          taskId: task.id,
+          title: `Essay day ${index + 1}/2`,
+          startsAt: `${date}T20:00:00Z`,
+          endsAt: `${date}T21:00:00Z`,
+        }),
+      ),
+    );
+    for (const [subjectId, status] of [
+      [task.id, "scheduled"],
+      [task.id, "sent"],
+      [other.id, "scheduled"],
+    ] as const) {
+      await handle.db.insert(reminders).values({
+        id: newId(),
+        ownerId,
+        kind: "task_deadline",
+        subjectType: "task",
+        subjectId,
+        dedupeKey: newId(),
+        message: "Synthetic check-in",
+        dueAt: new Date("2026-10-15T20:00:00Z"),
+        status,
+      });
+    }
+    await expect(services.tasks.complete(stranger, task.id)).rejects.toThrow(NOT_FOUND);
+    await services.tasks.complete(owner, task.id);
+    for (const block of blocks)
+      expect(await services.workBlocks.get(owner, block.id)).toMatchObject({
+        status: "removed",
+        removedReason: "task_completed",
+        version: 2,
+      });
+    const jobs = await handle.db.select().from(reminders);
+    expect(
+      jobs
+        .filter((job) => job.subjectId === task.id)
+        .map((job) => job.status)
+        .sort(),
+    ).toEqual(["canceled", "sent"]);
+    expect(jobs.find((job) => job.subjectId === other.id)?.status).toBe("scheduled");
+    const actions = (await handle.db.select().from(actionHistory)).length;
+    await services.tasks.complete(owner, task.id);
+    expect(await handle.db.select().from(actionHistory)).toHaveLength(actions);
+    expect(await taskRow(task.id)).toMatchObject({
+      status: "completed",
+      dueAt: new Date("2027-02-01T22:00:00Z"),
+    });
+  });
+
+  it("requires a fresh owner-bound confirmation for event time edits and cancels obsolete reminders", async () => {
+    const event = await services.events.create(owner, {
+      title: "Appointment",
+      timezone: "America/Chicago",
+      startsAt: "2026-10-14T20:00:00Z",
+      endsAt: "2026-10-14T21:00:00Z",
+    });
+    const input = {
+      action: "event.reschedule" as const,
+      payload: {
+        eventId: event.id,
+        startsAt: "2026-10-15T20:00:00Z",
+        endsAt: "2026-10-15T21:00:00Z",
+      },
+    };
+    await expect(services.confirmations.propose(stranger, input)).rejects.toThrow(NOT_FOUND);
+    const stale = await services.confirmations.propose(owner, input);
+    await handle.db.update(events).set({ version: 2 }).where(eq(events.id, event.id));
+    await expect(services.confirmations.confirm(owner, stale)).rejects.toBeInstanceOf(
+      ConfirmationError,
+    );
+    expect((await services.events.get(owner, event.id)).startsAt).toEqual(event.startsAt);
+    await handle.db.insert(reminders).values({
+      id: newId(),
+      ownerId,
+      kind: "event",
+      subjectType: "event",
+      subjectId: event.id,
+      dedupeKey: newId(),
+      message: "Synthetic event reminder",
+      dueAt: event.startsAt,
+    });
+    const proposal = await services.confirmations.propose(owner, input);
+    await services.confirmations.confirm(owner, proposal);
+    expect(await services.events.get(owner, event.id)).toMatchObject({
+      startsAt: new Date(input.payload.startsAt),
+      endsAt: new Date(input.payload.endsAt),
+      version: 3,
+    });
+    expect((await handle.db.select().from(reminders))[0]?.status).toBe("canceled");
+    await expect(services.confirmations.confirm(owner, proposal)).rejects.toBeInstanceOf(
+      ConfirmationError,
+    );
+  });
 
   describe("tasks.update", () => {
     it("persists per-item split counts atomically, enforces ownership/version and logs edits", async () => {
@@ -433,7 +595,7 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
       expect(again.task.version).toBe(3);
     });
 
-    it("can be completed again afterwards, and leaves work blocks alone", async () => {
+    it("can be completed again afterwards without restoring retired work blocks", async () => {
       const task = await services.tasks.create(owner, { title: "Cycle" });
       const block = await services.workBlocks.create(owner, {
         taskId: task.id,
@@ -445,7 +607,7 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
       expect((await services.tasks.complete(owner, task.id)).task.status).toBe("completed");
       expect(
         (await handle.db.select().from(workBlocks).where(eq(workBlocks.id, block.id)))[0]!.status,
-      ).toBe("planned");
+      ).toBe("removed");
     });
 
     it("is owner-scoped and denied in shared channels", async () => {

@@ -148,6 +148,18 @@ describe("quiet hours", () => {
 });
 
 describe("deciding whether to send", () => {
+  it("delivers the explicitly chosen briefing time even during quiet hours without labeling it late", () => {
+    const now = at("2026-10-15T11:00:00Z");
+    expect(
+      decideDelivery(
+        base({
+          now,
+          reminder: { kind: "briefing", urgency: "normal", dueAt: now, hasSubject: false },
+        }),
+      ),
+    ).toEqual({ action: "send", late: false });
+  });
+
   it("sends a due reminder, and marks one that is a little late", () => {
     expect(decideDelivery(base())).toEqual({ action: "send", late: false });
     expect(decideDelivery(base({ now: at("2026-10-14T15:20:00.000Z") }))).toEqual({

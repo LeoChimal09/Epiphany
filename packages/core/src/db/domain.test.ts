@@ -134,7 +134,7 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
     ).toBe(school.id);
   });
 
-  it("completes a task without touching its work blocks, deadline, or events", async () => {
+  it("completes a task and retires its work blocks without changing its deadline or unrelated events", async () => {
     const due = at("2026-10-20T05:00:00.000Z");
     const task = await createTask(handle.db, actor, {
       title: "Worksheet",
@@ -160,7 +160,7 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
     expect(done.dueAt?.toISOString()).toBe(due.toISOString());
     expect(done.version).toBe(task.version + 1);
 
-    expect((await getWorkBlock(handle.db, actor.ownerId, block.id)).status).toBe("planned");
+    expect((await getWorkBlock(handle.db, actor.ownerId, block.id)).status).toBe("removed");
     expect((await getEvent(handle.db, actor.ownerId, event.id)).status).toBe("scheduled");
     expect((await history(task.id)).map((row) => row.action).sort()).toEqual([
       "task.complete",

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { newId, recordAction, type Actor } from "../db/domain";
 import {
@@ -1001,6 +1001,7 @@ async function pushWorkBlocks(ctx: Ctx): Promise<void> {
       and(
         eq(workBlocks.ownerId, account.ownerId),
         eq(workBlocks.status, "planned"),
+        or(isNull(tasks.id), eq(tasks.status, "open")),
         gt(workBlocks.endsAt, new Date(now.getTime() - PUSH_WINDOW_BACK_MS)),
       ),
     )
@@ -1019,7 +1020,10 @@ async function pushWorkBlocks(ctx: Ctx): Promise<void> {
           .where(
             and(
               eq(workBlocks.ownerId, account.ownerId),
-              eq(workBlocks.status, "removed"),
+              or(
+                eq(workBlocks.status, "removed"),
+                inArray(tasks.status, ["completed", "canceled"]),
+              ),
               inArray(workBlocks.id, removedIds),
             ),
           );

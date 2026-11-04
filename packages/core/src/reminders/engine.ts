@@ -97,6 +97,8 @@ export async function runReminderCycle(options: {
   // Builds the text at send time (the morning briefing reads today's records then, not when it
   // was scheduled). Returning null keeps the stored message.
   compose?: (reminder: Reminder) => Promise<string | null>;
+  // Optional live eligibility check; fail closed before delivery or catch-up grouping.
+  eligible?: (reminder: Reminder) => Promise<boolean>;
   // Called after a reminder was delivered, so a reply can be understood in its context.
   onDelivered?: (reminders: Reminder[], result: { channelId?: string }) => Promise<void> | void;
 }): Promise<CycleReport> {
@@ -149,6 +151,19 @@ export async function runReminderCycle(options: {
   const toSend: { reminder: Reminder; late: boolean }[] = [];
   for (const reminder of claimed) {
     if (superseded.has(reminder.id)) continue;
+    if (options.eligible) {
+      let eligible = false;
+      try {
+        eligible = await options.eligible(reminder);
+      } catch {
+        /* Fail closed. */
+      }
+      if (!eligible) {
+        await markSkipped(db, reminder.id, "no longer eligible for delivery");
+        report.skipped++;
+        continue;
+      }
+    }
     const split = reminder.dedupeKey.includes(":split:");
     if (split) {
       // The persisted awake cutoff keeps retries from rolling into the next morning.

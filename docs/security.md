@@ -29,7 +29,7 @@ From [the operating policies](operating-policies.md); enforced by `decide`/`auth
 | Class                          | Examples                                                    | Outcome                                                                  |
 | ------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
 | read                           | view tasks, events, history                                 | Allowed; never changes anything.                                         |
-| apply                          | create/complete a task, add a note, cancel a local event    | Allowed and undoable.                                                    |
+| apply                          | create/complete/cancel a task, add a note, acknowledge an event, cancel a local event | Allowed and undoable.                                      |
 | schedule                       | create/remove Epiphany work blocks                          | Owner controls: allowed. Assistant: only with explicit scheduling intent. |
 | external                       | change an external appointment or recurring series         | Needs confirmation.                                                      |
 | destructive                    | delete records, bulk edit, clear memory, change protected time | Needs confirmation.                                                   |
@@ -52,12 +52,18 @@ only when **confirmed** with that ID and hash, and only if all of these hold:
 
 A newer proposal for the same payload supersedes the older one, so a stale "yes" cannot approve
 it. Confirmable handlers include `note.delete`, `preference.delete`, `memory.clear`,
-and `event.cancel_series` (one local occurrence or all scheduled occurrences).
+`event.reschedule` (one local timed occurrence), and `event.cancel_series`
+(one local occurrence or all scheduled occurrences).
 Recurring cancellation binds every affected event's ID/version and owner, retains
 history, and cancels its scheduled reminders atomically. Direct `events.cancel`
 cannot bypass confirmation for an occurrence with a local series ID. Imported
 external events remain read-only through this flow. Other unimplemented handlers
 are refused with a clear message.
+
+Rescheduling binds the old occurrence's version and exact new start/end to the preview.
+It preserves identity and history, replaces unsent alerts, and invalidates a prior
+done acknowledgement. Imported external appointments cannot be edited this way.
+Moving an Epiphany work block also checks its expected version before writing.
 
 ## Shared channels
 

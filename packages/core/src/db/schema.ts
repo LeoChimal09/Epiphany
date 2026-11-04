@@ -75,8 +75,7 @@ export const categories = mysqlTable(
   ],
 );
 
-// status tracks completion only. archived_at is a separate visibility flag, so age or
-// archiving never changes whether work is complete.
+// Cancellation and completion are distinct. Archiving only changes visibility.
 export const tasks = mysqlTable(
   "tasks",
   {
@@ -99,7 +98,7 @@ export const tasks = mysqlTable(
     splitReminderCount: int("split_reminder_count", { unsigned: true }),
     estimatedMinutes: int("estimated_minutes", { unsigned: true }),
     remainingMinutes: int("remaining_minutes", { unsigned: true }),
-    status: mysqlEnum("status", ["open", "completed"]).notNull().default("open"),
+    status: mysqlEnum("status", ["open", "completed", "canceled"]).notNull().default("open"),
     completedAt: utc("completed_at"),
     archivedAt: utc("archived_at"),
     version: version(),

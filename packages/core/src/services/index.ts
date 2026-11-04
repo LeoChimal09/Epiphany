@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
   cancelEvent,
+  cancelTask,
   completeTask,
   createCategory,
   createEvent,
@@ -52,6 +53,7 @@ import {
   reasonInput,
   updateNoteInput,
   updateTaskInput,
+  updateWorkBlockInput,
 } from "./schemas";
 import { authorize, type ActionName, type DecisionContext } from "./permissions";
 import { AccessDeniedError, ValidationError } from "./errors";
@@ -283,7 +285,11 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
       },
       async complete(principal: unknown, taskId: unknown) {
         const { actor } = gate(principal, "task.complete");
-        return completeTask(db, actor, parseInput(idInput, taskId));
+        return asInput(() => completeTask(db, actor, parseInput(idInput, taskId)));
+      },
+      async cancel(principal: unknown, taskId: unknown) {
+        const { actor } = gate(principal, "task.cancel");
+        return asInput(() => cancelTask(db, actor, parseInput(idInput, taskId)));
       },
       // Edits title, details, deadline, estimate, or category. Pass expectedVersion (the task's
       // `version` when it was loaded) to refuse a stale edit with VersionConflictError.
@@ -423,7 +429,10 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         return { event: await getEvent(db, p.ownerId, id), changed };
       },
       // Events overlapping [from, to), earliest first. Canceled events only with includeInactive.
-      async list(principal: unknown, input: unknown): Promise<CalendarEvent[]> {
+      async list(
+        principal: unknown,
+        input: unknown,
+      ): Promise<Array<CalendarEvent & { acknowledged: boolean }>> {
         const { principal: p } = gate(principal, "event.read");
         const query = parseInput(listRangeInput, input);
         const filters = [
@@ -432,12 +441,35 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           gt(events.endsAt, query.from),
         ];
         if (!query.includeInactive) filters.push(eq(events.status, "scheduled"));
-        return db
+        const rows = await db
           .select()
           .from(events)
           .where(and(...filters))
           .orderBy(asc(events.startsAt), asc(events.id))
           .limit(query.limit);
+        const acknowledgements = rows.length
+          ? await db
+              .select({ id: actionHistory.entityId, after: actionHistory.after })
+              .from(actionHistory)
+              .where(
+                and(
+                  eq(actionHistory.ownerId, p.ownerId),
+                  eq(actionHistory.action, "event.acknowledge"),
+                  inArray(
+                    actionHistory.entityId,
+                    rows.map((row) => row.id),
+                  ),
+                ),
+              )
+          : [];
+        return rows.map((event) => ({
+          ...event,
+          acknowledged: acknowledgements.some(
+            (entry) =>
+              entry.id === event.id &&
+              (entry.after as { version?: unknown } | null)?.version === event.version,
+          ),
+        }));
       },
       async get(principal: unknown, eventId: unknown): Promise<CalendarEvent> {
         const { principal: p } = gate(principal, "event.read");
@@ -465,6 +497,59 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     },
 
     workBlocks: {
+      async update(
+        principal: unknown,
+        blockId: unknown,
+        input: unknown,
+        context: DecisionContext = {},
+      ) {
+        const { actor } = gate(principal, "work_block.update", context);
+        const id = parseInput(idInput, blockId);
+        const patch = parseInput(updateWorkBlockInput, input);
+        const changed = await db.transaction(async (tx) => {
+          const [block] = await tx
+            .select()
+            .from(workBlocks)
+            .where(and(eq(workBlocks.ownerId, actor.ownerId), eq(workBlocks.id, id)))
+            .for("update");
+          if (!block) throw new NotFoundError("Work block");
+          if (block.version !== patch.expectedVersion)
+            throw new VersionConflictError("Work block", block.version);
+          if (block.status !== "planned")
+            throw new ValidationError(["Only planned work blocks can be moved."]);
+          if (block.taskId) {
+            const task = await getTask(tx, actor.ownerId, block.taskId);
+            if (task.status !== "open")
+              throw new ValidationError(["This task is already completed."]);
+          }
+          if (
+            block.startsAt.getTime() === patch.startsAt.getTime() &&
+            block.endsAt.getTime() === patch.endsAt.getTime()
+          )
+            return false;
+          await tx
+            .update(workBlocks)
+            .set({
+              startsAt: patch.startsAt,
+              endsAt: patch.endsAt,
+              version: block.version + 1,
+            })
+            .where(eq(workBlocks.id, id));
+          await tx.insert(actionHistory).values({
+            id: newId(),
+            ownerId: actor.ownerId,
+            source: actor.source,
+            action: "work_block.update",
+            entityType: "work_block",
+            entityId: id,
+            createdAt: actor.now,
+            before: { startsAt: block.startsAt.toISOString(), endsAt: block.endsAt.toISOString() },
+            after: { startsAt: patch.startsAt.toISOString(), endsAt: patch.endsAt.toISOString() },
+          });
+          return true;
+        });
+        return { workBlock: await getWorkBlock(db, actor.ownerId, id), changed };
+      },
       // Blocks overlapping [from, to), earliest first. Completed and removed blocks only with
       // includeInactive.
       async list(principal: unknown, input: unknown): Promise<WorkBlock[]> {
@@ -475,7 +560,25 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           lt(workBlocks.startsAt, query.to),
           gt(workBlocks.endsAt, query.from),
         ];
-        if (!query.includeInactive) filters.push(eq(workBlocks.status, "planned"));
+        if (!query.includeInactive)
+          filters.push(
+            eq(workBlocks.status, "planned"),
+            or(
+              isNull(workBlocks.taskId),
+              notInArray(
+                workBlocks.taskId,
+                db
+                  .select({ id: tasks.id })
+                  .from(tasks)
+                  .where(
+                    and(
+                      eq(tasks.ownerId, p.ownerId),
+                      inArray(tasks.status, ["completed", "canceled"]),
+                    ),
+                  ),
+              ),
+            )!,
+          );
         return db
           .select()
           .from(workBlocks)

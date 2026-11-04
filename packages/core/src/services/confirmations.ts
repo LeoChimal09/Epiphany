@@ -17,6 +17,7 @@ import { AccessDeniedError, ConfirmationError, ValidationError } from "./errors"
 import { decide, type ActionName } from "./permissions";
 import { assertPrincipal, type Principal } from "./principal";
 import type { Tx } from "./types";
+import { rescheduleEventInput } from "./schemas";
 
 export const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 
@@ -294,7 +295,97 @@ const eventCancellation: Executor<EventCancellation> = {
   scrub: (preview) => preview,
 };
 
+type EventReschedule = z.infer<typeof rescheduleEventInput>;
+
+async function reschedulingEvent(tx: Tx, ownerId: string, eventId: string) {
+  const [event] = await tx
+    .select()
+    .from(events)
+    .where(and(eq(events.ownerId, ownerId), eq(events.id, eventId)))
+    .for("update");
+  if (!event) throw new NotFoundError("Event");
+  const [external] = await tx
+    .select({ id: calendarEventRefs.id })
+    .from(calendarEventRefs)
+    .where(
+      and(
+        eq(calendarEventRefs.ownerId, ownerId),
+        eq(calendarEventRefs.eventId, eventId),
+        eq(calendarEventRefs.ownership, "external"),
+      ),
+    )
+    .limit(1);
+  if (external)
+    throw new ValidationError(["Edit externally managed events in their source calendar."]);
+  return event;
+}
+
+const eventReschedule: Executor<EventReschedule> = {
+  schema: rescheduleEventInput,
+  async targets(tx, ownerId, payload) {
+    const event = await reschedulingEvent(tx, ownerId, payload.eventId);
+    return [{ entityType: "event", entityId: event.id, version: event.version }];
+  },
+  async preview(tx, ownerId, payload) {
+    const event = await reschedulingEvent(tx, ownerId, payload.eventId);
+    if (event.status !== "scheduled" || event.allDay)
+      throw new ValidationError(["Only scheduled, timed events can be moved here."]);
+    const label = (value: Date) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: event.timezone,
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(value);
+    return {
+      summary: `Move only "${event.title}" from ${label(event.startsAt)} - ${label(event.endsAt)} to ${label(new Date(payload.startsAt))} - ${label(new Date(payload.endsAt))} (${event.timezone}). Other occurrences stay unchanged.`,
+      consequences: [
+        "Old unsent reminders are canceled. Connected-calendar changes wait for successful sync.",
+      ],
+    };
+  },
+  async execute(tx, principal, payload, confirmationId, now) {
+    const event = await reschedulingEvent(tx, principal.ownerId, payload.eventId);
+    await tx
+      .update(events)
+      .set({
+        startsAt: new Date(payload.startsAt),
+        endsAt: new Date(payload.endsAt),
+        version: event.version + 1,
+      })
+      .where(eq(events.id, event.id));
+    await tx
+      .update(reminders)
+      .set({
+        status: "canceled",
+        detail: "event rescheduled",
+        version: sql`${reminders.version} + 1`,
+      })
+      .where(
+        and(
+          eq(reminders.ownerId, principal.ownerId),
+          eq(reminders.subjectType, "event"),
+          eq(reminders.subjectId, event.id),
+          eq(reminders.status, "scheduled"),
+        ),
+      );
+    await recordAction(
+      tx,
+      { ...principal, now },
+      {
+        action: "event.reschedule",
+        entityType: "event",
+        entityId: event.id,
+        before: { startsAt: event.startsAt.toISOString(), endsAt: event.endsAt.toISOString() },
+        after: { startsAt: payload.startsAt, endsAt: payload.endsAt, confirmationId },
+      },
+    );
+    return { rescheduled: "event", id: event.id };
+  },
+  scrub: (preview) => preview,
+};
+
 const EXECUTORS: Partial<Record<ActionName, Executor<never>>> = {
+  "event.reschedule": eventReschedule as unknown as Executor<never>,
   "event.cancel_series": eventCancellation as unknown as Executor<never>,
   "memory.clear": memoryClear as unknown as Executor<never>,
   "note.delete": noteDelete as unknown as Executor<never>,

@@ -94,6 +94,28 @@ export const createWorkBlockInput = z
 
 const version = z.number().int().min(1);
 
+export const rescheduleEventInput = z
+  .object({
+    eventId: id,
+    startsAt: z.iso.datetime({ offset: true }),
+    endsAt: z.iso.datetime({ offset: true }),
+  })
+  .strict()
+  .refine((value) => Date.parse(value.endsAt) > Date.parse(value.startsAt), {
+    message: "Event end must be after its start.",
+  });
+
+export const updateWorkBlockInput = z
+  .object({
+    startsAt: instant,
+    endsAt: instant,
+    expectedVersion: version,
+  })
+  .strict()
+  .refine((value) => value.endsAt > value.startsAt, {
+    message: "Block end must be after its start.",
+  });
+
 // Fields may be omitted (unchanged). null clears a nullable field; "" clears text fields.
 const clearableText = (max: number) =>
   z

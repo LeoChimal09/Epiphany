@@ -3,6 +3,7 @@ import type { Database, Reminder } from "@epiphany/core/db";
 import { runReminderCycle, syncReminders } from "@epiphany/core/reminders";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReminderRunner, serverChannelDelivery } from "./reminders-discord";
+import { availableForLearningCheckIn, scheduleLearningCheckIn } from "./learning-check-ins";
 
 const mocks = vi.hoisted(() => ({
   principal: vi.fn(),
@@ -16,6 +17,10 @@ vi.mock("@epiphany/core/reminders", async (original) => ({
   ...(await original<typeof import("@epiphany/core/reminders")>()),
   syncReminders: vi.fn(),
   runReminderCycle: vi.fn(),
+}));
+vi.mock("./learning-check-ins", () => ({
+  availableForLearningCheckIn: vi.fn(),
+  scheduleLearningCheckIn: vi.fn(),
 }));
 
 describe("Discord reminder worker wiring (offline)", () => {
@@ -97,12 +102,69 @@ describe("Discord reminder worker wiring (offline)", () => {
       timezone: "America/Chicago",
       clock: () => now,
     });
+
     await runner.run();
     expect(vi.mocked(runReminderCycle).mock.calls[0]![0].settings.paused).toBe(true);
     expect(globalThis.fetch).not.toHaveBeenCalled();
     runner.stop();
   });
 
+  it("rechecks proactive eligibility at delivery without restricting ordinary reminders", async () => {
+    vi.mocked(availableForLearningCheckIn).mockResolvedValue(false);
+    const runner = createReminderRunner({
+      client,
+      db,
+      ownerUserId: "fixture-owner-discord",
+      timezone: "America/Chicago",
+      clock: () => now,
+      learningCheckIns: true,
+    });
+    await runner.run();
+    expect(scheduleLearningCheckIn).toHaveBeenCalledTimes(1);
+    const eligible = vi.mocked(runReminderCycle).mock.calls[0]![0].eligible!;
+    expect(await eligible({ message: "A normal reminder" } as Reminder)).toBe(true);
+    expect(
+      await eligible({ message: "Optional Epi check-in: Question", dueAt: now } as Reminder),
+    ).toBe(false);
+    vi.mocked(availableForLearningCheckIn).mockResolvedValue(true);
+    expect(
+      await eligible({ message: "Optional Epi check-in: Question", dueAt: now } as Reminder),
+    ).toBe(true);
+    expect(
+      await eligible({
+        message: "Optional Epi check-in: Question",
+        dueAt: new Date(now.getTime() - 31 * 60_000),
+      } as Reminder),
+    ).toBe(false);
+    runner.stop();
+  });
+
+  it("does not interrupt a pending conversation and does not let optional question failures block reminders", async () => {
+    const runner = createReminderRunner({
+      client,
+      db,
+      ownerUserId: "fixture-owner-discord",
+      timezone: "America/Chicago",
+      clock: () => now,
+      learningCheckIns: true,
+      canAskLearning: () => false,
+    });
+    await runner.run();
+    expect(scheduleLearningCheckIn).not.toHaveBeenCalled();
+    expect(runReminderCycle).toHaveBeenCalledTimes(1);
+    runner.stop();
+    vi.mocked(scheduleLearningCheckIn).mockRejectedValueOnce(new Error("Unavailable"));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await createReminderRunner({
+      client,
+      db,
+      ownerUserId: "fixture-owner-discord",
+      timezone: "America/Chicago",
+      clock: () => now,
+      learningCheckIns: true,
+    }).run();
+    expect(runReminderCycle).toHaveBeenCalledTimes(2);
+  });
   it("logs safe error details when a reminder cycle fails", async () => {
     mocks.preferences.mockRejectedValue(
       Object.assign(new Error("Database unavailable"), { code: "ECONNREFUSED" }),

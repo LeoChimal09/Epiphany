@@ -10,9 +10,13 @@ import {
   proposeDashboardEventCancellation,
   confirmDashboardEventCancellation,
   cancelDashboardEventCancellation,
+  proposeDashboardEventReschedule,
+  confirmDashboardEventReschedule,
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
+  finishDashboardEvent,
+  cancelDashboardTask,
   finishDashboardTasks,
   proposeDashboardNoteDeletion,
   confirmDashboardNoteDeletion,
@@ -33,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   taskCreate: vi.fn(),
   taskList: vi.fn(),
   taskComplete: vi.fn(),
+  taskCancel: vi.fn(),
   taskUpdate: vi.fn(),
   taskReopen: vi.fn(),
   noteCreate: vi.fn(),
@@ -42,7 +47,9 @@ const mocks = vi.hoisted(() => ({
   eventCreate: vi.fn(),
   eventCreateSeries: vi.fn(),
   eventCancel: vi.fn(),
+  eventAcknowledge: vi.fn(),
   eventList: vi.fn(),
+  eventGet: vi.fn(),
   blockCreate: vi.fn(),
   blockRemove: vi.fn(),
   propose: vi.fn(),
@@ -77,6 +84,7 @@ beforeEach(() => {
         list: mocks.taskList,
         create: mocks.taskCreate,
         complete: mocks.taskComplete,
+        cancel: mocks.taskCancel,
         update: mocks.taskUpdate,
         reopen: mocks.taskReopen,
       },
@@ -86,7 +94,9 @@ beforeEach(() => {
         create: mocks.eventCreate,
         createSeries: mocks.eventCreateSeries,
         cancel: mocks.eventCancel,
+        acknowledge: mocks.eventAcknowledge,
         list: mocks.eventList,
+        get: mocks.eventGet,
       },
       workBlocks: { create: mocks.blockCreate, remove: mocks.blockRemove },
       confirmations: { propose: mocks.propose, confirm: mocks.confirm, cancel: mocks.cancel },
@@ -95,6 +105,72 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it("previews a version-checked event date/time edit in its saved timezone before confirming", async () => {
+    mocks.eventGet.mockResolvedValue({ version: 2, timezone: "America/Chicago" });
+    const proposal = {
+      confirmationId: "preview",
+      payloadHash: "hash",
+      preview: { summary: "Move Godzilla to November 7, 1-3 PM" },
+    };
+    mocks.propose.mockResolvedValue(proposal);
+    const result = await proposeDashboardEventReschedule(
+      "godzilla",
+      form({
+        expectedVersion: "2",
+        date: "2026-11-07",
+        startTime: "13:00",
+        eventTimingMode: "duration",
+        durationMinutes: "120",
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, proposal: { summary: proposal.preview.summary } });
+    expect(mocks.propose).toHaveBeenCalledWith(principal, {
+      action: "event.reschedule",
+      payload: {
+        eventId: "godzilla",
+        startsAt: "2026-11-07T19:00:00.000Z",
+        endsAt: "2026-11-07T21:00:00.000Z",
+      },
+    });
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    mocks.confirm.mockResolvedValue({ result: { rescheduled: "event" } });
+    if (!result.ok) throw new Error("Missing preview");
+    expect(await confirmDashboardEventReschedule(result.proposal)).toMatchObject({ ok: true });
+    expect(mocks.confirm).toHaveBeenCalledWith(principal, {
+      confirmationId: "preview",
+      payloadHash: "hash",
+    });
+  });
+  it("refuses stale event edits and invalid date/time input without proposing a write", async () => {
+    mocks.eventGet.mockResolvedValue({ version: 3, timezone: "America/Chicago" });
+    expect(
+      await proposeDashboardEventReschedule("event", form({ expectedVersion: "2" })),
+    ).toMatchObject({ ok: false });
+    expect(
+      await proposeDashboardEventReschedule(
+        "event",
+        form({ expectedVersion: "3", date: "2026-11-07", startTime: "13:00", endTime: "12:00" }),
+      ),
+    ).toMatchObject({ ok: false });
+    expect(mocks.propose).not.toHaveBeenCalled();
+  });
+  it("marks an event done through acknowledgement without canceling it or completing a task", async () => {
+    mocks.eventAcknowledge.mockResolvedValue({ changed: true });
+    expect(await finishDashboardEvent("event-1")).toMatchObject({
+      ok: true,
+      message: expect.stringContaining("calendar history"),
+    });
+    expect(mocks.eventAcknowledge).toHaveBeenCalledWith(principal, "event-1");
+    expect(mocks.eventCancel).not.toHaveBeenCalled();
+    expect(mocks.taskComplete).not.toHaveBeenCalled();
+  });
+  it("cancels a task without calling completion and reloads persisted dashboard state", async () => {
+    mocks.taskCancel.mockResolvedValue({ changed: true });
+    mocks.load.mockResolvedValue({ tasks: [] });
+    expect(await cancelDashboardTask("task-1")).toMatchObject({ ok: true, data: { tasks: [] } });
+    expect(mocks.taskCancel).toHaveBeenCalledWith(principal, "task-1");
+    expect(mocks.taskComplete).not.toHaveBeenCalled();
+  });
   it.each([undefined, "8"])(
     "saves a one-off event regardless of repeat count (%s)",
     async (repeatCount) => {

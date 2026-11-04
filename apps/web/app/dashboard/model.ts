@@ -9,7 +9,7 @@ export interface DashboardTask {
   sourceText: string | null;
   // What still needs the owner's review (for example a missing due date), or null.
   reviewNote: string | null;
-  status: "open" | "completed";
+  status: "open" | "completed" | "canceled";
   dueAt: string | null;
   dueDateOnly: boolean;
   estimatedMinutes: number | null;
