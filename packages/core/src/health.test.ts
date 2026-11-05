@@ -7,7 +7,7 @@ describe("checkConfigHealth", () => {
   it("reports ok with valid configuration", () => {
     const report = checkConfigHealth(
       "web",
-      { DATABASE_URL: "mysql://epiphany:placeholder-fixture@127.0.0.1:3407/epiphany" },
+      { DATABASE_URL: "file:/tmp/epiphany-config-fixture.sqlite" },
       now,
     );
     expect(report).toEqual({

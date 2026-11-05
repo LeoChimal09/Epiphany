@@ -280,14 +280,14 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
         timezone: "America/Chicago",
         status: "scheduled",
       });
-      expect((byTitle("Chemistry lab")[0]!.starts_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Chemistry lab")[0]!.starts_at as number).toISOString()).toBe(
         "2026-10-21T19:00:00.000Z",
       );
       expect(byTitle("Fall break")[0]).toMatchObject({ all_day: 1, timezone: "America/Chicago" });
-      expect((byTitle("Fall break")[0]!.starts_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Fall break")[0]!.starts_at as number).toISOString()).toBe(
         "2026-10-23T05:00:00.000Z",
       );
-      expect((byTitle("Fall break")[0]!.ends_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Fall break")[0]!.ends_at as number).toISOString()).toBe(
         "2026-10-25T05:00:00.000Z",
       );
       expect(byTitle("Call")[0]).toMatchObject({ timezone: "Europe/Paris" });
@@ -1021,7 +1021,7 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
 
       await h.query(
         "UPDATE tasks SET title = 'Call dentist office', due_at = ?, version = version + 1 WHERE id = ?",
-        ["2026-10-23 22:00:00.000", timedTask.id],
+        [Date.parse("2026-10-23T22:00:00.000Z"), timedTask.id],
       );
       h.clock.current = new Date(T0.getTime() + 12 * 60_000);
       const updated = await h.syncOnce();

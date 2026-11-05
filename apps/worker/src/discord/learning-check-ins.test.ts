@@ -80,7 +80,7 @@ describe("private proactive learning questions", () => {
     expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 
-  describe.skipIf(!dbTestsEnabled)("proactive questions against disposable MySQL", () => {
+  describe.skipIf(!dbTestsEnabled)("proactive questions against disposable SQLite", () => {
     let database: TestDatabase;
     let handle: DatabaseHandle;
     beforeEach(async () => {
@@ -88,7 +88,9 @@ describe("private proactive learning questions", () => {
       handle = connectDatabase(database.url);
       await runMigrations(
         handle.pool,
-        path.resolve(fileURLToPath(new URL("../../../../packages/core/drizzle", import.meta.url))),
+        path.resolve(
+          fileURLToPath(new URL("../../../../packages/core/drizzle-sqlite", import.meta.url)),
+        ),
       );
     });
     afterEach(async () => {

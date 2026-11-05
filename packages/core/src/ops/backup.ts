@@ -1,4 +1,5 @@
-import type { Pool, RowDataPacket } from "mysql2/promise";
+import type { DatabasePool as Pool } from "../db/client";
+type RowDataPacket = Record<string, unknown>;
 
 // Export, restore, and verification of one owner's data. It works from the live schema (every table
 // with an owner_id, plus owners), so a table added by a later migration is included automatically.
@@ -17,8 +18,8 @@ const SECRET_COLUMN = /token|secret|password|ciphertext|encrypted/i;
 
 async function ownedTables(pool: Pool): Promise<{ table: string; key: string }[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT table_name AS t, column_name AS c FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND column_name IN ('owner_id', 'id') ORDER BY table_name`,
+    `SELECT m.name AS t, p.name AS c FROM sqlite_schema m, pragma_table_info(m.name) p
+     WHERE m.type = 'table' AND p.name IN ('owner_id', 'id') ORDER BY m.name`,
   );
   const byTable = new Map<string, Set<string>>();
   for (const row of rows) {
@@ -36,7 +37,7 @@ async function ownedTables(pool: Pool): Promise<{ table: string; key: string }[]
 
 async function tableColumns(pool: Pool, table: string): Promise<string[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position",
+    "SELECT name AS c FROM pragma_table_info(?) ORDER BY cid",
     [table],
   );
   return rows.map((row) => String(row.c));
@@ -51,9 +52,9 @@ function encode(value: unknown): unknown {
 function decode(value: unknown): unknown {
   if (value && typeof value === "object") {
     const tagged = value as { $date?: unknown; $base64?: unknown };
-    if (typeof tagged.$date === "string") return new Date(tagged.$date);
+    if (typeof tagged.$date === "string") return Date.parse(tagged.$date);
     if (typeof tagged.$base64 === "string") return Buffer.from(tagged.$base64, "base64");
-    // A JSON column value (object or array): MySQL expects it as text.
+    // JSON column values are stored as text.
     return JSON.stringify(value);
   }
   return value;
@@ -85,26 +86,33 @@ export async function exportOwnerData(
 // Foreign keys are relaxed only for the load, then the data is verified.
 export async function restoreOwnerData(pool: Pool, data: OwnerExport): Promise<{ rows: number }> {
   if (data.version !== 1) throw new Error("Unsupported export version.");
-  const connection = await pool.getConnection();
+  const connection = await pool.client.transaction("write");
   let rows = 0;
   try {
-    await connection.query("SET FOREIGN_KEY_CHECKS = 0");
+    await connection.execute("PRAGMA defer_foreign_keys = ON");
     for (const [table, records] of Object.entries(data.tables)) {
       if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`Refusing table name ${table}.`);
       for (const record of records) {
         const columns = Object.keys(record);
         if (columns.length === 0) continue;
         const values = columns.map((column) => decode(record[column]));
-        await connection.query(
-          `INSERT INTO \`${table}\` (${columns.map((c) => `\`${c}\``).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-          values,
-        );
+        if (columns.some((column) => !/^[a-z_][a-z0-9_]*$/.test(column)))
+          throw new Error("Invalid column name.");
+        await connection.execute({
+          sql: `INSERT INTO \`${table}\` (${columns.map((c) => `\`${c}\``).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+          args: values as import("@libsql/client").InValue[],
+        });
         rows++;
       }
     }
+    if ((await connection.execute("PRAGMA foreign_key_check")).rows.length)
+      throw new Error("Restored data violates foreign keys.");
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
   } finally {
-    await connection.query("SET FOREIGN_KEY_CHECKS = 1").catch(() => undefined);
-    connection.release();
+    connection.close();
   }
   return { rows };
 }
@@ -172,11 +180,13 @@ export async function applyDeletionLedger(
 ): Promise<number> {
   let removed = 0;
   for (const entry of ledger.entries) {
-    const [result] = await pool.query(
-      `DELETE FROM \`${entry.table}\` WHERE id = ? AND owner_id = ?`,
-      [entry.id, ownerId],
-    );
-    removed += (result as { affectedRows: number }).affectedRows;
+    if (!["notes", "preferences", "tasks"].includes(entry.table))
+      throw new Error("Invalid deletion ledger table.");
+    const result = await pool.client.execute({
+      sql: `DELETE FROM \`${entry.table}\` WHERE id = ? AND owner_id = ?`,
+      args: [entry.id, ownerId],
+    });
+    removed += result.rowsAffected;
   }
   return removed;
 }

@@ -13,13 +13,15 @@ import { DEFAULT_REMINDER_SETTINGS, type ReminderSettings } from "./policy";
 import { syncReminders } from "./schedule";
 import { SENDING_STALE_MS, claimDue, scheduleReminder } from "./store";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const TZ = "America/Chicago";
 const at = (iso: string) => new Date(iso);
 // Due Friday Oct 16 at 5:00 PM Chicago.
 const DUE = "2026-10-16T22:00:00.000Z";
 
-describe.skipIf(!dbTestsEnabled)("reminder service against MySQL", () => {
+describe.skipIf(!dbTestsEnabled)("reminder service against SQLite", () => {
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let ownerId: string;

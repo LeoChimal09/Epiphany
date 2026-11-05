@@ -1182,3 +1182,33 @@ after the current goal's completion criteria pass.
   tests at 375/768/1040/1440px, `bun run check`, production build, and whitespace
   checks passed. Desktop/mobile screenshots inspected. Browser tests used
   synthetic callbacks, not live persisted events; no commit or deployment.
+
+- 2026-11-05, SQLite cost migration (owner-requested; local only):
+  replaced the runtime MySQL driver/schema with async Drizzle/libsql over one
+  durable SQLite file. WAL, foreign keys, private file permissions, serialized
+  write transactions, and bounded nonblocking busy recovery preserve shared
+  service authorization, confirmation/version checks, reminder claims, budget
+  reservations, and calendar lifecycle behavior. Dates use UTC epoch milliseconds;
+  JSON and existing IDs are preserved. Category names use SQLite NOCASE, whose
+  non-ASCII/accent matching differs from MySQL's collation.
+  Added checksum-validated transactional SQLite migrations and an empty-target,
+  read-only consistent-snapshot MySQL importer. Legacy MySQL schema/migrations
+  remain intact for transfer and rollback. Backup/restore, drift tooling, normal
+  database fixtures, CI, and current documentation now use SQLite.
+  Production packaging supervises Node web and Bun worker together in one
+  Railway service/replica sharing `/data`; migrations finish before either child
+  starts, and child failure stops its sibling. Separate isolated services must
+  not use their own copies of the file.
+  Verification: all 84 test files / 1,299 tests passed with no skips, including
+  all-18-table disposable MySQL transfer, encrypted-token/UTC/JSON preservation,
+  unchanged source, nonempty-target refusal, import/restore rollback, concurrent
+  migration runners, and independent Bun-process contention with foreign keys.
+  `bun run check`, `bun run db:check`, whitespace checks, production Next build,
+  and Docker image build passed. A disposable persistent-volume container served
+  both health endpoints and verified authenticated HTTP task creation, exact UTC
+  persistence through Node SQLite, restart durability, and task completion.
+  The real restore-drill CLI also passed against a disposable SQLite source.
+  No production data was copied, no Railway service/billing setting was changed,
+  and no live Discord/model acceptance, commit, push, or deployment was performed.
+  Actual cost savings require the documented backed-up cutover and retiring old
+  database/duplicate services only after verification; keep MySQL until then.

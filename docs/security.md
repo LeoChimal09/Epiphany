@@ -18,7 +18,7 @@ Every read or write of personal records goes through `createServices(db)`. Each 
    before the database is touched).
 4. Runs the domain operation, scoped to the owner, and writes **action history** in the same
    transaction.
-5. Returns the row **re-read from MySQL**, never an optimistic copy.
+5. Returns the row **re-read from SQLite**, never an optimistic copy.
 
 Another owner's record is reported as "not found", never "forbidden", so nothing about it leaks.
 

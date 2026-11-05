@@ -14,7 +14,9 @@ import {
 import { loadOverviewData } from "./load";
 import { renderOverview } from "./render";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const TZ = "America/Chicago";
 const NOW = new Date("2026-10-14T15:00:00.000Z");
 

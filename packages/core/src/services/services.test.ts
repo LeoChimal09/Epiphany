@@ -25,10 +25,12 @@ import {
   type Services,
 } from "./index";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const OWNER_DISCORD = "100000000000000001";
 
-describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
+describe.skipIf(!dbTestsEnabled)("secured services against SQLite", () => {
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let services: Services;
@@ -617,7 +619,7 @@ describe.skipIf(!dbTestsEnabled)("secured services against MySQL", () => {
   });
 
   describe("persisted results, not optimistic success", () => {
-    it("returns what MySQL stored, including database defaults", async () => {
+    it("returns what SQLite stored, including database defaults", async () => {
       const created = await services.tasks.create(owner, { title: "Stored", estimatedMinutes: 30 });
       const [row] = await handle.db.select().from(tasks).where(eq(tasks.id, created.id));
       expect(created).toEqual(row);

@@ -55,8 +55,7 @@ export async function updateTask(
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
       throw new VersionConflictError("Task", current.version);
@@ -217,8 +216,7 @@ export async function reopenTask(
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
     if (current.status === "open") return false;
 
@@ -254,8 +252,7 @@ export async function updateNote(
     const [current] = await tx
       .select()
       .from(notes)
-      .where(and(eq(notes.id, noteId), eq(notes.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(notes.id, noteId), eq(notes.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Note");
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
       throw new VersionConflictError("Note", current.version);

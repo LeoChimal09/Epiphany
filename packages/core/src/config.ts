@@ -43,14 +43,16 @@ function isValidTimeZone(value: string): boolean {
   }
 }
 
-function isMysqlUrl(value: string): boolean {
+function isSqliteUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return (
-      url.protocol === "mysql:" &&
-      url.hostname !== "" &&
-      url.username !== "" &&
-      url.pathname.length > 1
+      url.protocol === "file:" &&
+      (!url.hostname || url.hostname === "localhost") &&
+      !url.search &&
+      !url.hash &&
+      url.pathname.length > 1 &&
+      !url.pathname.includes(":memory:")
     );
   } catch {
     return false;
@@ -65,10 +67,10 @@ const required = (hint: string) =>
 
 const sharedSchema = z.object({
   DATABASE_URL: required(
-    "set the dedicated Epiphany MySQL URL, e.g. mysql://user:<password>@host:3306/epiphany",
+    "set the Epiphany SQLite file URL, e.g. file:/data/epiphany.sqlite",
   ).refine(
-    isMysqlUrl,
-    "must be a mysql:// URL with a host, user, and database name (value hidden)",
+    isSqliteUrl,
+    "must be a persistent file: SQLite URL without query parameters (value hidden)",
   ),
   APP_TIMEZONE: z
     .string()

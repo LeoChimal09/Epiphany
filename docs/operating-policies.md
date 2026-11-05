@@ -36,7 +36,7 @@ of command phrases users must memorize.
 
 ## Calendar Ownership And Conflicts
 
-- MySQL owns Epiphany task state, preferences, and intended work blocks. Calendar
+- SQLite owns Epiphany task state, preferences, and intended work blocks. Calendar
   providers own their external event state; distinguish intent from verified sync.
 - Store provider/calendar/event IDs, recurrence references, versions or ETags
   where supported, and last successful synchronization time.
@@ -61,7 +61,7 @@ of command phrases users must memorize.
 | AI provider | Existing persisted reminders and authenticated dashboard controls remain usable if other dependencies are healthy. Explain that natural-language actions are temporarily unavailable; do not pretend to understand them. |
 | Discord | Dashboard remains usable if healthy. Preserve reminder jobs and delivery status; retries honor rate limits and delivery preferences. |
 | Google/Microsoft calendar | Show last-sync status; distinguish saved local changes from pending sync. Do not promise current availability or repeat unverified writes. |
-| MySQL | Fail closed on persistent reads/writes and database-dependent reminders. Do not invent records or claim updates were saved. |
+| SQLite unavailable or locked beyond retry limit | Fail closed on persistent reads/writes and database-dependent reminders. Do not invent records or claim updates were saved. |
 | Speech provider | Return text when possible; do not block core task access on spoken output. |
 
 - Use bounded retries with backoff and respect provider retry instructions.

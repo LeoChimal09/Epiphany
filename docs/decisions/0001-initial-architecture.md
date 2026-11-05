@@ -1,10 +1,43 @@
 # 0001: Initial Architecture
 
-Status: accepted 2026-10-13 (Goal 01). This is a decision record, not an
-implementation: no application, database, or hosted service exists yet. Items
+Status: accepted 2026-10-13 (Goal 01), database/hosting superseded by the owner-approved
+2026-11-05 amendment below. Original decisions are retained as history, not a claim
+that a hosted service has been verified. Items
 marked **Deferred** are intentionally left to the named goal.
 
-## Component Decisions
+## 2026-11-05: SQLite And A Single Railway Service
+
+The owner authorized replacing MySQL to reduce Railway RAM usage. This supersedes
+the original MySQL and three-service decisions below; it does not authorize
+deleting the old database or claim a completed production migration.
+
+- Use local SQLite with WAL, Drizzle's libSQL adapter, and async `@libsql/client`
+  in **both Node and Bun**. Do not use Bun-only synchronous SQLite from Next.
+  Shared service authorization and versioned migrations remain required.
+- Deploy one Railway service/replica with a volume at `/data` and
+  `DATABASE_URL=file:/data/epiphany.sqlite`. Web and worker open the same local
+  database. WAL is same-machine only: no network file mount, separate writer
+  services, replica scaling, or serverless sleeping while the bot runs.
+- Next.js remains on Node 24+; the worker and supervisor use Bun 1.3.14. The
+  Docker image builds without real database/provider secrets. The supervised
+  launcher explicitly completes migrations with the volume mounted before
+  starting either application. A child failure stops its sibling; shutdown is
+  forwarded and bounded. These remain separate processes/domain entrypoints,
+  but now share one deployment/restart lifecycle to share the local file safely.
+- Local development uses an ignored `data/epiphany.sqlite` file, no MySQL
+  server. Independent web/worker development remains supported on the same host.
+- Cutover stops all old writers, backs up and retains MySQL unchanged, imports
+  deliberately, and verifies representative records/restart persistence before
+  retirement. Reverting to the frozen MySQL snapshot cannot preserve later
+  SQLite writes without manual export/reconciliation; there is no dual write
+  or automatic reverse migration.
+- Retain the existing independent encrypted-backup/RPO/RTO goals. A live WAL
+  database needs a consistent SQLite backup or fully stopped writers, not a
+  copy of only the main file. Prior MySQL restore evidence does not establish
+  SQLite restore readiness. See [operations](../operations.md) for deployment,
+  cutover, health limitations, and backup requirements.
+
+## Original Component Decisions (Historical)
 
 | Component | Decision | Local run (from Goal 02) | Deployment |
 | --- | --- | --- | --- |

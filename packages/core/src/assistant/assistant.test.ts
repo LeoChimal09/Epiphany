@@ -36,10 +36,12 @@ import {
   type InterpretRequest,
 } from "./provider";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const TZ = "America/Chicago";
 
-describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
+describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let services: Services;

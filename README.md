@@ -38,7 +38,7 @@ Examples of conversation, not required syntax:
 | Dashboard and server API | Next.js, React, TypeScript |
 | Discord and background jobs | Bun, discord.js |
 | Shared authorization and domain services | `packages/core` |
-| Persistence | MySQL 8.4, Drizzle ORM, versioned migrations |
+| Persistence | Local SQLite (WAL), async `@libsql/client`, Drizzle ORM, versioned migrations |
 | Natural-language interpretation | OpenAI tool calling with server-side validation |
 | Calendar integration | Google Calendar API |
 
@@ -48,19 +48,25 @@ Reminder delivery does not require a new AI call, and spending limits gate optio
 
 ## Run locally
 
-Requires **Bun 1.3.14**, **Node 24+**, and Docker for local MySQL.
+Requires **Bun 1.3.14** and **Node 24+**. No database server is needed.
 
 ```sh
 bun install --frozen-lockfile
 cp .env.example .env
 # Configure DATABASE_URL and owner/sign-in settings; see the setup guides below.
-bun run db:up
+mkdir -p data
+# DATABASE_URL=file:./data/epiphany.sqlite (the example's local default)
 bun run db:migrate
 bun run dev
 ```
 
 In another terminal, run `bun run bot:dev` for Discord and background jobs.
 Configure integrations only when using them; never commit `.env` or provider credentials.
+
+For production, `bun run start` explicitly migrates and supervises the Node web server
+and Bun worker together. Railway uses one always-on replica with a persistent volume at
+`/data` and `DATABASE_URL=file:/data/epiphany.sqlite`; SQLite WAL is same-machine only.
+See the operations guide before cutting over existing MySQL data.
 
 - [Local development and checks](docs/local-development.md)
 - [Discord setup](docs/discord.md)
@@ -81,8 +87,8 @@ bun run test:run
 bun run build
 ```
 
-Database-backed tests require the disposable MySQL test server and `TEST_MYSQL_ADMIN_URL`;
-without it those tests are skipped. See [local development](docs/local-development.md).
+Database-backed tests must use isolated SQLite fixtures, never the application file.
+See [local development](docs/local-development.md) for checks and limitations.
 The [build goals](GOALS.md) record actual verification and outstanding gates.
 
 ## Design and roadmap

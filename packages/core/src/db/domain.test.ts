@@ -25,10 +25,12 @@ import { runMigrations } from "./migrate";
 import { actionHistory, categories, notes } from "./schema";
 import { createTestDatabase, dbTestsEnabled, type TestDatabase } from "./test-support";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const at = (iso: string) => new Date(iso);
 
-describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
+describe.skipIf(!dbTestsEnabled)("domain records against SQLite", () => {
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let actor: Actor;
@@ -106,10 +108,10 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
     ]);
 
     const [raw] = await handle.pool.query<RowDataPacket[]>(
-      "SELECT DATE_FORMAT(due_at, '%Y-%m-%d %H:%i:%s.%f') AS due FROM tasks WHERE id = ?",
+      "SELECT due_at AS due FROM tasks WHERE id = ?",
       [task.id],
     );
-    expect(raw[0]?.due).toBe("2026-10-16 04:59:59.123000");
+    expect(raw[0]?.due).toBe(due.getTime());
   });
 
   it("places uncategorized tasks and notes in a single Inbox, even under concurrency", async () => {
@@ -249,7 +251,7 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
     expect((await getTask(handle.db, actor.ownerId, task.id)).status).toBe("open");
   });
 
-  it("lets MySQL itself reject inconsistent states", async () => {
+  it("lets SQLite itself reject inconsistent states", async () => {
     const task = await createTask(handle.db, actor, { title: "Guarded" });
     const event = await createEvent(handle.db, actor, {
       title: "Guarded event",
@@ -265,7 +267,8 @@ describe.skipIf(!dbTestsEnabled)("domain records against MySQL", () => {
       handle.pool.query("UPDATE events SET status = 'canceled' WHERE id = ?", [event.id]),
     ).rejects.toThrow(/events_canceled_at_matches_status/);
     await expect(
-      handle.pool.query("UPDATE events SET ends_at = '2026-10-19 13:00:00' WHERE id = ?", [
+      handle.pool.query("UPDATE events SET ends_at = ? WHERE id = ?", [
+        Date.parse("2026-10-19T13:00:00Z"),
         event.id,
       ]),
     ).rejects.toThrow(/events_ends_not_before_starts/);

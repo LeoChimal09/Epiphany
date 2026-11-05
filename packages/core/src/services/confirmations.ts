@@ -63,8 +63,7 @@ const noteDelete: Executor<{ noteId: string }> = {
     const [row] = await tx
       .select({ id: notes.id, version: notes.version })
       .from(notes)
-      .where(and(eq(notes.id, noteId), eq(notes.ownerId, ownerId)))
-      .for("update");
+      .where(and(eq(notes.id, noteId), eq(notes.ownerId, ownerId)));
     if (!row) throw new NotFoundError("Note");
     return [{ entityType: "note", entityId: row.id, version: row.version }];
   },
@@ -105,8 +104,7 @@ const preferenceDelete: Executor<{ key: string }> = {
     const [row] = await tx
       .select({ id: preferences.id, version: preferences.version })
       .from(preferences)
-      .where(and(eq(preferences.ownerId, ownerId), eq(preferences.key, key)))
-      .for("update");
+      .where(and(eq(preferences.ownerId, ownerId), eq(preferences.key, key)));
     if (!row) throw new NotFoundError("Preference");
     return [{ entityType: "preference", entityId: row.id, version: row.version }];
   },
@@ -186,8 +184,7 @@ async function cancellationEvents(tx: Tx, ownerId: string, payload: EventCancell
   const [event] = await tx
     .select()
     .from(events)
-    .where(and(eq(events.id, payload.eventId), eq(events.ownerId, ownerId)))
-    .for("update");
+    .where(and(eq(events.id, payload.eventId), eq(events.ownerId, ownerId)));
   if (!event) throw new NotFoundError("Event");
   if (payload.scope === "series" && !event.seriesId) {
     throw new ValidationError(["This event is not part of a local recurring series."]);
@@ -202,8 +199,7 @@ async function cancellationEvents(tx: Tx, ownerId: string, payload: EventCancell
         eq(events.status, "scheduled"),
       ),
     )
-    .orderBy(asc(events.id))
-    .for("update");
+    .orderBy(asc(events.id));
   if (!rows.length) throw new ValidationError(["These events are already canceled."]);
   const external = await tx
     .select({ id: calendarEventRefs.id })
@@ -301,8 +297,7 @@ async function reschedulingEvent(tx: Tx, ownerId: string, eventId: string) {
   const [event] = await tx
     .select()
     .from(events)
-    .where(and(eq(events.ownerId, ownerId), eq(events.id, eventId)))
-    .for("update");
+    .where(and(eq(events.ownerId, ownerId), eq(events.id, eventId)));
   if (!event) throw new NotFoundError("Event");
   const [external] = await tx
     .select({ id: calendarEventRefs.id })
@@ -457,8 +452,7 @@ export function createConfirmationService(db: Database, clock: () => Date = () =
               eq(confirmations.action, input.action),
               eq(confirmations.status, "pending"),
             ),
-          )
-          .for("update");
+          );
         for (const old of pending) {
           if (canonicalJson(old.payload) === canonicalJson(payload)) {
             await tx
@@ -513,8 +507,7 @@ export function createConfirmationService(db: Database, clock: () => Date = () =
               eq(confirmations.id, input.confirmationId),
               eq(confirmations.ownerId, principal.ownerId),
             ),
-          )
-          .for("update");
+          );
         if (!row) {
           return {
             ok: false,

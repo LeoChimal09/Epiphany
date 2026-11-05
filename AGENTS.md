@@ -22,8 +22,9 @@ unless explicitly requested; they are references, not shared application state.
 - Access model (principals, permission matrix, confirmations, sign-in): [docs/security.md](docs/security.md).
   Personal data is read and changed only through `createServices`; never query the tables from a route.
 - Use Bun for supported JS/TS dependencies and scripts; keep a single bun.lock.
-- MySQL is the confirmed database choice. Use dedicated Epiphany credentials and
-  versioned migrations; do not substitute SQLite or reuse a neighboring database.
+- SQLite is the owner-approved database choice. Use one durable file shared by web
+  and worker on one host, versioned migrations, and no neighboring databases.
+  Preserve legacy MySQL data until a backed-up, verified cutover is complete.
 - Do not choose a framework, database driver/ORM, or host by copying a reference
   project; record those decisions in Goal 01 first.
 - Share domain services across dashboard, Discord, and voice. Validate AI actions

@@ -121,12 +121,28 @@ describe.skipIf(!dbTestsEnabled)("backup, restore, and deletion-aware recovery",
     expect(check.mismatches.join(" ")).toContain("tasks");
   });
 
+  it("rolls back the entire SQLite restore when a relationship is invalid", async () => {
+    await seed();
+    const exported = await exportOwnerData(src.pool, ownerId);
+    exported.tables.tasks![0]!.category_id = "missing-category";
+    await expect(restoreOwnerData(dst.pool, exported)).rejects.toThrow(/foreign keys/);
+    const [owners] = await dst.pool.query<{ count: number }[]>(
+      "SELECT count(*) AS count FROM owners",
+    );
+    const [tasks] = await dst.pool.query<{ count: number }[]>(
+      "SELECT count(*) AS count FROM tasks",
+    );
+    expect(owners[0]!.count).toBe(0);
+    expect(tasks[0]!.count).toBe(0);
+  });
+
   it("leaves credentials and sessions out of an export", async () => {
     await seed();
-    await src.pool.query(
-      "INSERT INTO sessions (id, owner_id, expires_at) VALUES (REPEAT('a', 64), ?, '2026-12-01 00:00:00.000')",
-      [ownerId],
-    );
+    await src.pool.query("INSERT INTO sessions (id, owner_id, expires_at) VALUES (?, ?, ?)", [
+      "a".repeat(64),
+      ownerId,
+      Date.parse("2026-12-01T00:00:00Z"),
+    ]);
     const exported = await exportOwnerData(src.pool, ownerId);
     expect(exported.tables.sessions).toBeUndefined();
     expect(JSON.stringify(exported)).not.toMatch(/token|secret|ciphertext/i);

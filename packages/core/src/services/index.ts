@@ -103,7 +103,7 @@ export interface ServiceOptions {
 
 // The single path for reading and changing personal records. Every method: verifies the caller
 // is an authenticated owner principal, checks the permission matrix, validates the input, calls
-// the domain operation, and returns the persisted row re-read from MySQL.
+// the domain operation, and returns the persisted row re-read from SQLite.
 export function createServices(db: Database, options: ServiceOptions = {}) {
   const clock = options.clock ?? (() => new Date());
   const confirmations = createConfirmationService(db, clock);
@@ -185,8 +185,7 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           const [current] = await tx
             .select()
             .from(preferences)
-            .where(and(eq(preferences.ownerId, p.ownerId), eq(preferences.key, key)))
-            .for("update");
+            .where(and(eq(preferences.ownerId, p.ownerId), eq(preferences.key, key)));
           if (current && expectedVersion !== undefined && current.version !== expectedVersion) {
             throw new VersionConflictError("Preference", current.version);
           }
@@ -261,7 +260,7 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         if (query.categoryId) filters.push(eq(tasks.categoryId, query.categoryId));
         if (!query.includeArchived) filters.push(isNull(tasks.archivedAt));
         // Completed work: most recently finished first. Otherwise soonest deadline first, with
-        // tasks that have no deadline last (MySQL would sort them first), so a page limit never
+        // tasks that have no deadline last (SQLite would sort them first), so a page limit never
         // hides urgent work behind undated tasks.
         const order =
           query.status === "completed"
@@ -383,8 +382,7 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           const [event] = await tx
             .select()
             .from(events)
-            .where(and(eq(events.id, id), eq(events.ownerId, p.ownerId)))
-            .for("update");
+            .where(and(eq(events.id, id), eq(events.ownerId, p.ownerId)));
           if (!event || event.status !== "scheduled") throw new NotFoundError("Event");
           const [existing] = await tx
             .select()
@@ -510,8 +508,7 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
           const [block] = await tx
             .select()
             .from(workBlocks)
-            .where(and(eq(workBlocks.ownerId, actor.ownerId), eq(workBlocks.id, id)))
-            .for("update");
+            .where(and(eq(workBlocks.ownerId, actor.ownerId), eq(workBlocks.id, id)));
           if (!block) throw new NotFoundError("Work block");
           if (block.version !== patch.expectedVersion)
             throw new VersionConflictError("Work block", block.version);
@@ -729,7 +726,8 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
         await db
           .insert(discordOverviews)
           .values({ ownerId: p.ownerId, ...value })
-          .onDuplicateKeyUpdate({
+          .onConflictDoUpdate({
+            target: [discordOverviews.ownerId, discordOverviews.guildId, discordOverviews.viewKey],
             set: {
               channelId: value.channelId,
               messageId: value.messageId,

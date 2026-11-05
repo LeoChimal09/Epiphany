@@ -9,7 +9,7 @@ import {
   loadWorkerConfig,
 } from "./config";
 
-const databaseUrl = "mysql://epiphany:placeholder-fixture@127.0.0.1:3407/epiphany";
+const databaseUrl = "file:/tmp/epiphany-config-fixture.sqlite";
 
 describe("loadWebConfig", () => {
   it("returns defaults for optional values", () => {
@@ -35,14 +35,14 @@ describe("loadWebConfig", () => {
     expect(() => loadWebConfig({ DATABASE_URL: "" })).toThrow(/DATABASE_URL is required/);
   });
 
-  it("rejects a non-mysql URL without echoing it", () => {
+  it("rejects a non-SQLite URL without echoing it", () => {
     const secret = "synthetic-not-a-real-password";
     expect.assertions(2);
     try {
       loadWebConfig({ DATABASE_URL: `postgres://user:${secret}@host/db` });
     } catch (error) {
       const message = (error as ConfigError).message;
-      expect(message).toContain("DATABASE_URL must be a mysql:// URL");
+      expect(message).toContain("DATABASE_URL must be a persistent file: SQLite URL");
       expect(message).not.toContain(secret);
     }
   });
@@ -51,6 +51,17 @@ describe("loadWebConfig", () => {
     expect(() =>
       loadWebConfig({ DATABASE_URL: databaseUrl, APP_TIMEZONE: "Mars/Olympus" }),
     ).toThrow(/APP_TIMEZONE must be an IANA timezone/);
+  });
+
+  it.each([
+    "file:",
+    "file::memory:",
+    "file:/tmp/db.sqlite?mode=memory",
+    "file:/tmp/db.sqlite#x",
+    "file://remote/db.sqlite",
+    "mysql://example.invalid/db",
+  ])("rejects a nonpersistent or unsupported database URL %s", (url) => {
+    expect(() => loadWebConfig({ DATABASE_URL: url })).toThrow(/persistent file: SQLite URL/);
   });
 });
 

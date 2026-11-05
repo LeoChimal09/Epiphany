@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startCalendarRunner, type CalendarRunner } from "./calendar-runner";
 
-const databaseUrl = "mysql://epiphany:placeholder-fixture@127.0.0.1:3407/epiphany";
+const databaseUrl = "file:/tmp/epiphany-config-fixture.sqlite";
 const key = Buffer.alloc(32, 3).toString("base64");
 
 let runner: CalendarRunner | null = null;

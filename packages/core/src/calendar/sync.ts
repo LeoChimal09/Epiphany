@@ -265,7 +265,6 @@ async function discoverCalendars(ctx: Ctx): Promise<void> {
     if (!row) {
       await rt.db
         .insert(syncedCalendars)
-        .ignore()
         .values({
           id: newId(),
           ownerId: account.ownerId,
@@ -278,7 +277,8 @@ async function discoverCalendars(ctx: Ctx): Promise<void> {
           isPrimary: entry.primary,
           // The primary calendar is read by default the first time; the owner can turn it off.
           selected: firstDiscovery && entry.primary && entry.id !== account.epiphanyCalendarId,
-        });
+        })
+        .onConflictDoNothing();
     } else if (
       row.summary !== entry.summary.slice(0, 300) ||
       row.timeZone !== entry.timeZone ||
@@ -344,7 +344,7 @@ async function ensureEpiphanyCalendar(
         })
       ).id;
     // Compare-and-set so two processes cannot disagree about which calendar is the dedicated one.
-    const [result] = await rt.db
+    const result = await rt.db
       .update(calendarAccounts)
       .set({ epiphanyCalendarId: id })
       .where(
@@ -355,7 +355,7 @@ async function ensureEpiphanyCalendar(
             : sql`${calendarAccounts.epiphanyCalendarId} IS NULL`,
         ),
       );
-    if (result.affectedRows === 0) {
+    if (result.rowsAffected === 0) {
       const [current] = await rt.db
         .select({ id: calendarAccounts.epiphanyCalendarId })
         .from(calendarAccounts)
@@ -391,7 +391,6 @@ async function ensureEpiphanyCalendar(
   if (!target) {
     await rt.db
       .insert(syncedCalendars)
-      .ignore()
       .values({
         id: newId(),
         ownerId: account.ownerId,
@@ -402,7 +401,8 @@ async function ensureEpiphanyCalendar(
         timeZone: entry?.timeZone ?? ctx.ownerTimezone,
         accessRole: entry?.accessRole ?? "owner",
         selected: true,
-      });
+      })
+      .onConflictDoNothing();
   } else if (target.kind !== "epiphany") {
     await rt.db
       .update(syncedCalendars)
@@ -623,8 +623,7 @@ async function importExternal(
       const [current] = await tx
         .select()
         .from(events)
-        .where(and(eq(events.id, eventId), eq(events.ownerId, account.ownerId)))
-        .for("update");
+        .where(and(eq(events.id, eventId), eq(events.ownerId, account.ownerId)));
       if (current && current.status === "scheduled") {
         await tx
           .update(events)
@@ -718,8 +717,7 @@ async function importExternal(
     const [current] = await tx
       .select()
       .from(events)
-      .where(and(eq(events.id, eventId), eq(events.ownerId, account.ownerId)))
-      .for("update");
+      .where(and(eq(events.id, eventId), eq(events.ownerId, account.ownerId)));
     if (current) {
       const changed =
         current.title !== mapped.title ||
@@ -780,7 +778,7 @@ async function cancelMissing(
         eq(calendarEventRefs.syncState, "synced"),
         eq(events.status, "scheduled"),
         gt(events.startsAt, timeMin),
-        sql`${events.startsAt} < ${timeMax}`,
+        sql`${events.startsAt} < ${timeMax.getTime()}`,
       ),
     );
   for (const { ref, event } of rows) {
@@ -1074,7 +1072,6 @@ async function ensureRef(
 ): Promise<CalendarEventRef> {
   await ctx.rt.db
     .insert(calendarEventRefs)
-    .ignore()
     .values({
       id: newId(),
       ownerId: ctx.account.ownerId,
@@ -1085,7 +1082,8 @@ async function ensureRef(
       ...(input.workBlockId ? { workBlockId: input.workBlockId } : {}),
       syncKey: input.syncKey,
       syncState: "pending",
-    });
+    })
+    .onConflictDoNothing();
   const [ref] = await ctx.rt.db
     .select()
     .from(calendarEventRefs)
@@ -1458,7 +1456,7 @@ async function pushTaskDeadlines(ctx: Ctx): Promise<void> {
       continue;
     }
     if (ref?.syncState === "removed") {
-      const [result] = await rt.db
+      const result = await rt.db
         .update(calendarEventRefs)
         .set({
           externalId: deadlineEventIdFor(task.id, task.version),
@@ -1469,7 +1467,7 @@ async function pushTaskDeadlines(ctx: Ctx): Promise<void> {
           lastError: null,
         })
         .where(eq(calendarEventRefs.id, ref.id));
-      if (result.affectedRows === 0) throw new Error("Task deadline reference was not updated.");
+      if (result.rowsAffected === 0) throw new Error("Task deadline reference was not updated.");
       const [reactivated] = await rt.db
         .select()
         .from(calendarEventRefs)

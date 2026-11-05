@@ -123,7 +123,7 @@ export async function ensureInbox(db: Writer, ownerId: string): Promise<Category
   await db
     .insert(categories)
     .values({ id: newId(), ownerId, name: "Inbox", systemKey: INBOX_KEY })
-    .onDuplicateKeyUpdate({ set: { systemKey: sql`${categories.systemKey}` } });
+    .onConflictDoNothing();
   const [row] = await db
     .select()
     .from(categories)
@@ -258,8 +258,7 @@ async function finishTask(
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
     if (current.status !== "open" && current.status !== status) {
       throw new InvalidChangeError(
@@ -275,8 +274,7 @@ async function finishTask(
           eq(workBlocks.taskId, taskId),
           eq(workBlocks.status, "planned"),
         ),
-      )
-      .for("update");
+      );
     for (const block of blocks) {
       await tx
         .update(workBlocks)
@@ -405,8 +403,7 @@ export async function cancelEvent(
     const [current] = await tx
       .select()
       .from(events)
-      .where(and(eq(events.id, eventId), eq(events.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(events.id, eventId), eq(events.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Event");
     if (current.status === "canceled") return false;
 
@@ -484,8 +481,7 @@ export async function removeWorkBlock(
     const [current] = await tx
       .select()
       .from(workBlocks)
-      .where(and(eq(workBlocks.id, blockId), eq(workBlocks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(workBlocks.id, blockId), eq(workBlocks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Work block");
     if (current.status === "removed") return false;
 

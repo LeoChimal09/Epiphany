@@ -16,8 +16,7 @@ jobs:
   verify:
     name: Check, test, and build
     runs-on: ubuntu-latest
-    # No production credentials are used. The MySQL service is disposable and its password is a
-    # placeholder; tests create and drop their own databases on it. The build needs no configuration.
+    # SQLite runtime tests use isolated files; MySQL is only a disposable legacy import fixture.
     services:
       mysql:
         image: mysql:8.4
@@ -54,7 +53,6 @@ jobs:
         run: bun run test:run
         env:
           TEST_MYSQL_ADMIN_URL: mysql://root:placeholder-ci-root@127.0.0.1:3306
-          REQUIRE_DB_TESTS: "true"
 
       - name: Build
         run: bun run build

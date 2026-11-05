@@ -4,7 +4,9 @@ import { ConfigError, loadDatabaseToolingConfig } from "../config";
 import { createDatabasePool } from "./client";
 import { getMigrationStatus, runMigrations } from "./migrate";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const command = process.argv[2];
 
 async function main(): Promise<number> {

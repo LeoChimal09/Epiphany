@@ -26,10 +26,12 @@ import {
   type Services,
 } from "./index";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const NOT_FOUND = /not found/;
 
-describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MySQL", () => {
+describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against SQLite", () => {
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let services: Services;
@@ -707,7 +709,10 @@ describe.skipIf(!dbTestsEnabled)("editing, reopening, and categories against MyS
       expect(listed.map((c) => c.name)).toEqual(["Inbox"]);
 
       const old = await services.categories.create(owner, "Old");
-      await handle.pool.query("UPDATE categories SET archived_at = NOW(3) WHERE id = ?", [old.id]);
+      await handle.pool.query("UPDATE categories SET archived_at = ? WHERE id = ?", [
+        Date.now(),
+        old.id,
+      ]);
       expect((await services.categories.list(owner)).map((c) => c.name)).toEqual(["Inbox"]);
       expect(
         (await handle.db.select().from(categories).where(eq(categories.ownerId, ownerId))).length,
