@@ -1638,6 +1638,54 @@
 .iconButton:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
 }
+.eventRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: 12px;
+}
+.eventRow > .taskContent {
+  grid-column: 1;
+  grid-row: 1;
+}
+.eventRow > .rowActions {
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0;
+  gap: 8px;
+}
+.eventEditButton {
+  grid-column: 2;
+  grid-row: 1;
+}
+.eventEditor {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.eventEditorFields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.eventEditorFields legend {
+  padding: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.eventEditorFields p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.eventEditorFields > label {
+  align-content: start;
+}
+.eventRow .iconButton {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
 .scheduleNote {
   display: flex;
   align-items: center;
@@ -2227,6 +2275,26 @@
 }
 
 @media (max-width: 640px) {
+  .eventRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .eventRow > .taskContent {
+    grid-column: 1 / -1;
+  }
+  .eventEditButton {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .task.eventRow > .rowActions {
+    grid-column: 2;
+    grid-row: 2;
+    flex-basis: auto;
+    margin: 0;
+  }
+  .eventEditorFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .topbar {
     padding: 0 14px;
   }

@@ -36,6 +36,7 @@ import {
   Trash2,
   TriangleAlert,
   Undo2,
+  X,
 } from "lucide-react";
 import { AccountMenu } from "./account-menu";
 import { ConfirmationDialog, type DashboardConfirmation } from "./confirmation-dialog";
@@ -1822,24 +1823,26 @@ export function EventTimeEditor({
     return (
       <button
         type="button"
-        className={styles.secondaryButton}
+        className={`${styles.iconButton} ${styles.eventEditButton}`}
+        aria-label={`Edit date or time: ${event.title}`}
+        title="Edit date or time"
         disabled={pending}
         onClick={() => setEditing(true)}
       >
-        Edit date or time
+        <Pencil size={16} aria-hidden="true" />
       </button>
     );
   const localStart = dateTimeLocalValue(event.startsAt, event.timezone);
   return (
     <form
-      className={styles.inlineEditor}
+      className={styles.eventEditor}
       onSubmit={(submit) => {
         submit.preventDefault();
         onSave(event.id, new FormData(submit.currentTarget));
       }}
     >
-      <fieldset disabled={pending} className={`${styles.fields} ${styles.fullWidth}`}>
-        <legend>Edit {event.title}</legend>
+      <fieldset disabled={pending} className={`${styles.fields} ${styles.eventEditorFields}`}>
+        <legend>Edit date and time</legend>
         <p className={styles.fullWidth}>
           Only this occurrence. Times use {event.timezone}. Review the preview before saving.
         </p>
@@ -1865,18 +1868,31 @@ export function EventTimeEditor({
             required
           />
         </label>
-        <button type="submit" className={styles.primaryButton}>
-          Preview event change
-        </button>
-        <button type="button" className={styles.secondaryButton} onClick={() => setEditing(false)}>
-          Cancel edit
-        </button>
+        <div className={`${styles.rowActions} ${styles.fullWidth}`}>
+          <button
+            type="submit"
+            className={styles.iconButton}
+            aria-label="Preview event change"
+            title="Preview event change"
+          >
+            <CalendarClock size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label="Cancel edit"
+            title="Cancel edit"
+            onClick={() => setEditing(false)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
       </fieldset>
     </form>
   );
 }
 
-function EventList({
+export function EventList({
   result,
   search,
   pending,
@@ -1918,7 +1934,7 @@ function EventList({
       {events.length ? (
         <ul className={styles.taskList}>
           {events.map((event) => (
-            <li key={event.id} className={styles.task} data-kind="event">
+            <li key={event.id} className={`${styles.task} ${styles.eventRow}`} data-kind="event">
               <div className={styles.taskContent}>
                 <div className={styles.recordTopline}>
                   <span className={styles.eventTag}>
@@ -1964,28 +1980,34 @@ function EventList({
               <div className={styles.rowActions}>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={styles.iconButton}
+                  aria-label={`${event.acknowledged ? "Done" : "Mark done"}: ${event.title}`}
+                  title={event.acknowledged ? "Done" : "Mark done"}
                   disabled={pending || event.acknowledged}
                   onClick={() => onComplete(event.id)}
                 >
-                  {event.acknowledged ? "Done" : "Mark done"}
+                  <Check size={16} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={styles.iconButton}
+                  aria-label={`${event.seriesId ? "Cancel occurrence" : "Cancel event"}: ${event.title}`}
+                  title={event.seriesId ? "Cancel occurrence" : "Cancel event"}
                   disabled={pending}
                   onClick={() => onCancel(event.id)}
                 >
-                  {event.seriesId ? "Cancel occurrence" : "Cancel event"}
+                  <X size={16} aria-hidden="true" />
                 </button>
                 {event.seriesId ? (
                   <button
                     type="button"
-                    className={styles.secondaryButton}
+                    className={styles.iconButton}
+                    aria-label={`Cancel series: ${event.title}`}
+                    title="Cancel series"
                     disabled={pending}
                     onClick={() => onCancel(event.id, "series")}
                   >
-                    Cancel series
+                    <Trash2 size={16} aria-hidden="true" />
                   </button>
                 ) : null}
               </div>

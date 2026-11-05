@@ -1153,3 +1153,15 @@ memory-control and privacy gates still apply to those unchecked goals.
 When completing a goal, add a dated note with the implementation location,
 checks run, results, and any remaining limits. Change the next-goal pointer only
 after the current goal's completion criteria pass.
+
+- 2026-11-05, event editor layout repair (owner-requested; local only):
+  event cards now keep details and actions in a responsive grid, with the open
+  editor spanning the full card below them. Compact fields and a separate action
+  footer prevent stretched controls and overlapping/letter-by-letter titles.
+  Edit, done, cancel, preview, and series-cancel controls use icon buttons with
+  accessible names, tooltips, and 44px targets. Existing proposal/confirmation,
+  event version binding, and cancellation scopes are unchanged.
+  Verification: eight focused render tests, four Chromium interaction/layout
+  tests at 375/768/1040/1440px, `bun run check`, production build, and whitespace
+  checks passed. Desktop/mobile screenshots inspected. Browser tests used
+  synthetic callbacks, not live persisted events; no commit or deployment.

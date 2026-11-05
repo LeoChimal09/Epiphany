@@ -1,7 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DashboardShell, EventRepeatFields, EventTimeEditor, TaskRow } from "./dashboard-shell";
+import {
+  DashboardShell,
+  EventList,
+  EventRepeatFields,
+  EventTimeEditor,
+  TaskRow,
+} from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
@@ -29,6 +35,43 @@ describe("compact assistant dashboard", () => {
     );
     expect(html).toContain("Edit date or time");
     expect(html).not.toContain("<details");
+  });
+  it("uses accessible icon actions without dropping event facts or cancellation scope", () => {
+    const html = renderToStaticMarkup(
+      createElement(EventList, {
+        result: {
+          ok: true,
+          events: [
+            {
+              id: "godzilla",
+              version: 2,
+              title: "GODZILLA MINUS ZERO",
+              location: "Cinemark Davenport",
+              startsAt: "2026-11-07T18:45:00Z",
+              endsAt: "2026-11-07T19:45:00Z",
+              allDay: false,
+              timezone: "America/Chicago",
+              seriesId: "series",
+            },
+          ],
+          truncated: false,
+        },
+        search: "",
+        pending: false,
+        onCancel: () => {},
+        onComplete: () => {},
+        onEdit: () => {},
+        clearSearch: () => {},
+      }),
+    );
+    for (const label of ["Edit date or time", "Mark done", "Cancel occurrence", "Cancel series"]) {
+      expect(html).toContain(`aria-label="${label}: GODZILLA MINUS ZERO"`);
+      expect(html).toContain(`title="${label}"`);
+      expect(html).not.toContain(`>${label}</button>`);
+    }
+    expect(html).toContain("<h2>GODZILLA MINUS ZERO</h2>");
+    expect(html).toContain("Cinemark Davenport");
+    expect(html).toContain("<dt>Duration</dt><dd>1 hour</dd>");
   });
   const task: DashboardTask = {
     id: "fixture",
