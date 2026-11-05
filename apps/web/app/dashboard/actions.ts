@@ -18,6 +18,7 @@ import {
 } from "@epiphany/core/planning";
 import {
   categoryForDashboard,
+  eventForSchedule,
   dashboardContext,
   loadDashboardData,
   loadSchedule,
@@ -61,6 +62,34 @@ export type DashboardScheduleResult =
   { ok: true; schedule: ScheduleData } | { ok: false; error: string };
 export type DashboardEventsResult =
   { ok: true; events: ScheduleData["events"]; truncated: boolean } | { ok: false; error: string };
+
+export async function loadDashboardItem(
+  kind: "task" | "event",
+  id: string,
+): Promise<
+  | { ok: true; task: DashboardTask }
+  | { ok: true; event: ScheduleData["events"][number] }
+  | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  if (kind !== "task" && kind !== "event") return { ok: false, error: "Unknown item type." };
+  try {
+    if (kind === "task")
+      return { ok: true, task: taskForDashboard(await services.tasks.get(principal, id)) };
+    const event = await services.events.get(principal, id);
+    if (event.status !== "scheduled")
+      return { ok: false, error: "This event was canceled. It remains in calendar history." };
+    const current = await services.events.list(principal, {
+      from: event.startsAt,
+      to: event.endsAt,
+      limit: 500,
+    });
+    const matching = current.find((row) => row.id === event.id);
+    return { ok: true, event: eventForSchedule(matching ?? event) };
+  } catch (error) {
+    return failure(error);
+  }
+}
 
 export async function askEpi(message: string, state: unknown): Promise<AskEpiResult> {
   if (typeof message !== "string" || !message.trim()) {

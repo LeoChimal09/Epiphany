@@ -1638,6 +1638,27 @@
 .iconButton:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
 }
+.savedItemLinks {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.savedItemLinks a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--accent-hover);
+  overflow-wrap: anywhere;
+}
+.savedItemLinks svg {
+  flex-shrink: 0;
+}
+.task:focus {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 3px;
+}
 .eventRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1681,7 +1702,7 @@
 .eventEditorFields > label {
   align-content: start;
 }
-.eventRow .iconButton {
+.task .iconButton {
   width: 44px;
   height: 44px;
   padding: 0;

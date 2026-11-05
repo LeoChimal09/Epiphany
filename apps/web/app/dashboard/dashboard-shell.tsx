@@ -28,6 +28,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   ShieldAlert,
   SlidersHorizontal,
@@ -65,6 +66,7 @@ import {
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
   loadDashboardEvents,
+  loadDashboardItem,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -152,6 +154,10 @@ export function DashboardShell({
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [focusedItem, setFocusedItem] = useState<{ id: string; kind: "task" | "event" } | null>(
+    null,
+  );
+  const [linkedEvent, setLinkedEvent] = useState<ScheduleEvent | null>(null);
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | null>(null);
   const [calendarEntryType, setCalendarEntryType] = useState<"task" | "todo" | "event">("task");
@@ -265,13 +271,29 @@ export function DashboardShell({
   const inbox = data.categories.find((category) => category.systemKey === "inbox");
   const selectedCategory = data.categories.find((category) => category.id === categoryFilter);
   const title = view === "category" ? (selectedCategory?.name ?? "Category") : headings[view];
-  const tasks = visibleTasks(
+  const visibleTaskRows = visibleTasks(
     data.tasks,
     view,
     isAssistant ? "" : deferredSearch,
     view === "category" ? categoryFilter : null,
     view === "tasks" ? taskFilter : "all",
   );
+  const focusedTask =
+    focusedItem?.kind === "task" && view === "tasks"
+      ? data.tasks.find((task) => task.id === focusedItem.id)
+      : null;
+  const tasks = focusedTask ? [focusedTask] : visibleTaskRows;
+  const focusedEvents =
+    focusedItem?.kind === "event" && linkedEvent && view === "tasks"
+      ? { ok: true as const, events: [linkedEvent], truncated: false }
+      : null;
+
+  useEffect(() => {
+    if (!focusedItem || view !== "tasks") return;
+    const item = document.getElementById(`${focusedItem.kind}-${focusedItem.id}`);
+    item?.scrollIntoView({ block: "center", behavior: "smooth" });
+    item?.focus({ preventScroll: true });
+  }, [focusedItem, view]);
   const notes = visibleNotes(
     data.notes,
     deferredSearch,
@@ -474,6 +496,7 @@ export function DashboardShell({
   }
 
   function selectView(next: DashboardView) {
+    setFocusedItem(null);
     setTaskFilter("all");
     setView(next);
     setCategoryFilter(null);
@@ -489,6 +512,39 @@ export function DashboardShell({
       setHistoryNextOffset(0);
       loadHistoryPage(0, true);
     }
+  }
+
+  function openSavedItem(href: string) {
+    const match = /^#(task|event)-(.+)$/.exec(href);
+    if (!match) return;
+    const kind = match[1] as "task" | "event";
+    const id = decodeURIComponent(match[2]!);
+    startTransition(async () => {
+      try {
+        const result = await loadDashboardItem(kind, id);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        if ("task" in result) {
+          setData((current) => ({
+            ...current,
+            tasks: [result.task, ...current.tasks.filter((task) => task.id !== id)],
+          }));
+          setTaskFilter(result.task.taskType === "todo" ? "todo" : "planned");
+        } else {
+          setLinkedEvent(result.event);
+          setTaskFilter("events");
+        }
+        setSearch("");
+        setCategoryFilter(null);
+        setComposer(null);
+        setView("tasks");
+        setFocusedItem({ kind, id });
+      } catch {
+        setNotice({ text: "Could not open this saved item. Please try again.", error: true });
+      }
+    });
   }
 
   async function sendToEpi(text: string) {
@@ -515,6 +571,7 @@ export function DashboardShell({
           text: result.reply.text,
           outcome: result.reply.outcome,
           changed: result.reply.changed,
+          links: result.reply.links,
         };
       } else {
         reply = { id: nextMessageId.current++, role: "epi", text: result.error, outcome: "failed" };
@@ -609,6 +666,11 @@ export function DashboardShell({
           return;
         }
         options.onSuccess?.();
+        if (focusedItem?.kind === "event") {
+          const item = await loadDashboardItem("event", focusedItem.id);
+          if (item.ok && "event" in item) setLinkedEvent(item.event);
+          else setFocusedItem(null);
+        }
         const week = options.week ?? neededWeek;
         requestedWeek.current = week;
         const refreshed = await loadDashboardSchedule(week);
@@ -1358,7 +1420,10 @@ export function DashboardShell({
                         className={`${styles.secondaryButton} ${styles.typeFilter}`}
                         data-kind={value}
                         aria-pressed={taskFilter === value}
-                        onClick={() => setTaskFilter(value)}
+                        onClick={() => {
+                          setFocusedItem(null);
+                          setTaskFilter(value);
+                        }}
                       >
                         {value === "all" ? (
                           <ListChecks size={15} aria-hidden="true" />
@@ -1381,7 +1446,10 @@ export function DashboardShell({
                     <input
                       type="search"
                       value={search}
-                      onChange={(event) => setSearch(event.target.value)}
+                      onChange={(event) => {
+                        setFocusedItem(null);
+                        setSearch(event.target.value);
+                      }}
                       placeholder={
                         showingEvents
                           ? "Search events"
@@ -1397,6 +1465,21 @@ export function DashboardShell({
                 </span>
               </div>
             ) : null}
+            {view === "tasks" && focusedItem ? (
+              <div className={styles.selectionToolbar}>
+                <span>Viewing the item Epi saved.</span>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => {
+                    setFocusedItem(null);
+                    setTaskFilter("all");
+                  }}
+                >
+                  Show all tasks
+                </button>
+              </div>
+            ) : null}
             {view !== "history" &&
             !isSchedule &&
             !isAssistant &&
@@ -1410,6 +1493,7 @@ export function DashboardShell({
             ) : null}
             {isAssistant ? (
               <AssistantChat
+                onOpenItem={openSavedItem}
                 setup={assistantSetup}
                 messages={chat.messages}
                 asking={chat.asking}
@@ -1706,7 +1790,10 @@ export function DashboardShell({
               </div>
             ) : showingEvents ? (
               <EventList
-                result={eventListResult?.key === eventListKey ? eventListResult.result : null}
+                result={
+                  focusedEvents ??
+                  (eventListResult?.key === eventListKey ? eventListResult.result : null)
+                }
                 search={search}
                 pending={pending}
                 onCancel={cancelListedEvent}
@@ -1934,7 +2021,13 @@ export function EventList({
       {events.length ? (
         <ul className={styles.taskList}>
           {events.map((event) => (
-            <li key={event.id} className={`${styles.task} ${styles.eventRow}`} data-kind="event">
+            <li
+              key={event.id}
+              id={`event-${event.id}`}
+              tabIndex={-1}
+              className={`${styles.task} ${styles.eventRow}`}
+              data-kind="event"
+            >
               <div className={styles.taskContent}>
                 <div className={styles.recordTopline}>
                   <span className={styles.eventTag}>
@@ -2307,26 +2400,34 @@ export function TaskRow({
             <SplitReminderFields count={task.splitReminderCount ?? null} itemType={editType} />
           </div>
           <div className={styles.rowActions}>
-            <button className={styles.primaryButton} disabled={pending} type="submit">
-              Save
+            <button
+              className={styles.iconButton}
+              disabled={pending}
+              type="submit"
+              aria-label={`Save changes: ${task.title}`}
+              title="Save changes"
+            >
+              <Save size={16} aria-hidden="true" />
             </button>
             <button
-              className={styles.textButton}
+              className={styles.iconButton}
               disabled={pending}
               type="button"
+              aria-label={`Cancel edit: ${task.title}`}
+              title="Cancel edit"
               onClick={() => {
                 setEditType(task.taskType);
                 setEditing(false);
               }}
             >
-              Cancel
+              <X size={16} aria-hidden="true" />
             </button>
           </div>
         </form>
       </li>
     );
   return (
-    <li className={styles.task} data-kind={task.taskType}>
+    <li id={`task-${task.id}`} tabIndex={-1} className={styles.task} data-kind={task.taskType}>
       {task.status === "open" ? (
         <input
           className={styles.taskCheckbox}
@@ -2423,47 +2524,53 @@ export function TaskRow({
         ) : null}
       </div>
       <div className={styles.rowActions}>
-        {task.status === "open" ? (
-          <button
-            type="button"
-            className={styles.textButton}
-            disabled={pending}
-            onClick={() => onComplete(task.id)}
-          >
-            <Check size={14} aria-hidden="true" /> Mark done
-          </button>
-        ) : null}
-        {task.status === "open" && onCancel ? (
-          <button
-            type="button"
-            className={styles.textButton}
-            disabled={pending}
-            onClick={() => onCancel(task.id)}
-          >
-            Cancel
-          </button>
-        ) : null}
         <button
           type="button"
-          className={styles.textButton}
+          className={styles.iconButton}
+          aria-label={`Edit: ${task.title}`}
+          title="Edit"
           disabled={pending}
           onClick={() => {
             setEditType(task.taskType);
             setEditing(true);
           }}
         >
-          <Pencil size={14} aria-hidden="true" />
-          Edit
+          <Pencil size={16} aria-hidden="true" />
         </button>
+        {task.status === "open" ? (
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Mark done: ${task.title}`}
+            title="Mark done"
+            disabled={pending}
+            onClick={() => onComplete(task.id)}
+          >
+            <Check size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+        {task.status === "open" && onCancel ? (
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Cancel: ${task.title}`}
+            title="Cancel"
+            disabled={pending}
+            onClick={() => onCancel(task.id)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        ) : null}
         {task.status !== "open" ? (
           <button
             type="button"
-            className={styles.textButton}
+            className={styles.iconButton}
+            aria-label={`Reopen: ${task.title}`}
+            title="Reopen"
             disabled={pending}
             onClick={() => onReopen(task.id)}
           >
-            <Undo2 size={14} aria-hidden="true" />
-            Reopen
+            <Undo2 size={16} aria-hidden="true" />
           </button>
         ) : null}
       </div>

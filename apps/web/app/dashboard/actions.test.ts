@@ -22,6 +22,7 @@ import {
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
   loadDashboardEvents,
+  loadDashboardItem,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   loadSchedule: vi.fn(),
   taskCreate: vi.fn(),
   taskList: vi.fn(),
+  taskGet: vi.fn(),
   taskComplete: vi.fn(),
   taskCancel: vi.fn(),
   taskUpdate: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("./server-data", () => ({
   loadSchedule: mocks.loadSchedule,
   taskForDashboard: (record: unknown) => record,
   noteForDashboard: (record: unknown) => record,
+  eventForSchedule: (record: unknown) => record,
 }));
 
 const principal = { authenticated: "fixture-owner" };
@@ -81,6 +84,7 @@ beforeEach(() => {
     timezone: "America/Chicago",
     services: {
       tasks: {
+        get: mocks.taskGet,
         list: mocks.taskList,
         create: mocks.taskCreate,
         complete: mocks.taskComplete,
@@ -105,6 +109,35 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it("opens an exact owner-scoped task regardless of list pagination", async () => {
+    mocks.taskGet.mockResolvedValue(task);
+    expect(await loadDashboardItem("task", task.id)).toEqual({ ok: true, task });
+    expect(mocks.taskGet).toHaveBeenCalledWith(principal, task.id);
+    expect(mocks.taskList).not.toHaveBeenCalled();
+  });
+  it("opens an event outside the upcoming window with its current acknowledgment", async () => {
+    const event = {
+      id: "movie",
+      status: "scheduled",
+      startsAt: new Date("2027-01-01T10:00:00Z"),
+      endsAt: new Date("2027-01-01T11:00:00Z"),
+    };
+    mocks.eventGet.mockResolvedValue(event);
+    mocks.eventList.mockResolvedValue([
+      { ...event, id: "other" },
+      { ...event, acknowledged: true },
+    ]);
+    expect(await loadDashboardItem("event", "movie")).toEqual({
+      ok: true,
+      event: { ...event, acknowledged: true },
+    });
+    expect(mocks.eventGet).toHaveBeenCalledWith(principal, "movie");
+  });
+  it("does not display a canceled event as scheduled", async () => {
+    mocks.eventGet.mockResolvedValue({ status: "canceled" });
+    expect(await loadDashboardItem("event", "movie")).toMatchObject({ ok: false });
+    expect(mocks.eventList).not.toHaveBeenCalled();
+  });
   it("previews a version-checked event date/time edit in its saved timezone before confirming", async () => {
     mocks.eventGet.mockResolvedValue({ version: 2, timezone: "America/Chicago" });
     const proposal = {

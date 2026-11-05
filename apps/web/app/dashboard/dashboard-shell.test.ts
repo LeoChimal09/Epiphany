@@ -131,12 +131,29 @@ describe("compact assistant dashboard", () => {
   });
   it("keeps canceled task history distinct from completion and permits reopening", () => {
     const active = renderTask(task);
-    expect(active).toContain(">Cancel</button>");
+    expect(active).toContain('aria-label="Cancel: Test assignment"');
     const canceled = renderTask({ ...task, status: "canceled" });
     expect(canceled).toContain("Canceled, not completed");
     expect(canceled).not.toContain("Mark done");
     expect(canceled).toContain("Reopen");
   });
+  it.each(["task", "todo"] as const)(
+    "uses matching accessible icon actions for %s rows",
+    (taskType) => {
+      const html = renderTask({ ...task, taskType });
+      for (const label of ["Edit", "Mark done", "Cancel"]) {
+        expect(html).toContain(`aria-label="${label}: Test assignment"`);
+        expect(html).toContain(`title="${label}"`);
+        expect(html).not.toContain(`>${label}</button>`);
+      }
+      expect(html.indexOf('aria-label="Edit:')).toBeLessThan(
+        html.indexOf('aria-label="Mark done:'),
+      );
+      expect(html.indexOf('aria-label="Mark done:')).toBeLessThan(
+        html.indexOf('aria-label="Cancel:'),
+      );
+    },
+  );
   it("keeps todo facts free of task-only deadline and priority fields", () => {
     const html = renderTask({
       ...task,

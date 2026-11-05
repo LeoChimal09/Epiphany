@@ -1154,6 +1154,23 @@ When completing a goal, add a dated note with the implementation location,
 checks run, results, and any remaining limits. Change the next-goal pointer only
 after the current goal's completion criteria pass.
 
+- 2026-11-05, direct links from assistant creations (owner-requested; local only):
+  persisted task/to-do/event creations now include server-built exact-record links;
+  approved imports link successful tasks, and recurring events link the first
+  occurrence. Following owner clarification, links now switch to the dashboard's
+  Tasks view in the same tab, select the appropriate task/to-do/event filter, and
+  focus the exact saved row with its existing editing/lifecycle controls. Chat state
+  stays intact; Show all tasks exits the focused view. There is no separate item
+  page or new tab, and Discord replies remain unchanged. The item is re-read through
+  authenticated owner-scoped services, independent of list pagination/date windows.
+  Verification: 78 focused action, chat, and dashboard render tests;
+  four disposable-MySQL creation/import tests verified links against persisted IDs.
+  Two Chromium interaction tests at mobile/desktop widths verified exact task,
+  to-do, and event focus, selected filters, no new pages, and preserved chat.
+  Browser tests used synthetic actions. Lint/format/type checks and production build
+  passed. No live Discord/model
+  acceptance, production migration, commit, push, or deployment.
+
 - 2026-11-05, event editor layout repair (owner-requested; local only):
   event cards now keep details and actions in a responsive grid, with the open
   editor spanning the full card below them. Compact fields and a separate action

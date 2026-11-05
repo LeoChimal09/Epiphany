@@ -1212,6 +1212,12 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(row?.dueAt?.toISOString()).toBe("2026-10-16T22:00:00.000Z");
       expect(row?.dueDateOnly).toBe(false);
       expect(row?.estimatedMinutes).toBe(45);
+      expect(reply.links).toEqual([
+        {
+          label: "Open task: Read chapter 4",
+          href: `#task-${row!.id}`,
+        },
+      ]);
     });
 
     it("creates an event interval from its explicit start and end times", async () => {
@@ -1235,6 +1241,12 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
         endsAt: new Date("2026-10-16T22:00:00.000Z"),
       });
       expect(await taskRows()).toHaveLength(0);
+      expect(reply.links).toEqual([
+        {
+          label: "Open event: Head home",
+          href: `#event-${events[0]!.id}`,
+        },
+      ]);
     });
 
     it("creates a date-only deadline without inventing a time", async () => {
@@ -1631,7 +1643,12 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       expect(preview.reply.text).toContain("10. [task] Build portfolio");
       expect(provider.calls[0]?.listedEntryCount).toBe(10);
       expect(await taskRows()).toHaveLength(0);
-      await say(assistant, "yes", preview.state);
+      expect(preview.reply.links).toBeUndefined();
+      const saved = await say(assistant, "yes", preview.state);
+      expect(saved.reply.links).toHaveLength(10);
+      expect(saved.reply.links?.map((link) => link.href).sort()).toEqual(
+        (await taskRows()).map((task) => `#task-${task.id}`).sort(),
+      );
       expect((await taskRows()).map((task) => task.title).sort()).toEqual([...titles].sort());
       expect(provider.calls).toHaveLength(1);
     });
@@ -2310,6 +2327,15 @@ describe.skipIf(!dbTestsEnabled)("assistant against MySQL", () => {
       const saved = await say(create.assistant, "Add Repair drone as a to-do");
       expect(saved.reply).toMatchObject({ outcome: "created", changed: true });
       expect(saved.reply.text).toBe('Got it, I added "Repair drone" as a to-do.');
+      const todo = (await services.tasks.list(owner)).find(
+        (task) => task.title === "Repair drone",
+      )!;
+      expect(saved.reply.links).toEqual([
+        {
+          label: "Open to-do: Repair drone",
+          href: `#task-${todo.id}`,
+        },
+      ]);
       expect(
         (await services.tasks.list(owner)).find((task) => task.taskType === "todo"),
       ).toMatchObject({

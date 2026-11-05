@@ -34,6 +34,7 @@ import {
   learningQuestionDue,
   nextLearningQuestion,
 } from "./learning-questions";
+import { savedItemLink } from "./item-links";
 import type { Budget } from "./budget";
 import type { CaptureItem, Intent } from "./intent";
 import { createHash } from "node:crypto";
@@ -167,6 +168,7 @@ export interface AssistantReply {
   outcome: Outcome;
   // True only when a record was actually persisted by this message.
   changed: boolean;
+  links?: { label: string; href: string }[];
 }
 
 // Extra facts about one incoming message.
@@ -1376,6 +1378,13 @@ export function createAssistant(options: AssistantOptions) {
                 ? "failed"
                 : "answered",
         changed: total > 0,
+        ...(savedTasks.length
+          ? {
+              links: savedTasks.map(({ task }) =>
+                savedItemLink(task.taskType, task.id, task.title),
+              ),
+            }
+          : {}),
       },
       {
         listed: savedTasks.slice(0, LIST_LINES).map(({ task }) => taskContext(task, timezone)),
@@ -1760,6 +1769,7 @@ export function createAssistant(options: AssistantOptions) {
               : `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
           outcome: "created",
           changed: true,
+          links: [savedItemLink(task.taskType, task.id, task.title)],
         });
       }
 
@@ -1781,6 +1791,7 @@ export function createAssistant(options: AssistantOptions) {
               text: `I saved ${events.length} ${intent.recurrence.frequency} occurrences of "${intent.title}", from ${dayLabel(dateKeyOf(events[0]!.startsAt, timezone))} through ${dayLabel(dateKeyOf(events.at(-1)!.startsAt, timezone))}, at ${intent.startTime} to ${intent.endTime} (${timezone}). You can ask to cancel one occurrence or the whole series; I'll show the scope before confirming.`,
               outcome: "created",
               changed: true,
+              links: [savedItemLink("event", events[0]!.id, events[0]!.title)],
             },
             {
               eventFocus: focusEvents(
@@ -1810,6 +1821,7 @@ export function createAssistant(options: AssistantOptions) {
             text: `I added "${event.title}" to your calendar for ${dayLabel(intent.date)} from ${startTime} to ${endTime}.`,
             outcome: "created",
             changed: true,
+            links: [savedItemLink("event", event.id, event.title)],
           },
           { eventFocus: focusEvents(principal, [event.id]), lastReminder: null, listed: [] },
         );
