@@ -64,16 +64,20 @@ export type DashboardEventsResult =
   { ok: true; events: ScheduleData["events"]; truncated: boolean } | { ok: false; error: string };
 
 export async function loadDashboardItem(
-  kind: "task" | "event",
+  kind: "task" | "event" | "note",
   id: string,
 ): Promise<
   | { ok: true; task: DashboardTask }
+  | { ok: true; note: DashboardNote }
   | { ok: true; event: ScheduleData["events"][number] }
   | { ok: false; error: string }
 > {
   const { principal, services } = await dashboardContext();
-  if (kind !== "task" && kind !== "event") return { ok: false, error: "Unknown item type." };
+  if (kind !== "task" && kind !== "event" && kind !== "note")
+    return { ok: false, error: "Unknown item type." };
   try {
+    if (kind === "note")
+      return { ok: true, note: noteForDashboard(await services.notes.get(principal, id)) };
     if (kind === "task")
       return { ok: true, task: taskForDashboard(await services.tasks.get(principal, id)) };
     const event = await services.events.get(principal, id);

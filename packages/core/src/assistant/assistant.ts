@@ -38,7 +38,13 @@ import { savedItemLink } from "./item-links";
 import type { Budget } from "./budget";
 import type { CaptureItem, Intent } from "./intent";
 import { createHash } from "node:crypto";
-import { findDuplicate, resolveReference, similarTitles, type Candidate } from "./matching";
+import {
+  findDuplicate,
+  ordinalIndex,
+  resolveReference,
+  similarTitles,
+  type Candidate,
+} from "./matching";
 import { asksNotToSave } from "./nosave";
 import { routineIntent } from "./routine";
 import { listedEntryCount, parseCourseList } from "./intake";
@@ -130,6 +136,11 @@ export interface LearningQuestion {
 
 export interface ConversationState {
   turns: Turn[];
+  focus?: { kind: "task" | "note" | "event"; id: string } | null;
+  searchResults?: {
+    ownerId: string;
+    items: { kind: "task" | "note" | "event"; id: string; title: string }[];
+  } | null;
   eventFocus?: EventFocus | null;
   learningQuestion?: LearningQuestion | null;
   activeIdea?: { ownerId: string; noteId: string } | null;
@@ -170,6 +181,7 @@ export interface AssistantReply {
   // True only when a record was actually persisted by this message.
   changed: boolean;
   links?: { label: string; href: string }[];
+  topic?: { kind: "task" | "note" | "event"; id: string; title: string; label: string };
 }
 
 // Extra facts about one incoming message.
@@ -205,6 +217,15 @@ const dayLabel = (key: DateKey) => {
 function localDue(task: Task, timezone: string): DateKey | null {
   if (!task.dueAt) return null;
   return task.dueDateOnly ? task.dueAt.toISOString().slice(0, 10) : dateKeyOf(task.dueAt, timezone);
+}
+
+function focusedReference(reference: string, title: string): string {
+  const value = reference.trim();
+  return /^(?:(?:this|that|the)(?:\s+(?:task|to-?do|note|idea|event|appointment|one))?|it)$/i.test(
+    value,
+  ) || value.toLocaleLowerCase() === title.toLocaleLowerCase()
+    ? ""
+    : reference;
 }
 
 function dueText(task: Task, timezone: string): string {
@@ -449,6 +470,7 @@ export function createAssistant(options: AssistantOptions) {
       let notes: Note[];
       let categories: string[];
       let activeIdea: Note | undefined;
+      let focusedRecord: InterpretRequest["focusedRecord"] = null;
       let currentEvents: CalendarEvent[];
       let currentBlocks: InterpretRequest["workBlocks"];
       let currentPlanning: PlanningPreferences;
@@ -516,6 +538,69 @@ export function createAssistant(options: AssistantOptions) {
         openTasks = taskRows;
         notes = noteRows;
         categories = categoryRows.map((category) => category.name);
+        if (state.focus) {
+          try {
+            if (state.focus.kind === "task") {
+              const task = await services.tasks.get(principal, state.focus.id);
+              focusedRecord = {
+                kind: task.taskType,
+                id: task.id,
+                title: task.title,
+                details: (task.details ?? "").slice(0, 4000),
+                truncated: (task.details?.length ?? 0) > 4000,
+                status: task.status,
+              };
+              if (task.status === "open")
+                openTasks = [task, ...openTasks.filter((row) => row.id !== task.id)];
+              state = {
+                ...state,
+                listed: [taskContext(task, timezone)],
+                activeIdea: null,
+                eventFocus: null,
+              };
+            } else if (state.focus.kind === "note") {
+              const note = await services.notes.get(principal, state.focus.id);
+              focusedRecord = {
+                kind: note.kind,
+                id: note.id,
+                title: noteTitle(note),
+                details: note.body.slice(0, 4000),
+                truncated: note.body.length > 4000,
+              };
+              notes = [note, ...notes.filter((row) => row.id !== note.id)];
+              state = {
+                ...state,
+                listed: [],
+                eventFocus: null,
+                activeIdea:
+                  note.kind === "idea" ? { ownerId: principal.ownerId, noteId: note.id } : null,
+              };
+            } else {
+              const event = await services.events.get(principal, state.focus.id);
+              focusedRecord = {
+                kind: "event",
+                id: event.id,
+                title: event.title,
+                details: `${event.startsAt.toISOString()} – ${event.endsAt.toISOString()}`,
+                status: event.status,
+              };
+              currentEvents = [event, ...currentEvents.filter((row) => row.id !== event.id)];
+              state = {
+                ...state,
+                listed: [],
+                activeIdea: null,
+                eventFocus: focusEvents(principal, [event.id]),
+              };
+            }
+          } catch (error) {
+            if (!isMissingRecord(error)) throw error;
+            return finish(clearPending(state), userText, {
+              text: "I can't find the selected record anymore. Nothing was changed; choose another item or clear the topic.",
+              outcome: "not_found",
+              changed: false,
+            });
+          }
+        }
         if (state.activeIdea?.ownerId === principal.ownerId) {
           try {
             const note = await services.notes.get(principal, state.activeIdea.noteId);
@@ -599,6 +684,7 @@ export function createAssistant(options: AssistantOptions) {
               truncated: activeIdea.body.length > 4000,
             }
           : null,
+        focusedRecord,
         ...(entryCount ? { listedEntryCount: entryCount } : {}),
       };
 
@@ -662,6 +748,7 @@ export function createAssistant(options: AssistantOptions) {
           intent.kind === "confirm" || intent.kind === "decline"
             ? { ...state }
             : clearPending(state);
+        if (intent.kind !== "find_records") base.searchResults = null;
         if (
           ![
             "develop_idea",
@@ -670,6 +757,7 @@ export function createAssistant(options: AssistantOptions) {
             "website_link",
             "respond",
             "clarify",
+            "append_note",
           ].includes(intent.kind)
         ) {
           base.activeIdea = null;
@@ -1269,7 +1357,7 @@ export function createAssistant(options: AssistantOptions) {
     const knownNotes = notes.map((note) => noteTitle(note));
 
     const savedTasks: { task: Task; category: string; flagged: string | null }[] = [];
-    const savedNotes: { id: string; text: string; kind: string }[] = [];
+    const savedNotes: { id: string; text: string; kind: "note" | "idea" }[] = [];
     const remarks: string[] = [];
     const skipped: { title: string; existing: string }[] = [];
     const failed: string[] = [];
@@ -1405,11 +1493,12 @@ export function createAssistant(options: AssistantOptions) {
                 ? "failed"
                 : "answered",
         changed: total > 0,
-        ...(savedTasks.length
+        ...(savedTasks.length || savedNotes.length
           ? {
-              links: savedTasks.map(({ task }) =>
-                savedItemLink(task.taskType, task.id, task.title),
-              ),
+              links: [
+                ...savedTasks.map(({ task }) => savedItemLink(task.taskType, task.id, task.title)),
+                ...savedNotes.map((note) => savedItemLink(note.kind, note.id, note.text)),
+              ],
             }
           : {}),
       },
@@ -1548,14 +1637,17 @@ export function createAssistant(options: AssistantOptions) {
       state.activeIdea?.ownerId === principal.ownerId
         ? ideas.find((note) => note.id === state.activeIdea?.noteId)
         : undefined;
-    const reference = /^(?:(?:this|that)(?: idea)?|it|the idea)$/i.test(intent.reference.trim())
-      ? ""
-      : intent.reference;
+    const reference =
+      active && state.focus?.id === active.id
+        ? focusedReference(intent.reference, noteTitle(active))
+        : /^(?:(?:this|that)(?: idea)?|it|the idea)$/i.test(intent.reference.trim())
+          ? ""
+          : intent.reference;
     const found = resolveReference(
       reference,
       ideas.map((note) => ({ id: note.id, title: noteTitle(note) })),
       {
-        ...(intent.targetId ? { targetId: intent.targetId } : {}),
+        ...(intent.targetId && !state.focus ? { targetId: intent.targetId } : {}),
         listed: active ? [{ id: active.id, title: noteTitle(active) }] : [],
       },
     );
@@ -1667,6 +1759,7 @@ export function createAssistant(options: AssistantOptions) {
         intent.kind === "update_task" ||
         intent.kind === "create_event" ||
         intent.kind === "create_note" ||
+        intent.kind === "append_note" ||
         intent.kind === "develop_idea" ||
         intent.kind === "capture") &&
       asksNotToSave(userText)
@@ -1690,6 +1783,46 @@ export function createAssistant(options: AssistantOptions) {
       );
     };
 
+    const scan = async <T>(load: (offset: number) => Promise<T[]>) => {
+      const rows: T[] = [];
+      for (let offset = 0; offset < 1000; offset += POOL_LIMIT) {
+        const page = await load(offset);
+        rows.push(...page);
+        if (page.length < POOL_LIMIT) return { rows, limited: false };
+      }
+      return { rows, limited: true };
+    };
+    const tooMany = () =>
+      reply({
+        text: "There are too many records to choose safely. Please select the item on the dashboard. Nothing was changed.",
+        outcome: "clarification",
+        changed: false,
+      });
+    if (
+      !state.focus &&
+      notes.length >= POOL_LIMIT &&
+      ["create_note", "develop_idea", "resume_idea", "append_note", "delete_note"].includes(
+        intent.kind,
+      )
+    ) {
+      const result = await scan((offset) =>
+        services.notes.list(principal, { limit: POOL_LIMIT, offset }),
+      );
+      if (result.limited) return tooMany();
+      notes = result.rows;
+    }
+    if (
+      !state.focus &&
+      openTasks.length >= POOL_LIMIT &&
+      ["update_task", "complete_task", "cancel_task"].includes(intent.kind)
+    ) {
+      const result = await scan((offset) =>
+        services.tasks.list(principal, { status: "open", limit: POOL_LIMIT, offset }),
+      );
+      if (result.limited) return tooMany();
+      openTasks = result.rows;
+    }
+
     switch (intent.kind) {
       case "website_link":
         return reply({
@@ -1704,6 +1837,175 @@ export function createAssistant(options: AssistantOptions) {
 
       case "clarify":
         return reply({ text: fitReply(intent.question), outcome: "clarification", changed: false });
+
+      case "find_records": {
+        const position = intent.search ? ordinalIndex(intent.search) : null;
+        const selected =
+          position && state.searchResults?.ownerId === principal.ownerId
+            ? state.searchResults.items[position - 1]
+            : undefined;
+        if (position && state.searchResults?.ownerId === principal.ownerId) {
+          if (!selected)
+            return reply({
+              text: "That number isn't in the displayed results. Nothing was changed.",
+              outcome: "clarification",
+              changed: false,
+            });
+          try {
+            const record =
+              selected.kind === "task"
+                ? await services.tasks.get(principal, selected.id)
+                : selected.kind === "note"
+                  ? await services.notes.get(principal, selected.id)
+                  : await services.events.get(principal, selected.id);
+            const title = selected.kind === "note" ? noteTitle(record as Note) : record.title;
+            const label =
+              selected.kind === "task"
+                ? (record as Task).taskType
+                : selected.kind === "note"
+                  ? (record as Note).kind
+                  : "event";
+            return reply(
+              {
+                text: `Let's discuss "${title}". What would you like to know or change?`,
+                outcome: "answered",
+                changed: false,
+                topic: {
+                  kind: selected.kind,
+                  id: record.id,
+                  title: title ?? selected.title,
+                  label,
+                },
+              },
+              {
+                focus: { kind: selected.kind, id: record.id },
+                searchResults: null,
+                listed: [],
+                activeIdea: null,
+                eventFocus: null,
+              },
+            );
+          } catch (error) {
+            if (!isMissingRecord(error)) throw error;
+            return reply(
+              {
+                text: "That record is no longer available. Nothing was changed.",
+                outcome: "not_found",
+                changed: false,
+              },
+              { searchResults: null },
+            );
+          }
+        }
+        const includeTasks =
+          !intent.recordType || intent.recordType === "task" || intent.recordType === "todo";
+        const includeNotes =
+          !intent.recordType || intent.recordType === "note" || intent.recordType === "idea";
+        const [taskScan, noteScan, eventScan] = await Promise.all([
+          includeTasks
+            ? scan((offset) =>
+                services.tasks.list(principal, { status: "all", limit: POOL_LIMIT, offset }),
+              )
+            : { rows: [] as Task[], limited: false },
+          includeNotes
+            ? scan((offset) => services.notes.list(principal, { limit: POOL_LIMIT, offset }))
+            : { rows: [] as Note[], limited: false },
+          !intent.recordType || intent.recordType === "event"
+            ? scan((offset) =>
+                services.events.listForSearch(principal, { limit: POOL_LIMIT, offset }),
+              )
+            : { rows: [] as CalendarEvent[], limited: false },
+        ]);
+        if (taskScan.limited || noteScan.limited || eventScan.limited)
+          return reply({
+            text: "There are too many records to search safely in this conversation. Please use the dashboard search or select the item there; nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
+        const query = intent.search?.toLocaleLowerCase();
+        const matches = (title: string, createdAt: Date) =>
+          (!query || title.toLocaleLowerCase().includes(query)) &&
+          (!intent.createdDate || dateKeyOf(createdAt, timezone) === intent.createdDate);
+        const found = [
+          ...taskScan.rows
+            .filter(
+              (task) =>
+                (!intent.recordType || task.taskType === intent.recordType) &&
+                matches(task.title, task.createdAt),
+            )
+            .map((task) => ({
+              kind: "task" as const,
+              label: task.taskType,
+              id: task.id,
+              title: task.title,
+              createdAt: task.createdAt,
+              details: task.details ?? "",
+              status: task.status,
+            })),
+          ...noteScan.rows
+            .filter(
+              (note) =>
+                (!intent.recordType || note.kind === intent.recordType) &&
+                matches(noteTitle(note), note.createdAt),
+            )
+            .map((note) => ({
+              kind: "note" as const,
+              label: note.kind,
+              id: note.id,
+              title: noteTitle(note),
+              createdAt: note.createdAt,
+              details: note.body,
+              status: "",
+            })),
+          ...eventScan.rows
+            .filter((event) => matches(event.title, event.createdAt))
+            .map((event) => ({
+              kind: "event" as const,
+              label: "event" as const,
+              id: event.id,
+              title: event.title,
+              createdAt: event.createdAt,
+              details: `${event.startsAt.toISOString()} – ${event.endsAt.toISOString()}${event.location ? `, ${event.location}` : ""}`,
+              status: event.status,
+            })),
+        ];
+        if (!found.length)
+          return reply({
+            text: "I couldn't find a matching saved record. Nothing was changed.",
+            outcome: "not_found",
+            changed: false,
+          });
+        if (found.length > 1)
+          return reply(
+            {
+              text: `I found ${found.length} matches. Which one do you mean?\n${numbered(found.slice(0, 10).map((item) => `${item.title} (${item.label}, created ${dateKeyOf(item.createdAt, timezone)})`))}${found.length > 10 ? "\nThere are more matches; please narrow the title or date." : ""}`,
+              outcome: "clarification",
+              changed: false,
+            },
+            {
+              searchResults: {
+                ownerId: principal.ownerId,
+                items: found.slice(0, 10).map(({ kind, id, title }) => ({ kind, id, title })),
+              },
+            },
+          );
+        const item = found[0]!;
+        return reply(
+          {
+            text: `${item.label === "todo" ? "To-do" : item.label[0]!.toUpperCase() + item.label.slice(1)}: "${item.title}" (created ${dateKeyOf(item.createdAt, timezone)}${item.status ? `, ${item.status}` : ""}).${item.details ? `\n\n${item.details.slice(0, 1800)}${item.details.length > 1800 ? "\n[Excerpt; open the record for the full text.]" : ""}` : ""}`,
+            outcome: "answered",
+            changed: false,
+            topic: { kind: item.kind, id: item.id, title: item.title, label: item.label },
+          },
+          {
+            focus: { kind: item.kind, id: item.id },
+            searchResults: null,
+            listed: [],
+            activeIdea: null,
+            eventFocus: null,
+          },
+        );
+      }
 
       case "list_tasks": {
         const rows = await services.tasks.list(principal, {
@@ -1757,6 +2059,12 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_task": {
+        if (state.focus?.kind === "task")
+          return reply({
+            text: "Are you asking me to update the selected task, or create a separate one? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
         const due = dueFields(intent.dueDate, intent.dueTime);
         // With learning on, a task with no stated effort gets an estimate from what the owner has
         // reported for similar work (or their own correction), and says so.
@@ -1801,6 +2109,12 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_event": {
+        if (state.focus?.kind === "event")
+          return reply({
+            text: "Are you asking me to change the selected event, or create a separate one? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
         const startsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.startTime), timezone);
         const endsAt = localWallToUtc(intent.date, parseTimeOfDay(intent.endTime), timezone);
         if (intent.recurrence) {
@@ -1855,6 +2169,12 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_note": {
+        if (state.focus?.kind === "note")
+          return reply({
+            text: "Are you asking me to add to the selected note or idea, or create a separate one? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
         if (intent.noteKind === "idea") {
           const title = intent.title?.trim() || intent.body.trim().slice(0, 60);
           const matching = notes.filter(
@@ -1892,6 +2212,7 @@ export function createAssistant(options: AssistantOptions) {
                 : `Saved your ${note.kind} "${noteTitle(note)}". It's in your notes whenever you want it.`,
             outcome: "created",
             changed: true,
+            links: [savedItemLink(note.kind, note.id, noteTitle(note))],
           },
           {
             activeIdea:
@@ -1904,7 +2225,51 @@ export function createAssistant(options: AssistantOptions) {
       case "resume_idea":
         return developIdea(principal, userText, intent, state, notes);
 
+      case "append_note": {
+        const selected =
+          state.focus?.kind === "note"
+            ? notes.find((note) => note.id === state.focus?.id && note.kind === "note")
+            : undefined;
+        const found = resolveReference(
+          selected ? focusedReference(intent.reference, noteTitle(selected)) : intent.reference,
+          notes
+            .filter((note) => note.kind === "note")
+            .map((note) => ({ id: note.id, title: noteTitle(note) })),
+          {
+            listed:
+              state.focus?.kind === "note"
+                ? notes
+                    .filter((note) => note.id === state.focus?.id && note.kind === "note")
+                    .map((note) => ({ id: note.id, title: noteTitle(note) }))
+                : [],
+          },
+        );
+        if (found.kind === "many") return clarify(found.items);
+        if (found.kind === "none")
+          return reply({
+            text: "Which note should I add to? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
+        const note = notes.find((row) => row.id === found.item.id)!;
+        const result = await services.notes.update(principal, note.id, {
+          body: `${note.body}\n\n${intent.details}`,
+          expectedVersion: note.version,
+        });
+        return reply({
+          text: `I added your text to "${noteTitle(result.note)}".`,
+          outcome: "completed",
+          changed: result.changed,
+        });
+      }
+
       case "capture": {
+        if (state.focus)
+          return reply({
+            text: "Are these additions to the selected item, or separate new records? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
         if (intent.items.length > 1 || intent.omitted) {
           const categories = await services.categories.list(principal);
           const lines = intent.items.map((item) => {
@@ -2441,8 +2806,21 @@ export function createAssistant(options: AssistantOptions) {
           limit: 500,
         };
         const isEvent = intent.kind === "reschedule_event";
+        const eventRows = isEvent ? await services.events.list(principal, range) : [];
+        if (
+          isEvent &&
+          state.focus?.kind === "event" &&
+          !eventRows.some((row) => row.id === state.focus?.id)
+        ) {
+          const focused = await services.events.get(principal, state.focus.id);
+          if (
+            focused.status === "scheduled" &&
+            (!intent.date || dateKeyOf(focused.startsAt, timezone) === intent.date)
+          )
+            eventRows.push({ ...focused, acknowledged: false });
+        }
         const rows = isEvent
-          ? await services.events.list(principal, range)
+          ? eventRows
           : (await services.workBlocks.list(principal, range)).map((block) => ({
               ...block,
               title:
@@ -2456,7 +2834,15 @@ export function createAssistant(options: AssistantOptions) {
               ? state.eventFocus.ids.flatMap((id) => rows.filter((row) => row.id === id))
               : state.listed.flatMap((item) => rows.filter((row) => row.id === item.id)),
         };
-        let found = resolveReference(intent.reference, rows, referenceOptions);
+        const focused =
+          isEvent && state.focus?.kind === "event"
+            ? rows.find((row) => row.id === state.focus?.id)
+            : undefined;
+        let found = resolveReference(
+          focused ? focusedReference(intent.reference, focused.title) : intent.reference,
+          rows,
+          referenceOptions,
+        );
         if (isEvent && found.kind === "none") {
           found = resolveReference(
             intent.reference.replace(/\b(?:event|appointment)\b/gi, "").trim(),
@@ -2697,12 +3083,26 @@ export function createAssistant(options: AssistantOptions) {
                 (task) => task.status !== "open",
               )
             : openTasks;
-        const found = resolveReference(intent.reference, rows, {
-          listed: state.listed.flatMap((item) => {
-            const row = rows.find((row) => row.id === item.id);
-            return row ? [row] : [];
-          }),
-        });
+        if (
+          intent.kind === "reopen_task" &&
+          state.focus?.kind === "task" &&
+          !rows.some((row) => row.id === state.focus?.id)
+        ) {
+          const task = await services.tasks.get(principal, state.focus.id);
+          if (task.status !== "open") rows.push(task);
+        }
+        const selected =
+          state.focus?.kind === "task" ? rows.find((row) => row.id === state.focus?.id) : undefined;
+        const found = resolveReference(
+          selected ? focusedReference(intent.reference, selected.title) : intent.reference,
+          rows,
+          {
+            listed: state.listed.flatMap((item) => {
+              const row = rows.find((row) => row.id === item.id);
+              return row ? [row] : [];
+            }),
+          },
+        );
         if (found.kind === "many") return clarify(found.items);
         if (found.kind === "none")
           return reply({
@@ -2736,6 +3136,9 @@ export function createAssistant(options: AssistantOptions) {
             : await services.tasks.update(principal, found.item.id, {
                 expectedVersion: found.item.version,
                 ...(intent.title ? { title: intent.title } : {}),
+                ...(intent.details
+                  ? { details: [existing.details, intent.details].filter(Boolean).join("\n\n") }
+                  : {}),
                 ...(intent.taskType || intent.dueDate || intent.estimatedMinutes
                   ? { taskType: intent.taskType ?? "task" }
                   : {}),
@@ -2774,9 +3177,15 @@ export function createAssistant(options: AssistantOptions) {
             outcome: "clarification",
             changed: false,
           });
-        const found = resolveReference(intent.reference, pool, {
-          listed: listed.map(({ id, title }) => ({ id, title })),
-        });
+        const selected =
+          state.focus?.kind === "task" ? pool.find((row) => row.id === state.focus?.id) : undefined;
+        const found = resolveReference(
+          selected ? focusedReference(intent.reference, selected.title) : intent.reference,
+          pool,
+          {
+            listed: listed.map(({ id, title }) => ({ id, title })),
+          },
+        );
         if (found.kind === "none") {
           return reply({
             text: `I couldn't find an open task matching "${intent.reference}". Nothing was changed.`,

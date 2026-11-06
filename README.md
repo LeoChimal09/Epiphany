@@ -10,6 +10,9 @@ instead of maintaining separate lists or memorizing commands.
 
 - **Capture and organize:** tasks, simple to-dos, notes, ideas, categories, and reviewable
   imports from pasted assignment lists.
+- **Discuss a record:** choose Ask Epi on a task, to-do, note, idea, or listed event to
+  start a conversation with that item selected. Epi can also search saved records by
+  title or creation date and asks when matches are ambiguous.
 - **Plan visually:** day, week, and month calendars with deadlines, appointments,
   work blocks, and availability based on routines and existing commitments.
 - **Keep plans current:** complete or cancel work without deleting history, move existing
@@ -80,6 +83,10 @@ This is an actively developed, **owner-only** application, not a public multi-us
 Implemented code is not a claim that every hosted/provider integration has passed live
 acceptance. Microsoft Calendar and broader adaptive planning remain unfinished;
 voice capabilities are optional and have separate setup and verification requirements.
+Record searches scan up to 1,000 records of each requested type and ask you to select
+an item in the dashboard if that limit is reached. Archived tasks are not searched. Conversations
+and selected topics are temporary and reset on refresh. Natural-language understanding
+depends on the configured AI provider and may still require clarification.
 
 ```sh
 bun run check

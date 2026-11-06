@@ -4,6 +4,8 @@ import { ACTION_TOOLS, toolToIntent } from "./tools";
 
 const examples = {
   website_link: {},
+  find_records: { search: "Garden", record_type: "note", event_date: "2026-10-23" },
+  append_note: { reference: "Garden", details: "Grow herbs" },
   list_tasks: { status: "completed", search: "library" },
   create_task: { title: "Return drill", due_date: "2026-10-23", due_time: "17:00" },
   create_event: {

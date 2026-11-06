@@ -29,6 +29,14 @@ export interface InterpretRequest {
   now: string;
   timezone: string;
   today: string;
+  focusedRecord?: {
+    kind: "task" | "todo" | "note" | "idea" | "event";
+    id: string;
+    title: string;
+    details: string;
+    status?: string;
+    truncated?: boolean;
+  } | null;
   weekday: string;
   openTasks: OpenTaskContext[];
   recentNotes: NoteContext[];

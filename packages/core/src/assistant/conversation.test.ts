@@ -60,6 +60,35 @@ const response = (message: unknown, finish_reason = "stop") => ({
 });
 
 describe("ordinary conversation and optional action failures", () => {
+  it("links an ordinary saved note to its exact record", async () => {
+    const f = await fixture(
+      response({
+        content: null,
+        tool_calls: [
+          {
+            type: "function",
+            function: {
+              name: "create_note",
+              arguments: JSON.stringify({
+                title: "Garden plan",
+                details: "Grow herbs",
+                note_kind: "note",
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    f.create.mockResolvedValue({
+      id: "note-1",
+      title: "Garden plan",
+      body: "Grow herbs",
+      kind: "note",
+    });
+    const { reply } = await f.assistant.handle(f.principal, "Save a note about my garden");
+    expect(reply.changed).toBe(true);
+    expect(reply.links).toEqual([{ label: "Open note: Garden plan", href: "#note-note-1" }]);
+  });
   const ideaResponse = () =>
     response({
       content: "How would returns work?",
@@ -186,6 +215,7 @@ describe("ordinary conversation and optional action failures", () => {
       sourceRef: undefined,
     });
     expect(reply).toMatchObject({ changed: true, outcome: "created" });
+    expect(reply.links).toEqual([{ label: "Open idea: Tool library", href: "#note-idea-1" }]);
     expect(reply.text).toContain("How would returns work?");
     expect(state.activeIdea).toEqual({ ownerId: f.principal.ownerId, noteId: "idea-1" });
     expect(f.fetchImpl).toHaveBeenCalledTimes(1);

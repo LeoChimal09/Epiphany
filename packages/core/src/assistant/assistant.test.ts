@@ -128,6 +128,237 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
     return owner;
   }
 
+  it("finds a note by creation date and continues with the exact selected record", async () => {
+    const note = await services.notes.create(assistantPrincipal, {
+      title: "Garden plan",
+      body: "Grow herbs",
+      kind: "note",
+    });
+    const other = await services.notes.create(assistantPrincipal, {
+      title: "Garden plan",
+      body: "Other garden",
+      kind: "note",
+    });
+    const search = build(() => ({
+      kind: "find_records",
+      search: "Garden plan",
+      recordType: "note",
+      createdDate: dateKeyOf(note.createdAt, TZ),
+    }));
+    const ambiguous = await say(search.assistant, "Find my garden note from October 14");
+    expect(ambiguous.reply.outcome).toBe("clarification");
+    expect(ambiguous.reply.changed).toBe(false);
+    const select = build(() => ({ kind: "find_records", search: "second" }));
+    const chosen = await say(select.assistant, "The second one", ambiguous.state);
+    expect(chosen.state.focus?.id).toBe(ambiguous.state.searchResults?.items[1]?.id);
+    const focus = { ...emptyConversation(), focus: { kind: "note" as const, id: note.id } };
+    const append = build(() => ({
+      kind: "append_note",
+      reference: "this note",
+      details: "Add rosemary",
+    }));
+    const result = await say(append.assistant, "Add rosemary to this note", focus);
+    expect(result.reply.changed).toBe(true);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toBe(
+      "Grow herbs\n\nAdd rosemary",
+    );
+    expect((await services.notes.get(assistantPrincipal, other.id)).body).toBe("Other garden");
+    expect(append.provider.calls[0]?.focusedRecord).toMatchObject({
+      id: note.id,
+      details: "Grow herbs",
+    });
+  });
+
+  it("finds old events by creation date and focuses the exact occurrence", async () => {
+    const event = await services.events.create(assistantPrincipal, {
+      title: "Garden show",
+      startsAt: "2025-03-01T18:00:00Z",
+      endsAt: "2025-03-01T19:00:00Z",
+      timezone: TZ,
+    });
+    const search = build(() => ({
+      kind: "find_records",
+      search: "Garden show",
+      recordType: "event",
+      createdDate: dateKeyOf(event.createdAt, TZ),
+    }));
+    const result = await say(search.assistant, "Find the garden show I created");
+    expect(result.state.focus).toEqual({ kind: "event", id: event.id });
+    expect(result.reply.topic).toMatchObject({ title: "Garden show", label: "event" });
+    expect(result.reply.text).toContain("2025-03-01T18:00:00");
+  });
+
+  it("previews and confirms a move of the selected older event, not another similarly named event", async () => {
+    const first = await services.events.create(assistantPrincipal, {
+      title: "Garden show",
+      startsAt: "2025-03-01T18:00:00Z",
+      endsAt: "2025-03-01T19:00:00Z",
+      timezone: TZ,
+    });
+    const second = await services.events.create(assistantPrincipal, {
+      title: "Garden show",
+      startsAt: "2025-03-02T18:00:00Z",
+      endsAt: "2025-03-02T19:00:00Z",
+      timezone: TZ,
+    });
+    const move = build(() => ({
+      kind: "reschedule_event",
+      reference: "this event",
+      newDate: "2026-10-20",
+    }));
+    const preview = await say(move.assistant, "Move this event to October 20", {
+      ...emptyConversation(),
+      focus: { kind: "event", id: first.id },
+    });
+    expect(preview.reply.outcome).toBe("confirmation_needed");
+    expect((await services.events.get(assistantPrincipal, first.id)).startsAt).toEqual(
+      first.startsAt,
+    );
+    const confirm = build(() => ({ kind: "confirm" }));
+    const result = await say(confirm.assistant, "yes", preview.state);
+    expect(result.reply.changed).toBe(true);
+    expect((await services.events.get(assistantPrincipal, first.id)).startsAt).not.toEqual(
+      first.startsAt,
+    );
+    expect((await services.events.get(assistantPrincipal, second.id)).startsAt).toEqual(
+      second.startsAt,
+    );
+  });
+
+  it("finds and updates a note beyond the initial recent-record page", async () => {
+    const note = await services.notes.create(assistantPrincipal, {
+      title: "Older garden plan",
+      body: "Original",
+      kind: "note",
+    });
+    for (let index = 0; index < 100; index++) {
+      now = new Date(now.getTime() + 1000);
+      await services.notes.create(assistantPrincipal, {
+        title: `Newer ${index}`,
+        body: "Other",
+        kind: "note",
+      });
+    }
+    const search = build(() => ({
+      kind: "find_records",
+      search: "Older garden plan",
+      recordType: "note",
+    }));
+    const found = await say(search.assistant, "Find my older garden plan");
+    expect(found.state.focus).toEqual({ kind: "note", id: note.id });
+    const append = build(() => ({
+      kind: "append_note",
+      reference: "Older garden plan",
+      details: "Grow basil",
+    }));
+    const result = await say(append.assistant, "Add basil to Older garden plan");
+    expect(result.reply.changed).toBe(true);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toContain("Grow basil");
+  });
+
+  it("loads an older selected task and appends details without touching similar tasks", async () => {
+    const task = await services.tasks.create(assistantPrincipal, {
+      title: "Shared title",
+      taskType: "todo",
+    });
+    const other = await services.tasks.create(assistantPrincipal, {
+      title: "Shared title",
+      taskType: "todo",
+    });
+    const { assistant } = build(() => ({
+      kind: "update_task",
+      reference: "this todo",
+      details: "Bring a bag",
+    }));
+    const result = await say(assistant, "Add a bag to this todo", {
+      ...emptyConversation(),
+      focus: { kind: "task", id: task.id },
+    });
+    expect(result.reply.changed).toBe(true);
+    expect((await services.tasks.get(assistantPrincipal, task.id)).details).toBe("Bring a bag");
+    expect((await services.tasks.get(assistantPrincipal, other.id)).details).toBeNull();
+  });
+
+  it("rejects foreign focus and refuses a create interpretation while a note is selected", async () => {
+    const stranger = await principalFor(strangerId);
+    const secret = await services.notes.create(stranger, {
+      title: "Private",
+      body: "private details",
+      kind: "note",
+    });
+    const local = await services.notes.create(assistantPrincipal, {
+      title: "Local",
+      body: "original",
+      kind: "idea",
+    });
+    const { assistant, provider } = build(() => ({
+      kind: "create_note",
+      title: "Local",
+      body: "additional point",
+      noteKind: "idea",
+    }));
+    const denied = await say(assistant, "What is this?", {
+      ...emptyConversation(),
+      focus: { kind: "note", id: secret.id },
+    });
+    expect(denied.reply.outcome).toBe("not_found");
+    expect(provider.calls).toHaveLength(0);
+    const duplicate = await say(assistant, "Add a point", {
+      ...emptyConversation(),
+      focus: { kind: "note", id: local.id },
+    });
+    expect(duplicate.reply.outcome).toBe("clarification");
+    expect(duplicate.reply.changed).toBe(false);
+    expect((await services.notes.get(assistantPrincipal, local.id)).body).toBe("original");
+  });
+
+  it("does not append to a selected note when the owner asks not to save", async () => {
+    const note = await services.notes.create(assistantPrincipal, {
+      title: "Journal",
+      body: "Original",
+      kind: "note",
+    });
+    const { assistant } = build(() => ({
+      kind: "append_note",
+      reference: "this note",
+      details: "Private thought",
+    }));
+    const result = await say(assistant, "Just chatting, don't save this", {
+      ...emptyConversation(),
+      focus: { kind: "note", id: note.id },
+    });
+    expect(result.reply.changed).toBe(false);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toBe("Original");
+  });
+
+  it("keeps a selected idea when the model suggests another idea id", async () => {
+    const selected = await services.notes.create(assistantPrincipal, {
+      title: "Shared concept",
+      body: "Original",
+      kind: "idea",
+    });
+    const other = await services.notes.create(assistantPrincipal, {
+      title: "Shared concept",
+      body: "Other",
+      kind: "idea",
+    });
+    const { assistant } = build(() => ({
+      kind: "develop_idea",
+      reference: "this idea",
+      targetId: other.id,
+      points: ["Feature: herbs"],
+    }));
+    const result = await say(assistant, "Add herbs to this idea", {
+      ...emptyConversation(),
+      focus: { kind: "note", id: selected.id },
+    });
+    expect(result.reply.changed).toBe(true);
+    expect((await services.notes.get(assistantPrincipal, selected.id)).body).toContain(
+      "Feature: herbs",
+    );
+    expect((await services.notes.get(assistantPrincipal, other.id)).body).toBe("Other");
+  });
+
   it("moves the unique Godzilla event from today to Saturday at its saved time with no intake loop", async () => {
     now = new Date("2026-11-04T19:34:00Z");
     const event = await services.events.create(assistantPrincipal, {
@@ -1861,6 +2092,10 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         sourceRef: "discord:chan-1/msg-9",
       });
       expect(await categoryName(note!.categoryId)).toBe("Inbox");
+      expect(reply.links).toContainEqual({
+        label: "Open idea: Habit tracker app",
+        href: `#note-${note!.id}`,
+      });
       expect(await taskRows()).toHaveLength(1);
       expect(await noteRows()).toHaveLength(1);
       expect(state.listed.map((item) => item.title)).toEqual(["History essay"]);

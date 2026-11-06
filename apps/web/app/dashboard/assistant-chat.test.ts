@@ -25,6 +25,19 @@ function render(message: ChatMessage) {
 }
 
 describe("assistant review messages", () => {
+  it.each(["note", "idea"])("offers an exact saved %s link in the existing dashboard", (kind) => {
+    const html = render({
+      id: 1,
+      role: "epi",
+      text: "Saved.",
+      outcome: "created",
+      changed: true,
+      links: [{ label: `Open ${kind}: Garden plan`, href: "#note-saved" }],
+    });
+    expect(html).toContain('href="#note-saved"');
+    expect(html).toContain(`Open ${kind}: Garden plan`);
+    expect(html).not.toContain('target="_blank"');
+  });
   it("links a verified creation to its exact saved record without replacing the chat", () => {
     const html = render({
       id: 1,
@@ -60,8 +73,29 @@ describe("assistant review messages", () => {
       outcome: "uncertain",
       changed: false,
     });
+
     expect(html).toContain("Check saved items before retrying");
     expect(html).not.toContain("Nothing was changed");
     expect(html).not.toContain("> Saved");
+  });
+
+  it("shows the selected topic and a way to leave it", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssistantChat, {
+        setup: "ready",
+        messages: [],
+        asking: false,
+        budgetNote: null,
+        voice: { listen: false, speak: false },
+        timezone: "America/Chicago",
+        topic: { label: "idea", title: "Garden plan" },
+        onClearTopic: () => {},
+        onSend: () => {},
+        onOpenItem: () => {},
+      }),
+    );
+    expect(html).toContain("Talking about idea");
+    expect(html).toContain("Garden plan");
+    expect(html).toContain("Clear topic");
   });
 });

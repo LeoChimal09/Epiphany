@@ -28,6 +28,12 @@ export type Intent =
   | { kind: "respond"; text: string }
   | { kind: "clarify"; question: string }
   | {
+      kind: "find_records";
+      search?: string;
+      recordType?: "task" | "todo" | "note" | "idea" | "event";
+      createdDate?: DateKey;
+    }
+  | {
       kind: "list_tasks";
       status: "open" | "completed" | "all";
       dueFrom?: DateKey;
@@ -50,6 +56,7 @@ export type Intent =
       reference: string;
       targetId?: string;
       title?: string;
+      details?: string;
       taskType?: "task" | "todo";
       dueDate?: DateKey;
       dueTime?: string;
@@ -101,6 +108,7 @@ export type Intent =
       reference: string;
       targetId?: string;
     }
+  | { kind: "append_note"; reference: string; targetId?: string; details: string }
   | {
       kind: "develop_idea";
       reference: string;
@@ -163,11 +171,13 @@ export const INTENT_KINDS = [
   "website_link",
   "respond",
   "clarify",
+  "find_records",
   "list_tasks",
   "create_task",
   "create_note",
   "develop_idea",
   "resume_idea",
+  "append_note",
   "capture",
   "recategorize",
   "complete_task",
@@ -237,6 +247,7 @@ export const intentWireSchema = z
     priority: z.enum(["minor", "major"]).nullable(),
     task_type: z.enum(["task", "todo"]).nullable().default(null),
     note_kind: z.enum(["note", "idea"]).nullable().default(null),
+    record_type: z.enum(["task", "todo", "note", "idea", "event"]).nullable().default(null),
     status: z.enum(["open", "completed", "all"]).nullable(),
     from_date: z.string().nullable(),
     through_date: z.string().nullable(),
@@ -319,6 +330,17 @@ export function toIntent(raw: unknown): Intent {
       return { kind: "respond", text: need(wire.text, "text") };
     case "clarify":
       return { kind: "clarify", question: need(wire.text, "text") };
+    case "find_records": {
+      const createdDate = date(wire.event_date, "event_date");
+      const search = present(wire.search);
+      if (!createdDate && !search) throw new IntentError("provide a title or creation date");
+      return {
+        kind: "find_records",
+        ...(search ? { search } : {}),
+        ...(createdDate ? { createdDate } : {}),
+        ...(wire.record_type ? { recordType: wire.record_type } : {}),
+      };
+    }
     case "list_tasks": {
       const dueFrom = date(wire.from_date, "from_date");
       const dueThrough = date(wire.through_date, "through_date");
@@ -463,6 +485,13 @@ export function toIntent(raw: unknown): Intent {
         kind: "resume_idea",
         reference: present(wire.reference) ?? "",
         ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+      };
+    case "append_note":
+      return {
+        kind: "append_note",
+        reference: present(wire.reference) ?? "",
+        ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+        details: need(wire.details, "details"),
       };
     case "develop_idea": {
       const points = need(wire.details, "details")
