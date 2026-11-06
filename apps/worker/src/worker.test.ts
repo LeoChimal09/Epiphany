@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { startWorker, type Worker } from "./worker";
 
-const env = { DATABASE_URL: "mysql://epiphany:placeholder-fixture@127.0.0.1:3407/epiphany" };
+const env = { DATABASE_URL: "file:/tmp/epiphany-config-fixture.sqlite" };
 const config = { databaseUrl: env.DATABASE_URL, timezone: "America/Chicago", healthPort: 0 };
 
 let worker: Worker | undefined;

@@ -38,6 +38,11 @@ export {
 } from "./provider";
 export { resolveReference, ordinalIndex } from "./matching";
 export {
+  LEARNING_CHECK_IN_PREFIX,
+  learningQuestionDue,
+  nextLearningQuestion,
+} from "./learning-questions";
+export {
   VOICE_ACTIONS,
   type VoiceAction,
   type VoiceCapability,

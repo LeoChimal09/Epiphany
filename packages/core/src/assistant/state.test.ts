@@ -15,6 +15,32 @@ const pendingCapture: PendingCapture = {
 };
 
 describe("conversation state", () => {
+  it("round-trips expiring owner-bound event selections and optional learning questions", () => {
+    const state = {
+      ...emptyConversation(),
+      eventFocus: {
+        ownerId: "owner",
+        ids: ["first", "second"],
+        action: "cancel_event",
+        scope: "occurrence",
+        expiresAt: "2026-10-20T18:00:00Z",
+      },
+      learningQuestion: {
+        ownerId: "owner",
+        question: "How long did it take?",
+        taskId: "task",
+        expiresAt: "2026-10-20T18:00:00Z",
+      },
+    };
+    expect(parseConversationState(JSON.parse(JSON.stringify(state)))).toEqual(state);
+    expect(
+      parseConversationState({
+        ...state,
+        eventFocus: { ...state.eventFocus, ids: Array(16).fill("event") },
+      }),
+    ).toBeNull();
+  });
+
   it("round-trips an owner-bound idea reference without accepting a client-supplied body", () => {
     const state = {
       ...emptyConversation(),

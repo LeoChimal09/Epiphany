@@ -10,7 +10,7 @@ import {
   VersionConflictError,
   type Actor,
 } from "./domain";
-import { categories, notes, tasks, type Category, type Note, type Task } from "./schema";
+import { categories, notes, reminders, tasks, type Category, type Note, type Task } from "./schema";
 
 export interface TaskPatch {
   splitReminderCount?: number | null;
@@ -55,8 +55,7 @@ export async function updateTask(
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
       throw new VersionConflictError("Task", current.version);
@@ -177,6 +176,23 @@ export async function updateTask(
       .update(tasks)
       .set({ ...next, version: current.version + 1 })
       .where(eq(tasks.id, taskId));
+    if (!sameDate(next.dueAt, current.dueAt) || next.dueDateOnly !== current.dueDateOnly) {
+      await tx
+        .update(reminders)
+        .set({
+          status: "canceled",
+          detail: "task deadline changed",
+          version: sql`${reminders.version} + 1`,
+        })
+        .where(
+          and(
+            eq(reminders.ownerId, actor.ownerId),
+            eq(reminders.subjectType, "task"),
+            eq(reminders.subjectId, taskId),
+            eq(reminders.status, "scheduled"),
+          ),
+        );
+    }
     await recordAction(tx, actor, {
       action: "task.update",
       entityType: "task",
@@ -200,8 +216,7 @@ export async function reopenTask(
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
     if (current.status === "open") return false;
 
@@ -218,7 +233,7 @@ export async function reopenTask(
       action: "task.reopen",
       entityType: "task",
       entityId: taskId,
-      before: { status: "completed", completedAt: current.completedAt?.toISOString() ?? null },
+      before: { status: current.status, completedAt: current.completedAt?.toISOString() ?? null },
       after: { status: "open", remainingMinutes: current.estimatedMinutes },
     });
     return true;
@@ -237,8 +252,7 @@ export async function updateNote(
     const [current] = await tx
       .select()
       .from(notes)
-      .where(and(eq(notes.id, noteId), eq(notes.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(notes.id, noteId), eq(notes.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Note");
     if (expectedVersion !== undefined && expectedVersion !== current.version) {
       throw new VersionConflictError("Note", current.version);

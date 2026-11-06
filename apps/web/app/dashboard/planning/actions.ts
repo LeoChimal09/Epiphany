@@ -5,6 +5,59 @@ import { validatePlanningSetting } from "@epiphany/core/planning";
 import { ValidationError, VersionConflictError } from "@epiphany/core/services";
 import { dashboardContext } from "../server-data";
 
+export async function saveLearningAllowance(
+  allowed: boolean,
+  expectedVersion: number | undefined,
+  pausedVersion: number | undefined,
+  consent: boolean,
+): Promise<{ ok: true; version: number; pausedVersion?: number } | { ok: false; error: string }> {
+  const saved = await saveLearningSetting("tracking.enabled", allowed, expectedVersion, consent);
+  if (!saved.ok || !allowed) return saved;
+  const resumed = await saveLearningSetting("tracking.paused", false, pausedVersion, false);
+  if (!resumed.ok) {
+    return {
+      ok: false,
+      error:
+        "Learning permission was saved, but could not be fully applied. Reload to review its current state.",
+    };
+  }
+  return { ok: true, version: saved.version, pausedVersion: resumed.version };
+}
+
+export async function saveLearningSetting(
+  key: "tracking.enabled" | "tracking.paused" | "tracking.check_ins",
+  value: boolean,
+  expectedVersion: number | undefined,
+  consent: boolean,
+): Promise<{ ok: true; version: number } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  if (
+    (key !== "tracking.enabled" && key !== "tracking.paused" && key !== "tracking.check_ins") ||
+    typeof value !== "boolean"
+  )
+    return { ok: false, error: "Invalid learning setting." };
+  if ((key === "tracking.enabled" || key === "tracking.check_ins") && value && consent !== true)
+    return { ok: false, error: "Enabling learning requires your explicit consent." };
+  try {
+    const saved = await services.preferences.set(principal, {
+      key,
+      value,
+      status: "confirmed",
+      expectedVersion,
+    });
+    revalidatePath("/dashboard/planning");
+    return { ok: true, version: saved.version };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof VersionConflictError
+          ? "Learning settings changed elsewhere. Reload before saving."
+          : "Learning settings could not be saved.",
+    };
+  }
+}
+
 export async function savePlanningSetting(
   key: string,
   value: unknown,
@@ -20,7 +73,7 @@ export async function savePlanningSetting(
   try {
     const saved = await services.preferences.set(principal, {
       key,
-      value: validated,
+      value: validated === null ? false : validated,
       status: "confirmed",
       expectedVersion,
     });

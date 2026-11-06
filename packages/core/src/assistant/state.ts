@@ -6,6 +6,27 @@ const text = (max: number) => z.string().max(max);
 
 const conversationStateSchema = z
   .object({
+    eventFocus: z
+      .object({
+        ownerId: text(64),
+        ids: z.array(text(64)).min(1).max(15),
+        expiresAt: z.iso.datetime(),
+        action: z.enum(["acknowledge_event", "cancel_event"]).optional(),
+        scope: z.enum(["occurrence", "series"]).optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    learningQuestion: z
+      .object({
+        ownerId: text(64),
+        question: text(400),
+        expiresAt: z.iso.datetime(),
+        taskId: text(64).optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     activeIdea: z
       .object({ ownerId: text(64), noteId: text(64) })
       .strict()

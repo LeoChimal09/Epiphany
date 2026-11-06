@@ -191,8 +191,8 @@ export async function loadBlockStates(
       and(
         eq(workBlocks.ownerId, ownerId),
         eq(workBlocks.status, "planned"),
-        sql`${workBlocks.endsAt} > ${new Date(now.getTime() - BLOCK_WINDOW_BACK_MS)}`,
-        sql`${workBlocks.startsAt} < ${new Date(now.getTime() + BLOCK_WINDOW_FORWARD_MS)}`,
+        sql`${workBlocks.endsAt} > ${now.getTime() - BLOCK_WINDOW_BACK_MS}`,
+        sql`${workBlocks.startsAt} < ${now.getTime() + BLOCK_WINDOW_FORWARD_MS}`,
       ),
     )
     .orderBy(asc(workBlocks.startsAt))
@@ -233,8 +233,7 @@ export async function selectCalendars(
       })
       .from(syncedCalendars)
       .innerJoin(calendarAccounts, eq(calendarAccounts.id, syncedCalendars.accountId))
-      .where(and(eq(syncedCalendars.ownerId, actor.ownerId), eq(syncedCalendars.kind, "external")))
-      .for("update");
+      .where(and(eq(syncedCalendars.ownerId, actor.ownerId), eq(syncedCalendars.kind, "external")));
     const known = new Set(rows.map((r) => r.id));
     for (const id of selectedIds) {
       if (!known.has(id)) throw new CalendarError("invalid", "Unknown calendar.");
@@ -362,8 +361,7 @@ export async function saveConnectedAccount(
           eq(calendarAccounts.ownerId, actor.ownerId),
           eq(calendarAccounts.provider, input.provider),
         ),
-      )
-      .for("update");
+      );
     const sameAccount = existing.find((a) => a.providerAccountId === input.providerAccountId);
     const other = existing.find(
       (a) => a.providerAccountId !== input.providerAccountId && a.status !== "revoked",
@@ -437,8 +435,7 @@ export async function wipeAccounts(db: Database, actor: Actor): Promise<Disconne
       .from(calendarAccounts)
       .where(
         and(eq(calendarAccounts.ownerId, actor.ownerId), ne(calendarAccounts.status, "revoked")),
-      )
-      .for("update");
+      );
     for (const account of accounts) {
       await tx
         .update(calendarAccounts)

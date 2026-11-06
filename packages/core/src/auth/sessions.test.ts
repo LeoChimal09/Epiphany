@@ -19,7 +19,9 @@ import {
   validateSession,
 } from "./sessions";
 
-const migrationsFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
+const migrationsFolder = path.resolve(
+  fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url)),
+);
 const OWNER_DISCORD = "100000000000000001";
 const identity = {
   configuredDiscordUserId: OWNER_DISCORD,

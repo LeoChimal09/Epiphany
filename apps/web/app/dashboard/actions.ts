@@ -18,6 +18,7 @@ import {
 } from "@epiphany/core/planning";
 import {
   categoryForDashboard,
+  eventForSchedule,
   dashboardContext,
   loadDashboardData,
   loadSchedule,
@@ -61,6 +62,34 @@ export type DashboardScheduleResult =
   { ok: true; schedule: ScheduleData } | { ok: false; error: string };
 export type DashboardEventsResult =
   { ok: true; events: ScheduleData["events"]; truncated: boolean } | { ok: false; error: string };
+
+export async function loadDashboardItem(
+  kind: "task" | "event",
+  id: string,
+): Promise<
+  | { ok: true; task: DashboardTask }
+  | { ok: true; event: ScheduleData["events"][number] }
+  | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  if (kind !== "task" && kind !== "event") return { ok: false, error: "Unknown item type." };
+  try {
+    if (kind === "task")
+      return { ok: true, task: taskForDashboard(await services.tasks.get(principal, id)) };
+    const event = await services.events.get(principal, id);
+    if (event.status !== "scheduled")
+      return { ok: false, error: "This event was canceled. It remains in calendar history." };
+    const current = await services.events.list(principal, {
+      from: event.startsAt,
+      to: event.endsAt,
+      limit: 500,
+    });
+    const matching = current.find((row) => row.id === event.id);
+    return { ok: true, event: eventForSchedule(matching ?? event) };
+  } catch (error) {
+    return failure(error);
+  }
+}
 
 export async function askEpi(message: string, state: unknown): Promise<AskEpiResult> {
   if (typeof message !== "string" || !message.trim()) {
@@ -510,7 +539,7 @@ export async function loadDashboardEvents(fromDate: string): Promise<DashboardEv
   }
   try {
     const { principal, services, timezone } = await dashboardContext();
-    const start = localWallToUtc(from, 0, timezone);
+    const start = localWallToUtc(addDays(from, -1), 0, timezone);
     const end = localWallToUtc(addDays(from, 60), 0, timezone);
     const events = await services.events.list(principal, {
       from: start,
@@ -522,6 +551,7 @@ export async function loadDashboardEvents(fromDate: string): Promise<DashboardEv
       events: events.map((event) => ({
         id: event.id,
         seriesId: event.seriesId,
+        ...(event.acknowledged ? { acknowledged: true } : {}),
         title: event.title,
         location: event.location,
         startsAt: event.startsAt.toISOString(),
@@ -655,6 +685,57 @@ export type EventCancelProposal = {
   summary: string;
 };
 
+export async function proposeDashboardEventReschedule(
+  eventId: string,
+  form: FormData,
+): Promise<{ ok: true; proposal: EventCancelProposal } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const event = await services.events.get(principal, eventId);
+    if (event.version !== versionField(form))
+      throw new VersionConflictError("Event", event.version);
+    const window = scheduleWindow(form, event.timezone, false, "date", true);
+    const proposal = await services.confirmations.propose(principal, {
+      action: "event.reschedule",
+      payload: {
+        eventId,
+        startsAt: window.startsAt.toISOString(),
+        endsAt: window.endsAt.toISOString(),
+      },
+    });
+    return {
+      ok: true,
+      proposal: {
+        confirmationId: proposal.confirmationId,
+        payloadHash: proposal.payloadHash,
+        summary: String(proposal.preview.summary),
+      },
+    };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function confirmDashboardEventReschedule(
+  proposal: EventCancelProposal,
+): Promise<DashboardScheduleChangeResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    await services.confirmations.confirm(principal, {
+      confirmationId: proposal.confirmationId,
+      payloadHash: proposal.payloadHash,
+    });
+    return { ok: true, message: "Event time updated. Connected-calendar sync is pending." };
+  } catch (error) {
+    if (error instanceof ConfirmationError)
+      return {
+        ok: false,
+        error: "The edit expired or the event changed. Request a fresh preview.",
+      };
+    return failure(error);
+  }
+}
+
 export async function proposeDashboardEventCancellation(
   eventId: string,
   scope: "occurrence" | "series",
@@ -730,6 +811,41 @@ export async function addDashboardWorkBlock(
 }
 
 // Canceling keeps the event's record; it never completes or deletes a task.
+export async function finishDashboardEvent(
+  eventId: string,
+): Promise<DashboardScheduleChangeResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const result = await services.events.acknowledge(principal, eventId);
+    return {
+      ok: true,
+      message: result.changed
+        ? "Event marked done. Remaining check-ins stopped; the appointment stays in calendar history."
+        : "Event was already marked done.",
+    };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function cancelDashboardTask(taskId: string): Promise<DashboardResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const result = await services.tasks.cancel(principal, taskId);
+    const data = await loadDashboardData();
+    return {
+      ok: true,
+      data,
+      task: taskForDashboard(result.task),
+      message: result.changed
+        ? "Canceled without marking it done. History is kept."
+        : "Already canceled.",
+    };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
 export async function cancelDashboardEvent(
   eventId: string,
 ): Promise<DashboardScheduleChangeResult> {

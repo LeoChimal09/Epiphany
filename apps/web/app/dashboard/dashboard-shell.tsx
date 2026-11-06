@@ -28,6 +28,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   ShieldAlert,
   SlidersHorizontal,
@@ -36,6 +37,7 @@ import {
   Trash2,
   TriangleAlert,
   Undo2,
+  X,
 } from "lucide-react";
 import { AccountMenu } from "./account-menu";
 import { ConfirmationDialog, type DashboardConfirmation } from "./confirmation-dialog";
@@ -52,14 +54,19 @@ import {
   proposeDashboardEventCancellation,
   confirmDashboardEventCancellation,
   cancelDashboardEventCancellation,
+  proposeDashboardEventReschedule,
+  confirmDashboardEventReschedule,
   editDashboardNote,
   editDashboardTask,
   finishDashboardTask,
+  finishDashboardEvent,
+  cancelDashboardTask,
   finishDashboardTasks,
   proposeDashboardNoteDeletion,
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
   loadDashboardEvents,
+  loadDashboardItem,
   loadDashboardHistory,
   loadDashboardSchedule,
   loadMoreDashboardNotes,
@@ -147,6 +154,10 @@ export function DashboardShell({
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [focusedItem, setFocusedItem] = useState<{ id: string; kind: "task" | "event" } | null>(
+    null,
+  );
+  const [linkedEvent, setLinkedEvent] = useState<ScheduleEvent | null>(null);
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | null>(null);
   const [calendarEntryType, setCalendarEntryType] = useState<"task" | "todo" | "event">("task");
@@ -260,13 +271,29 @@ export function DashboardShell({
   const inbox = data.categories.find((category) => category.systemKey === "inbox");
   const selectedCategory = data.categories.find((category) => category.id === categoryFilter);
   const title = view === "category" ? (selectedCategory?.name ?? "Category") : headings[view];
-  const tasks = visibleTasks(
+  const visibleTaskRows = visibleTasks(
     data.tasks,
     view,
     isAssistant ? "" : deferredSearch,
     view === "category" ? categoryFilter : null,
     view === "tasks" ? taskFilter : "all",
   );
+  const focusedTask =
+    focusedItem?.kind === "task" && view === "tasks"
+      ? data.tasks.find((task) => task.id === focusedItem.id)
+      : null;
+  const tasks = focusedTask ? [focusedTask] : visibleTaskRows;
+  const focusedEvents =
+    focusedItem?.kind === "event" && linkedEvent && view === "tasks"
+      ? { ok: true as const, events: [linkedEvent], truncated: false }
+      : null;
+
+  useEffect(() => {
+    if (!focusedItem || view !== "tasks") return;
+    const item = document.getElementById(`${focusedItem.kind}-${focusedItem.id}`);
+    item?.scrollIntoView({ block: "center", behavior: "smooth" });
+    item?.focus({ preventScroll: true });
+  }, [focusedItem, view]);
   const notes = visibleNotes(
     data.notes,
     deferredSearch,
@@ -323,6 +350,23 @@ export function DashboardShell({
             [...result.data.tasks, ...(result.updatedTasks ?? [])].map((task) => [task.id, task]),
           );
           setHistoryTasks((current) => current.map((task) => updated.get(task.id) ?? task));
+        }
+        const retired = new Set(
+          [...(result.updatedTasks ?? []), ...(result.task ? [result.task] : [])]
+            .filter((task) => task.status !== "open")
+            .map((task) => task.id),
+        );
+        if (retired.size) {
+          setSchedule((current) =>
+            current
+              ? {
+                  ...current,
+                  blocks: current.blocks.filter(
+                    (block) => !block.taskId || !retired.has(block.taskId),
+                  ),
+                }
+              : current,
+          );
         }
         setNotice({ text: result.message, error: result.partialFailure ?? false });
         onSuccess?.(result);
@@ -452,6 +496,7 @@ export function DashboardShell({
   }
 
   function selectView(next: DashboardView) {
+    setFocusedItem(null);
     setTaskFilter("all");
     setView(next);
     setCategoryFilter(null);
@@ -467,6 +512,39 @@ export function DashboardShell({
       setHistoryNextOffset(0);
       loadHistoryPage(0, true);
     }
+  }
+
+  function openSavedItem(href: string) {
+    const match = /^#(task|event)-(.+)$/.exec(href);
+    if (!match) return;
+    const kind = match[1] as "task" | "event";
+    const id = decodeURIComponent(match[2]!);
+    startTransition(async () => {
+      try {
+        const result = await loadDashboardItem(kind, id);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        if ("task" in result) {
+          setData((current) => ({
+            ...current,
+            tasks: [result.task, ...current.tasks.filter((task) => task.id !== id)],
+          }));
+          setTaskFilter(result.task.taskType === "todo" ? "todo" : "planned");
+        } else {
+          setLinkedEvent(result.event);
+          setTaskFilter("events");
+        }
+        setSearch("");
+        setCategoryFilter(null);
+        setComposer(null);
+        setView("tasks");
+        setFocusedItem({ kind, id });
+      } catch {
+        setNotice({ text: "Could not open this saved item. Please try again.", error: true });
+      }
+    });
   }
 
   async function sendToEpi(text: string) {
@@ -493,6 +571,7 @@ export function DashboardShell({
           text: result.reply.text,
           outcome: result.reply.outcome,
           changed: result.reply.changed,
+          links: result.reply.links,
         };
       } else {
         reply = { id: nextMessageId.current++, role: "epi", text: result.error, outcome: "failed" };
@@ -587,6 +666,11 @@ export function DashboardShell({
           return;
         }
         options.onSuccess?.();
+        if (focusedItem?.kind === "event") {
+          const item = await loadDashboardItem("event", focusedItem.id);
+          if (item.ok && "event" in item) setLinkedEvent(item.event);
+          else setFocusedItem(null);
+        }
         const week = options.week ?? neededWeek;
         requestedWeek.current = week;
         const refreshed = await loadDashboardSchedule(week);
@@ -617,6 +701,7 @@ export function DashboardShell({
           setNotice({ text: result.error, error: true });
           return;
         }
+
         const { proposal } = result;
         setConfirmation({
           title: scope === "series" ? "Cancel the recurring series?" : "Cancel this occurrence?",
@@ -642,6 +727,60 @@ export function DashboardShell({
       } catch {
         setNotice({ text: "Could not prepare cancellation. Nothing was changed.", error: true });
       }
+    });
+  }
+
+  function finishListedEvent(id: string) {
+    changeSchedule(() => finishDashboardEvent(id), {
+      onSuccess: () => setEventListRefresh((current) => current + 1),
+    });
+  }
+
+  function editListedEvent(id: string, fields: FormData) {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardEventReschedule(id, fields);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: "Move this event?",
+          description: `${proposal.summary} Old reminders will be replaced; connected-calendar changes wait for sync.`,
+          confirmLabel: "Save event time",
+          onConfirm: () =>
+            changeSchedule(() => confirmDashboardEventReschedule(proposal), {
+              onSuccess: () => setEventListRefresh((current) => current + 1),
+            }),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardEventCancellation(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "Could not dismiss the preview. No event time was changed.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not preview the event edit. Nothing was changed.", error: true });
+      }
+    });
+  }
+
+  function cancelListedTask(id: string) {
+    const task = data.tasks.find((task) => task.id === id);
+    if (!task) return;
+    setConfirmation({
+      title: `Cancel "${task.title}"?`,
+      description:
+        "This clears planned blocks and unsent reminders without marking it completed. History is kept and you can reopen it.",
+      confirmLabel: "Cancel item",
+      onConfirm: () => perform(() => cancelDashboardTask(id)),
     });
   }
 
@@ -877,7 +1016,7 @@ export function DashboardShell({
           <div className={styles.sidebarFooter}>
             <Link href="/dashboard/planning" className={styles.sidebarLink}>
               <SlidersHorizontal size={15} aria-hidden="true" />
-              Scheduling preferences
+              Planning defaults
             </Link>
             <Link href="/dashboard/calendars" className={styles.sidebarLink}>
               <CalendarClock size={15} aria-hidden="true" />
@@ -1281,7 +1420,10 @@ export function DashboardShell({
                         className={`${styles.secondaryButton} ${styles.typeFilter}`}
                         data-kind={value}
                         aria-pressed={taskFilter === value}
-                        onClick={() => setTaskFilter(value)}
+                        onClick={() => {
+                          setFocusedItem(null);
+                          setTaskFilter(value);
+                        }}
                       >
                         {value === "all" ? (
                           <ListChecks size={15} aria-hidden="true" />
@@ -1304,7 +1446,10 @@ export function DashboardShell({
                     <input
                       type="search"
                       value={search}
-                      onChange={(event) => setSearch(event.target.value)}
+                      onChange={(event) => {
+                        setFocusedItem(null);
+                        setSearch(event.target.value);
+                      }}
                       placeholder={
                         showingEvents
                           ? "Search events"
@@ -1320,6 +1465,21 @@ export function DashboardShell({
                 </span>
               </div>
             ) : null}
+            {view === "tasks" && focusedItem ? (
+              <div className={styles.selectionToolbar}>
+                <span>Viewing the item Epi saved.</span>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => {
+                    setFocusedItem(null);
+                    setTaskFilter("all");
+                  }}
+                >
+                  Show all tasks
+                </button>
+              </div>
+            ) : null}
             {view !== "history" &&
             !isSchedule &&
             !isAssistant &&
@@ -1333,6 +1493,7 @@ export function DashboardShell({
             ) : null}
             {isAssistant ? (
               <AssistantChat
+                onOpenItem={openSavedItem}
                 setup={assistantSetup}
                 messages={chat.messages}
                 asking={chat.asking}
@@ -1494,6 +1655,7 @@ export function DashboardShell({
                   onComplete={(id) => requestTaskCompletion([id])}
                   onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                  onCancel={cancelListedTask}
                   onSave={editTask}
                   emptySearch={historyFilters.search}
                   emptyLabel="No matching history"
@@ -1549,6 +1711,7 @@ export function DashboardShell({
                     onComplete={(id) => requestTaskCompletion([id])}
                     onCompleteMany={requestTaskCompletion}
                     onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                    onCancel={cancelListedTask}
                     onSave={editTask}
                     emptySearch={search}
                     emptyLabel="No active tasks in this category"
@@ -1591,6 +1754,7 @@ export function DashboardShell({
                   onComplete={(id) => requestTaskCompletion([id])}
                   onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                  onCancel={cancelListedTask}
                   onSave={editTask}
                   emptySearch=""
                   emptyLabel="No active tasks"
@@ -1626,10 +1790,15 @@ export function DashboardShell({
               </div>
             ) : showingEvents ? (
               <EventList
-                result={eventListResult?.key === eventListKey ? eventListResult.result : null}
+                result={
+                  focusedEvents ??
+                  (eventListResult?.key === eventListKey ? eventListResult.result : null)
+                }
                 search={search}
                 pending={pending}
                 onCancel={cancelListedEvent}
+                onComplete={finishListedEvent}
+                onEdit={editListedEvent}
                 clearSearch={() => setSearch("")}
               />
             ) : (
@@ -1644,6 +1813,7 @@ export function DashboardShell({
                   onComplete={(id) => requestTaskCompletion([id])}
                   onCompleteMany={requestTaskCompletion}
                   onReopen={(id) => perform(() => reopenDashboardTask(id))}
+                  onCancel={cancelListedTask}
                   onSave={editTask}
                   emptySearch={search}
                   emptyLabel={view === "completed" ? "No completed tasks" : "No active tasks"}
@@ -1657,6 +1827,8 @@ export function DashboardShell({
                       search={search}
                       pending={pending}
                       onCancel={cancelListedEvent}
+                      onComplete={finishListedEvent}
+                      onEdit={editListedEvent}
                       clearSearch={() => setSearch("")}
                     />
                   </section>
@@ -1724,17 +1896,104 @@ function CategorySelect({
   );
 }
 
-function EventList({
+export function EventTimeEditor({
+  event,
+  pending,
+  onSave,
+}: {
+  event: ScheduleEvent;
+  pending: boolean;
+  onSave: (id: string, fields: FormData) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (!editing)
+    return (
+      <button
+        type="button"
+        className={`${styles.iconButton} ${styles.eventEditButton}`}
+        aria-label={`Edit date or time: ${event.title}`}
+        title="Edit date or time"
+        disabled={pending}
+        onClick={() => setEditing(true)}
+      >
+        <Pencil size={16} aria-hidden="true" />
+      </button>
+    );
+  const localStart = dateTimeLocalValue(event.startsAt, event.timezone);
+  return (
+    <form
+      className={styles.eventEditor}
+      onSubmit={(submit) => {
+        submit.preventDefault();
+        onSave(event.id, new FormData(submit.currentTarget));
+      }}
+    >
+      <fieldset disabled={pending} className={`${styles.fields} ${styles.eventEditorFields}`}>
+        <legend>Edit date and time</legend>
+        <p className={styles.fullWidth}>
+          Only this occurrence. Times use {event.timezone}. Review the preview before saving.
+        </p>
+        <input type="hidden" name="expectedVersion" value={event.version ?? ""} />
+        <input type="hidden" name="eventTimingMode" value="duration" />
+        <label>
+          Date <input name="date" type="date" defaultValue={localStart.slice(0, 10)} required />
+        </label>
+        <label>
+          Start time (AM/PM){" "}
+          <input name="startTime" type="time" defaultValue={localStart.slice(11, 16)} required />
+        </label>
+        <label>
+          Duration (minutes){" "}
+          <input
+            name="durationMinutes"
+            type="number"
+            min={1}
+            max={100_000}
+            defaultValue={Math.round(
+              (Date.parse(event.endsAt) - Date.parse(event.startsAt)) / 60_000,
+            )}
+            required
+          />
+        </label>
+        <div className={`${styles.rowActions} ${styles.fullWidth}`}>
+          <button
+            type="submit"
+            className={styles.iconButton}
+            aria-label="Preview event change"
+            title="Preview event change"
+          >
+            <CalendarClock size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label="Cancel edit"
+            title="Cancel edit"
+            onClick={() => setEditing(false)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </fieldset>
+    </form>
+  );
+}
+
+export function EventList({
   result,
   search,
   pending,
   onCancel,
+  onComplete,
+  onEdit,
   clearSearch,
 }: {
   result: DashboardEventsResult | null;
   search: string;
   pending: boolean;
   onCancel: (id: string, scope?: "occurrence" | "series") => void;
+  onComplete: (id: string) => void;
+  onEdit: (id: string, fields: FormData) => void;
   clearSearch: () => void;
 }) {
   if (!result) {
@@ -1751,7 +2010,8 @@ function EventList({
   return (
     <div className={styles.historyView}>
       <p className={styles.historyHint}>
-        Showing scheduled events from today through the next 60 days.
+        Showing events from yesterday through the next 60 days. Past appointments stay in history;
+        mark done to stop check-ins, or cancel if they did not happen.
       </p>
       {result.truncated ? (
         <p className={styles.limitNotice}>
@@ -1761,7 +2021,13 @@ function EventList({
       {events.length ? (
         <ul className={styles.taskList}>
           {events.map((event) => (
-            <li key={event.id} className={styles.task} data-kind="event">
+            <li
+              key={event.id}
+              id={`event-${event.id}`}
+              tabIndex={-1}
+              className={`${styles.task} ${styles.eventRow}`}
+              data-kind="event"
+            >
               <div className={styles.taskContent}>
                 <div className={styles.recordTopline}>
                   <span className={styles.eventTag}>
@@ -1770,6 +2036,7 @@ function EventList({
                   {event.seriesId ? (
                     <span className={styles.recordLabel}>Recurring series</span>
                   ) : null}
+                  {event.acknowledged ? <span className={styles.recordLabel}>Done</span> : null}
                 </div>
                 <h2>{event.title}</h2>
                 <dl className={styles.recordFacts}>
@@ -1795,23 +2062,45 @@ function EventList({
                   ) : null}
                 </dl>
               </div>
+              {!event.allDay ? (
+                <EventTimeEditor
+                  key={`${event.id}:${event.version}`}
+                  event={event}
+                  pending={pending}
+                  onSave={onEdit}
+                />
+              ) : null}
               <div className={styles.rowActions}>
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={styles.iconButton}
+                  aria-label={`${event.acknowledged ? "Done" : "Mark done"}: ${event.title}`}
+                  title={event.acknowledged ? "Done" : "Mark done"}
+                  disabled={pending || event.acknowledged}
+                  onClick={() => onComplete(event.id)}
+                >
+                  <Check size={16} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  aria-label={`${event.seriesId ? "Cancel occurrence" : "Cancel event"}: ${event.title}`}
+                  title={event.seriesId ? "Cancel occurrence" : "Cancel event"}
                   disabled={pending}
                   onClick={() => onCancel(event.id)}
                 >
-                  {event.seriesId ? "Cancel occurrence" : "Cancel event"}
+                  <X size={16} aria-hidden="true" />
                 </button>
                 {event.seriesId ? (
                   <button
                     type="button"
-                    className={styles.secondaryButton}
+                    className={styles.iconButton}
+                    aria-label={`Cancel series: ${event.title}`}
+                    title="Cancel series"
                     disabled={pending}
                     onClick={() => onCancel(event.id, "series")}
                   >
-                    Cancel series
+                    <Trash2 size={16} aria-hidden="true" />
                   </button>
                 ) : null}
               </div>
@@ -1877,6 +2166,7 @@ function TaskList({
   onComplete,
   onCompleteMany,
   onReopen,
+  onCancel,
   onSave,
   emptySearch,
   emptyLabel,
@@ -1890,6 +2180,7 @@ function TaskList({
   onComplete: (id: string) => void;
   onCompleteMany: (ids: string[]) => void;
   onReopen: (id: string) => void;
+  onCancel: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
   emptySearch: string;
   emptyLabel: string;
@@ -1952,6 +2243,7 @@ function TaskList({
             pending={pending}
             onComplete={onComplete}
             onReopen={onReopen}
+            onCancel={onCancel}
             onSave={onSave}
             selected={selectedIds.includes(task.id)}
             onSelect={(id, checked) =>
@@ -1997,6 +2289,7 @@ export function TaskRow({
   pending,
   onComplete,
   onReopen,
+  onCancel,
   onSave,
   selected,
   onSelect,
@@ -2008,6 +2301,7 @@ export function TaskRow({
   pending: boolean;
   onComplete: (id: string) => void;
   onReopen: (id: string) => void;
+  onCancel?: (id: string) => void;
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
   selected: boolean;
   onSelect: (id: string, checked: boolean) => void;
@@ -2106,26 +2400,34 @@ export function TaskRow({
             <SplitReminderFields count={task.splitReminderCount ?? null} itemType={editType} />
           </div>
           <div className={styles.rowActions}>
-            <button className={styles.primaryButton} disabled={pending} type="submit">
-              Save
+            <button
+              className={styles.iconButton}
+              disabled={pending}
+              type="submit"
+              aria-label={`Save changes: ${task.title}`}
+              title="Save changes"
+            >
+              <Save size={16} aria-hidden="true" />
             </button>
             <button
-              className={styles.textButton}
+              className={styles.iconButton}
               disabled={pending}
               type="button"
+              aria-label={`Cancel edit: ${task.title}`}
+              title="Cancel edit"
               onClick={() => {
                 setEditType(task.taskType);
                 setEditing(false);
               }}
             >
-              Cancel
+              <X size={16} aria-hidden="true" />
             </button>
           </div>
         </form>
       </li>
     );
   return (
-    <li className={styles.task} data-kind={task.taskType}>
+    <li id={`task-${task.id}`} tabIndex={-1} className={styles.task} data-kind={task.taskType}>
       {task.status === "open" ? (
         <input
           className={styles.taskCheckbox}
@@ -2150,7 +2452,12 @@ export function TaskRow({
             )}
             {task.taskType === "todo" ? "Todo" : "Deadline task"}
           </span>
-          {task.status === "completed" ? (
+          {task.status === "canceled" ? (
+            <div>
+              <dt>Status</dt>
+              <dd>Canceled, not completed</dd>
+            </div>
+          ) : task.status === "completed" ? (
             <span className={styles.completedTag}>Completed</span>
           ) : countdown ? (
             <span className={overdue ? styles.overdue : styles.countdown}>{countdown}</span>
@@ -2217,37 +2524,53 @@ export function TaskRow({
         ) : null}
       </div>
       <div className={styles.rowActions}>
-        {task.status === "open" ? (
-          <button
-            type="button"
-            className={styles.textButton}
-            disabled={pending}
-            onClick={() => onComplete(task.id)}
-          >
-            <Check size={14} aria-hidden="true" /> Mark done
-          </button>
-        ) : null}
         <button
           type="button"
-          className={styles.textButton}
+          className={styles.iconButton}
+          aria-label={`Edit: ${task.title}`}
+          title="Edit"
           disabled={pending}
           onClick={() => {
             setEditType(task.taskType);
             setEditing(true);
           }}
         >
-          <Pencil size={14} aria-hidden="true" />
-          Edit
+          <Pencil size={16} aria-hidden="true" />
         </button>
-        {task.status === "completed" ? (
+        {task.status === "open" ? (
           <button
             type="button"
-            className={styles.textButton}
+            className={styles.iconButton}
+            aria-label={`Mark done: ${task.title}`}
+            title="Mark done"
+            disabled={pending}
+            onClick={() => onComplete(task.id)}
+          >
+            <Check size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+        {task.status === "open" && onCancel ? (
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Cancel: ${task.title}`}
+            title="Cancel"
+            disabled={pending}
+            onClick={() => onCancel(task.id)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+        {task.status !== "open" ? (
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Reopen: ${task.title}`}
+            title="Reopen"
             disabled={pending}
             onClick={() => onReopen(task.id)}
           >
-            <Undo2 size={14} aria-hidden="true" />
-            Reopen
+            <Undo2 size={16} aria-hidden="true" />
           </button>
         ) : null}
       </div>

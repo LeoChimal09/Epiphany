@@ -1,6 +1,6 @@
 # Epiphany Build Goals
 
-This is the execution checklist for [the product plan](README.md). Goals 01-05,
+This is the execution checklist for [the product plan](docs/product-plan.md). Goals 01-05,
 07, and 08 are complete; Goal 06 is the earliest open goal.
 The current focus is Goal 12 by owner request; Goal 11 live checks are deferred.
 Build one goal at a time, verify its completion criteria, and then
@@ -999,6 +999,216 @@ memory-control and privacy gates still apply to those unchecked goals.
   typechecks, ESLint, formatting and production build passed. No owner records were
   deleted or completed, and no deployment or commit was performed.
 
+- 2026-11-04, owner-requested calendar lifecycle, editing, routines, and portfolio follow-up
+  (verified locally, not deployed; no additional goals checked off):
+  shared task completion/cancellation atomically retires every linked planned block
+  and cancels unsent alerts, including split-day reminders. Calendar sync cleans legacy
+  blocks for inactive tasks without a 60-day cleanup cutoff; provider conflicts remain
+  visible rather than overwritten. Tasks/to-dos have distinct done/cancel/reopen controls.
+  Event done markers stop check-ins but retain historical appointments; yesterday's
+  events remain accessible. Time editing moves existing work blocks in place, preserves
+  deadline clocks on date-only changes, and previews/confirms one local event occurrence
+  against its version. Imported appointments remain source-calendar-managed.
+  Daily routine now includes optional planning-hour limits; defaults no longer impose
+  a work shift and saved restrictions remain intact. Personal learning exposes the
+  existing opt-in duration/snooze observations and evidence-backed insights, not model
+  retraining. Explicitly timed morning briefings no longer wait for quiet-hours end;
+  pause, daily caps, timezone/DST, and stale-delivery safeguards still apply.
+  README is now a concise implemented-feature overview; detailed requirements moved
+  to `docs/product-plan.md`. SQLite cost/deployment assessment is in `docs/database.md`;
+  MySQL remains unchanged because isolated web/worker filesystems need a storage and
+  tested data-migration decision first. GitHub About remains unset: the authenticated
+  account has READ access only, and the attempted description update was refused.
+  Verification: the required disposable-MySQL full run exercised 77 files/1,218 cases
+  (1,203 passed initially); all 15 failures were fixed and their complete affected
+  files rerun successfully (157 cases), plus one new no-save cancellation case passed.
+  Thus all 1,219 current cases have passing evidence across the run and targeted reruns;
+  a second full-suite run was not performed. Migration clean-install/previous-schema
+  upgrades passed; `bun run check`, `bun run db:check`, `bun run build`, and whitespace
+  checks passed. Fixture database cleanup was verified by the tests.
+  Migration `0015_wakeful_wiccan` must run before deploying updated web/worker code.
+  No production migration, personal-record mutation, live Discord/Google acceptance,
+  commit, push, or deployment was performed. The live briefing's timezone/worker
+  configuration still needs checking; the quiet-hours fix is locally reproduced.
+
+- 2026-11-04, Discord event-reference and conversational-learning follow-up
+  (owner-requested; verified locally, not deployed):
+  event focus is separate from task lists and preserves the intended done/cancel
+  action, numbered selection order, occurrence scope, owner, and one-hour expiry.
+  Explicit dates override focus; older focused/reminded events are re-read through
+  owner-scoped services instead of silently falling outside the nearby query range.
+  Explicit Discord replies restore the exact bot reply's temporary conversation
+  snapshot (bounded to 100 for one hour); marked reminders still resolve through
+  persisted owner records after restarts, including explicit replies to older reminders.
+  Missing snapshots provide only referenced bot text, not authorization or stale state.
+  With learning enabled/unpaused, task completions or schedule/insight reviews may
+  include one optional question per local day, using no extra model call/notification.
+  The day/rotation persists across runtime restarts; answer context expires in ten minutes.
+  Duration answers bind to completed tasks. Preference answers are proposed and require
+  approval before becoming confirmed memories, even if a provider prematurely claims consent.
+  No-save messages and paused/disabled learning do not collect reports. Questions do not
+  automatically change availability or bookings.
+  Verification: 430 tests across 27 assistant/Discord/dashboard files passed with required
+  disposable MySQL, including persisted done markers, exact cancellation confirmation,
+  numbered replies, stale/other-owner focus rejection, learning cooldown, duration binding,
+  consent, and pause/no-save behavior. Fixture database deletion was verified by the tests.
+  `bun run check`, production build, and whitespace checks passed. No additional schema
+  migration, live model/Discord acceptance, personal-data mutation, commit, push, or deployment.
+  Earlier calendar cleanup/editing/routine changes remain local and still require migration
+  0015 before deploying updated web/worker code. No goals are newly marked complete.
+
+- 2026-11-04, planning-defaults layout clarification (owner-requested; local only):
+  replaced nested settings disclosures with visible cards for briefing, extra task
+  reminders, personal learning, and routine defaults. Only additional planning
+  defaults remain behind a single disclosure, with no dropdowns nested inside it.
+  Page and navigation now explicitly say Planning defaults and distinguish usual
+  settings from editing individual tasks/events. Existing buffer/travel/minimum-block
+  values remain available without inventing new scheduling options.
+  Learning uses one positive Allow checkbox, not a separate Pause collecting toggle.
+  Previously paused learning displays as off; allowing it clears the older pause,
+  while disallowing it stops report collection/use without deleting reports.
+  Existing consent/version checks remain; a partial save is reported as an error
+  requiring reload rather than falsely claiming success.
+  Verification: 48 focused settings/action/render tests passed; `bun run check`,
+  production build, and whitespace checks passed. No schema change or deployment.
+
+- 2026-11-04, event date/time editing follow-up (owner-requested; local only):
+  calendar move tools no longer require a new clock time for a date-only edit.
+  The shared assistant retains the saved local start and elapsed duration across
+  DST, uses event focus for occurrence selection, and avoids confirmations for
+  unchanged times. Provider context now distinguishes standalone events from series;
+  instructions use saved timing and conversational history instead of repeating
+  original-date/time/scope questions. Dashboard event rows have a flat Edit date or
+  time form, prefilled from saved timing, with version checks and an exact
+  confirmation preview. Successful edits refresh the schedule and editor version.
+  One-occurrence changes only; imported appointments remain source-calendar-managed.
+  Verification: 477 tests across 18 assistant/dashboard/service files passed with
+  required disposable MySQL, including Godzilla's Nov 4 to Nov 7 move at 1-3 PM,
+  date-only DST preservation, no-op behavior, stale versions, and crowded Discord/
+  dashboard conversations under the existing input budget. Tests verified fixture
+  database deletion; `bun run check`, production build, and whitespace checks passed.
+  The disposable MySQL container was removed afterward.
+  The adapter uses a synthetic model response: live model,
+  Discord, browser, and connected-calendar acceptance remain unverified. No real
+  owner event was changed and no deployment was performed.
+
+- 2026-11-04, compact dashboard rebuild (owner-requested; local only):
+  replaced the tall sidebar, promotional heading, and large stat cards with an
+  icon-led navigation bar, small saved-record counts, and a two-column assistant/
+  upcoming-task workspace that stacks on mobile. Upcoming tasks use five compact
+  previews with direct completion and navigation to full editing; bulk selection
+  remains in the task list. Categories appear only when requested. Mobile navigation
+  wraps so all views remain discoverable, and icons remain visible.
+  Planning defaults are grouped into Routine, Notifications, and Learning, with
+  compact icon-led saved summaries instead of expanded forms or nested disclosures.
+  Edit reveals only that setting's controls. Summaries retain the saved value while
+  editing; Save is disabled without changes, drafts are labeled unsaved, cancellation
+  restores saved values, and only successful responses update summaries and versions.
+  Shortened repeated explanatory text while retaining learning consent, data-retention,
+  notification timing, and optional planning-limit explanations where edited.
+  Verification: 52 focused rendering/action tests, lint/format/type checks, production
+  build, and whitespace checks passed. Five isolated Chromium interaction checks
+  passed using actual components with synthetic records and mocked server actions:
+  save failures/success/version reuse, cancel/reset, explicit learning permission,
+  reminder-count retention, group switching, and dashboard/task navigation.
+  Responsive checks covered 375, 768, 1024, and 1440px with no page overflow;
+  desktop/mobile screenshots were inspected. These are not hosted sign-in or live
+  persistence acceptance tests. No repository dependencies, schema, or stored
+  preferences changed; no deployment or goal completion is claimed.
+
+- 2026-11-04, dashboard layout restoration (owner-requested; local only):
+  restored the original sidebar, visible categories, field-station heading, stat
+  cards, assistant presentation, and full upcoming-task rows. Kept the new grouped
+  Planning defaults page and its saved/draft editing behavior unchanged, along with
+  earlier completion, cancellation, and event date/time editing fixes.
+  Verification: 22 focused dashboard/defaults render tests, `bun run check`,
+  production build, and whitespace checks passed. Dashboard CSS and assistant
+  presentation match their pre-redesign versions. No deployment.
+
+- 2026-11-04, proactive Discord personalization (owner-requested; local only):
+  added separate, explicit **Discord check-ins** consent alongside Personal learning.
+  The worker can queue optional private owner-mentioned questions without an active
+  conversation, with a shared three-day cooldown and twelve persisted, nonrepeating
+  general topics; exhausted topics stop rather than rotate. Failed sends consume
+  the reserved topic/cooldown to avoid nagging. Completion-duration questions retain
+  that topic history, including legacy history.
+  Routine/calendar availability, quiet hours, pauses, recent reminders, pending
+  conversations, and delivery age gate optional sends; permissions/availability are
+  checked again at delivery. Existing queue claims, daily caps, and privacy rules
+  remain in force, and optional scheduling failures do not block normal reminders.
+  Availability is an estimate from saved records, not Discord presence monitoring.
+  Marked proactive replies recover owner-bound question context after restart.
+  Preference answers require approval before entering AI context; approved tone and
+  length preferences can guide generated replies, not fixed templates or identity
+  imitation. Outgoing questions need no model call; interpreting replies uses the
+  ordinary AI budget. No model retraining or silent planning-hour changes.
+  Verification: 310 focused tests passed across assistant/provider, learning topics,
+  worker/reminder context and wiring, persisted reminder engine, and planning
+  consent/render suites. Disposable MySQL verified one delivery across restart,
+  exclusion of unapproved answers, and approved preferences in future AI requests;
+  fixture databases were dropped and the test container removed. `bun run check`,
+  production build, and whitespace checks passed. No live Discord/model acceptance,
+  production data changes, migration, commit, push, deployment, or goal completion.
+
 When completing a goal, add a dated note with the implementation location,
 checks run, results, and any remaining limits. Change the next-goal pointer only
 after the current goal's completion criteria pass.
+
+- 2026-11-05, direct links from assistant creations (owner-requested; local only):
+  persisted task/to-do/event creations now include server-built exact-record links;
+  approved imports link successful tasks, and recurring events link the first
+  occurrence. Following owner clarification, links now switch to the dashboard's
+  Tasks view in the same tab, select the appropriate task/to-do/event filter, and
+  focus the exact saved row with its existing editing/lifecycle controls. Chat state
+  stays intact; Show all tasks exits the focused view. There is no separate item
+  page or new tab, and Discord replies remain unchanged. The item is re-read through
+  authenticated owner-scoped services, independent of list pagination/date windows.
+  Verification: 78 focused action, chat, and dashboard render tests;
+  four disposable-MySQL creation/import tests verified links against persisted IDs.
+  Two Chromium interaction tests at mobile/desktop widths verified exact task,
+  to-do, and event focus, selected filters, no new pages, and preserved chat.
+  Browser tests used synthetic actions. Lint/format/type checks and production build
+  passed. No live Discord/model
+  acceptance, production migration, commit, push, or deployment.
+
+- 2026-11-05, event editor layout repair (owner-requested; local only):
+  event cards now keep details and actions in a responsive grid, with the open
+  editor spanning the full card below them. Compact fields and a separate action
+  footer prevent stretched controls and overlapping/letter-by-letter titles.
+  Edit, done, cancel, preview, and series-cancel controls use icon buttons with
+  accessible names, tooltips, and 44px targets. Existing proposal/confirmation,
+  event version binding, and cancellation scopes are unchanged.
+  Verification: eight focused render tests, four Chromium interaction/layout
+  tests at 375/768/1040/1440px, `bun run check`, production build, and whitespace
+  checks passed. Desktop/mobile screenshots inspected. Browser tests used
+  synthetic callbacks, not live persisted events; no commit or deployment.
+
+- 2026-11-05, SQLite cost migration (owner-requested; local only):
+  replaced the runtime MySQL driver/schema with async Drizzle/libsql over one
+  durable SQLite file. WAL, foreign keys, private file permissions, serialized
+  write transactions, and bounded nonblocking busy recovery preserve shared
+  service authorization, confirmation/version checks, reminder claims, budget
+  reservations, and calendar lifecycle behavior. Dates use UTC epoch milliseconds;
+  JSON and existing IDs are preserved. Category names use SQLite NOCASE, whose
+  non-ASCII/accent matching differs from MySQL's collation.
+  Added checksum-validated transactional SQLite migrations and an empty-target,
+  read-only consistent-snapshot MySQL importer. Legacy MySQL schema/migrations
+  remain intact for transfer and rollback. Backup/restore, drift tooling, normal
+  database fixtures, CI, and current documentation now use SQLite.
+  Production packaging supervises Node web and Bun worker together in one
+  Railway service/replica sharing `/data`; migrations finish before either child
+  starts, and child failure stops its sibling. Separate isolated services must
+  not use their own copies of the file.
+  Verification: all 84 test files / 1,299 tests passed with no skips, including
+  all-18-table disposable MySQL transfer, encrypted-token/UTC/JSON preservation,
+  unchanged source, nonempty-target refusal, import/restore rollback, concurrent
+  migration runners, and independent Bun-process contention with foreign keys.
+  `bun run check`, `bun run db:check`, whitespace checks, production Next build,
+  and Docker image build passed. A disposable persistent-volume container served
+  both health endpoints and verified authenticated HTTP task creation, exact UTC
+  persistence through Node SQLite, restart durability, and task completion.
+  The real restore-drill CLI also passed against a disposable SQLite source.
+  No production data was copied, no Railway service/billing setting was changed,
+  and no live Discord/model acceptance, commit, push, or deployment was performed.
+  Actual cost savings require the documented backed-up cutover and retiring old
+  database/duplicate services only after verification; keep MySQL until then.

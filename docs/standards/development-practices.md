@@ -36,7 +36,7 @@ generated Next.js warnings apply only if that framework is chosen here.
 ## Command Contract And CI
 
 Goal 02 implemented the applicable contract below. `db:generate`, `db:migrate`,
-and `db:status` arrive with Goal 03; `db:up`/`db:down` start the local MySQL container.
+and `db:status` manage the SQLite file. Legacy MySQL containers exist only for import/rollback.
 The CI workflow is written but has not run on a hosted runner (no repository yet).
 
 | Script | Required purpose |
@@ -61,8 +61,9 @@ Do not install git hooks or change git configuration automatically during instal
 
 - Keep persistence and domain decisions in shared backend services/repositories,
   not separate implementations inside dashboard, bot, and voice handlers.
-- MySQL 8.4 LTS with Drizzle ORM and mysql2 was selected in Goal 01; use a dedicated
-  database and credentials, with no browser-side database access.
+- The owner-approved SQLite migration supersedes the Goal 01 MySQL choice. Use
+  Drizzle with the local libsql client, one durable shared file, and no browser-side
+  database access. Keep MySQL schema/migrations only for safe transfer and rollback.
 - Use schema-as-code and versioned migrations with Drizzle. The dashboard framework
   is Next.js; follow the framework guidance in AGENTS.md when scaffolding.
 - When applicable, implement db:generate and db:migrate. Restrict any db:push
@@ -87,7 +88,7 @@ become executable in Goal 03; no migration tooling is installed yet.
   new required fields, plan staged backfills and application compatibility before
   removing old fields or adding constraints to existing records.
 3. Test clean installation and upgrade from the previous schema using isolated
-  MySQL fixtures containing representative tasks, notes, and preferences. Verify
+  SQLite fixtures containing representative tasks, notes, and preferences. Verify
   data preservation, expected constraints, and a second run with no pending changes.
 4. Apply only pending migrations in order using a migration-history table and a
   single serialized migration runner. Coordinate deployment so concurrent
@@ -97,14 +98,14 @@ become executable in Goal 03; no migration tooling is installed yet.
   Run an explicit deployment migration step; never reset or recreate the database
   just to make a schema update succeed.
 6. Stop rollout on failure and inspect both migration history and actual schema.
-  Many MySQL DDL operations implicitly commit, so do not assume transaction
-  rollback restores a partially changed schema. Document a tested recovery or
-  forward-fix plan; do not blindly retry partially applied SQL.
+  SQLite migrations must roll back DDL and history together on failure. Legacy
+  MySQL DDL can commit implicitly; use its documented recovery path for source
+  maintenance. Do not blindly retry partially applied SQL.
 
 Provide documented db:generate, db:migrate, and db:status script equivalents for
 the chosen migration tool. Routine application restarts must not recreate tables
 or perform unreviewed schema synchronization. CI validates migrations on disposable
-MySQL databases, never applies them to production, and fails on missing artifacts
+SQLite files (and optional legacy MySQL import fixtures), never production, and fails on missing artifacts
 for schema changes using checks supported by the selected toolchain.
 
 ## Security And Test Data

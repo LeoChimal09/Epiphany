@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Pool, RowDataPacket } from "mysql2/promise";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDatabasePool } from "./client";
+import { createPool as createDatabasePool } from "./mysql-client";
 import {
   diffMigrations,
   getMigrationStatus,
@@ -13,14 +13,14 @@ import {
   MIGRATIONS_TABLE,
   runMigrations,
   type MigrationFile,
-} from "./migrate";
+} from "./mysql-migrate";
 import { UPGRADE_SEEDS } from "./upgrade-seeds";
 import {
   createTestDatabase,
   dbTestsEnabled,
   REQUIRE_DB_TESTS,
   type TestDatabase,
-} from "./test-support";
+} from "./mysql-test-support";
 
 const realFolder = path.resolve(fileURLToPath(new URL("../../drizzle", import.meta.url)));
 const TABLES = [

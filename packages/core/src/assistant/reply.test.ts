@@ -33,5 +33,8 @@ describe("system prompt", () => {
   it("asks for short conversational replies, not terse or essay-length ones", () => {
     expect(SYSTEM_PROMPT).toContain("two to four short sentences");
     expect(SYSTEM_PROMPT).toContain("Do not be curt");
+    expect(SYSTEM_PROMPT).toContain("When presenting multiple records");
+    expect(SYSTEM_PROMPT).toContain("group schedule items by day");
+    expect(SYSTEM_PROMPT).toContain("Avoid dense comma/semicolon-separated lists");
   });
 });

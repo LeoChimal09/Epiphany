@@ -10,7 +10,7 @@ import {
 } from "../packages/core/src/ops";
 
 // A restore drill: export the owner's data from SOURCE_DATABASE_URL (read only), load it into a
-// disposable database (TEST_MYSQL_ADMIN_URL), verify it row for row, re-apply deletions made since
+// disposable SQLite file, verify it row for row, re-apply deletions made since
 // the export, and report the time taken against the recovery targets (RPO 24 h, RTO 4 h). It never
 // writes to the source. Run it against a copy or the live database; it removes only the database it
 // created.
@@ -20,9 +20,9 @@ const RTO_HOURS = 4;
 async function main() {
   const sourceUrl = process.env.SOURCE_DATABASE_URL;
   const ownerId = process.env.OWNER_ID;
-  if (!sourceUrl || !process.env.TEST_MYSQL_ADMIN_URL) {
+  if (!sourceUrl) {
     console.error(
-      "Set SOURCE_DATABASE_URL and TEST_MYSQL_ADMIN_URL (and OWNER_ID if there is more than one owner).",
+      "Set SOURCE_DATABASE_URL to a SQLite file (and OWNER_ID if there is more than one owner).",
     );
     process.exit(2);
   }

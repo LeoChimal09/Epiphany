@@ -112,9 +112,9 @@ const data = (over: Partial<OverviewData> = {}): OverviewData => ({
 describe("overview rendering", () => {
   it("keeps simple to-dos visible today without inventing task deadlines or priority", () => {
     const fixture = data({ openTasks: [task({ title: "Repair drone", taskType: "todo" })] });
-    expect(renderOverview("today", fixture)).toContain("__To-dos__\n• Repair drone (to-do)");
+    expect(renderOverview("today", fixture)).toContain("**To-dos**\n• Repair drone (to-do)");
     expect(renderOverview("today", fixture)).not.toContain("Nothing due");
-    expect(renderOverview("priorities", fixture)).toContain("Repair drone (to-do)");
+    expect(renderOverview("priorities", fixture)).toContain("1. **Repair drone**\n   To-do");
     expect(renderOverview("priorities", fixture)).not.toContain("minor");
   });
   it("shows overdue, due-today, events and planned work for today, in the owner's timezone", () => {
@@ -138,8 +138,8 @@ describe("overview rendering", () => {
       }),
     );
     expect(text).toContain("**Today · Wed, Oct 14**");
-    expect(text).toContain("__Overdue__\n• Late essay (due Sun, Oct 11, 11:59 PM)");
-    expect(text).toContain("__Due today__");
+    expect(text).toContain("**Overdue**\n• Late essay (due Sun, Oct 11, 11:59 PM)");
+    expect(text).toContain("**Due today**");
     expect(text).toContain("• Chem lab (11:59 PM)");
     expect(text).toContain("• Quiz prep (all day) ⚠ needs review");
     expect(text).not.toContain("Next week");
@@ -184,10 +184,10 @@ describe("overview rendering", () => {
         ],
       }),
     );
-    expect(text.indexOf("__Thu, Oct 15__")).toBeLessThan(text.indexOf("__Fri, Oct 16__"));
-    expect(text).toContain("3:00 PM: work on Study");
-    expect(text).toContain("10:00 AM: Lab");
-    expect(text).toContain("Due: Chem lab (5:00 PM)");
+    expect(text.indexOf("**Thu, Oct 15**")).toBeLessThan(text.indexOf("**Fri, Oct 16**"));
+    expect(text).toContain("\n\n**Thu, Oct 15**\n- **3:00 PM–4:00 PM** · Planned work: Study");
+    expect(text).toContain("\n\n**Fri, Oct 16**\n- **10:00 AM–11:00 AM** · Event: Lab");
+    expect(text).toContain("- **5:00 PM** · Deadline: Chem lab");
     expect(text).not.toContain("Far away");
     expect(renderOverview("schedule", data())).toContain("Nothing scheduled in the next 7 days.");
   });
@@ -216,8 +216,8 @@ describe("overview rendering", () => {
       }),
     );
     expect(text).toContain("Priorities · 15 open");
-    expect(text).toContain("1. Overdue one (minor, due Sun, Oct 11, 11:59 PM, 3d overdue)");
-    expect(text).toContain("2. Today one (minor, due Wed, Oct 14, 11:59 PM, today)");
+    expect(text).toContain("1. **Overdue one**\n   minor · due Sun, Oct 11, 11:59 PM, 3d overdue");
+    expect(text).toContain("\n\n2. **Today one**\n   minor · due Wed, Oct 14, 11:59 PM, today");
     expect(text).not.toContain("Whenever");
     expect(text).toContain("…and 5 more open tasks");
   });
@@ -294,8 +294,8 @@ describe("overview rendering", () => {
         ],
       }),
     );
-    expect(text).toContain("__Coming up__\n• Thu, Oct 15 5:00 PM: Heads up");
-    expect(text).toContain("__Didn't reach you__");
+    expect(text).toContain("**Coming up**\n• Thu, Oct 15 5:00 PM: Heads up");
+    expect(text).toContain("**Didn't reach you**");
     expect(text).toContain("private Discord channel");
     expect(text).not.toContain("Already sent");
     expect(text).not.toContain("Ancient");
@@ -319,7 +319,7 @@ describe("overview rendering", () => {
     expect(text).toContain("• 5:00 PM to 6:00 PM: Study");
     expect(text).toContain("• Overdue: Late essay");
     expect(text).toContain("• Due today: Chem lab (11:59 PM)");
-    expect(text).toContain("Coming up:\n• Next week");
+    expect(text).toContain("**Coming up**\n• Next week");
     expect(text).not.toContain("epi:");
     expect(renderBriefing(data())).toContain("Nothing is due or scheduled today.");
   });

@@ -93,6 +93,11 @@ duration, Epi adds an event spanning that interval.
   the full answer into `#schedule`, `#priorities`, or `#check-ins`, respectively. Epi replies in
   `#assistant` with a Discord jump link to the new message; the destination must be private and
   visible to you. Direct messages continue to receive their answer directly.
+- Schedule answers and the schedule overview separate days with bold headings and show one entry
+  per line, with bold time ranges and explicit event, deadline, and planned-work labels. Task and
+  to-do answers separate each bold title from its timing/priority details; work-block confirmations
+  list each result separately instead of joining everything into a paragraph.
+  Long read-only answers are split across messages, including in DMs and channel-routing fallbacks.
 - If someone **deletes an overview message**, Epi posts it again. Only the message is gone; no task,
   note, or event is touched.
 - A lost record of which message belongs to a view does not cause a duplicate: Epi finds its earlier
@@ -122,12 +127,68 @@ An explicit Discord reply to a marked reminder resolves that exact bot message, 
 reminder sent since. The marker is checked against the owner's persisted reminder. After a restart,
 the worker can recover a recent marked reminder from the private channel's latest messages.
 Implicit reminder context expires after an hour; ambiguous replies ask rather than picking a task.
+An explicit reply can refer to an older marked reminder: Epi re-reads its owner-scoped record
+instead of choosing the newest notification. That does not replay the reminder.
+
+Event conversations retain a bounded, one-hour focus separate from task lists. A numbered
+choice such as "the second one" after event disambiguation retains the intended done/cancel
+action and occurrence/series scope. Explicit dates/times override that focus. Events outside
+the ordinary nearby calendar window are re-read by ID through the same permissioned services.
+Replies to Epi's conversational messages restore that message's temporary context rather than
+discarding it; at most 100 reply snapshots are held for an hour. They are lost on restart.
+Without a snapshot, only the referenced bot message's text is given as conversation context;
+Epi must still identify and validate current records, and stale confirmations cannot execute.
 
 "Already here" or "finished gym time" can acknowledge an event and stop its remaining check-ins.
 This records acknowledgment in activity history and cancels pending reminders; it does **not**
 cancel or delete the calendar event, shorten its reserved time, or complete an unrelated task.
 Acknowledgment survives restarts and applies to that event version; rescheduling the event allows
 new reminders. Saying you're not going remains a cancellation, distinct from attendance.
+
+To move an existing timed event, Epi can use its saved start time and duration: "Move
+Godzilla to Saturday, same time" does not require repeating the original time. A date-only
+move preserves the event's local clock time across daylight-saving changes. Epi previews
+the exact occurrence and destination before confirmation; only genuinely ambiguous matches
+need another identifying detail. The dashboard event list also offers **Edit date or time**.
+These controls move one Epiphany-owned occurrence, not an entire series or an imported
+appointment; imported events must be edited in their source calendar. Connected-calendar
+updates remain pending until synchronization succeeds.
+
+## Optional personal check-ins
+
+Under **Planning defaults → Learning**, allow **Personal learning**, then separately enable
+**Discord check-ins → Allow Epi to message me first**. Both default off. Epi can then send
+an occasional question with an owner mention in private **#check-ins**, even when you
+have not started a conversation. These are not DMs; Discord/device notification settings
+still determine whether you receive a push.
+
+Questions have a shared minimum three-day gap across Discord and dashboard conversations.
+Twelve predefined topics cover things such as reply length, tone, focus, and helpful
+encouragement. Asked topics persist across restarts and are not repeated; when the set
+is exhausted, general questions stop. Completion-duration questions can still accompany
+work you explicitly finish, subject to the same cooldown. You can ignore any question.
+
+Before queuing and again before sending, Epi checks your saved routines and calendar
+for at least 30 free minutes, quiet hours, reminder pauses, and learning permission.
+It avoids the hour after another delivered reminder and does not interrupt a pending
+conversation approval/question. This is a conservative availability estimate, **not**
+Discord presence monitoring or proof you are actually free. Stale questions are skipped,
+and ordinary daily reminder caps still apply. A reserved topic/cooldown is consumed even
+if delivery fails, avoiding repeated attempts to ask you the same thing. Outgoing questions
+need no extra AI call; interpreting an answer uses the normal configured, budgeted assistant.
+
+Reply directly to the marked question to recover its context after a restart. Its
+owner-bound answer context lasts 24 hours; questions appended to an active conversation
+last ten minutes. Duration reports feed estimates after at least three similar reports.
+Preference answers are proposed for your approval before becoming remembered facts.
+Approved communication preferences guide AI-generated replies toward your preferred
+tone and length, not an imitation of your identity, wording, or typos. Fixed greetings
+and reminder templates remain fixed. Epi does not retrain a model or silently change
+planning hours from a remembered answer.
+
+Disable **Discord check-ins** to stop proactive questions; disabling personal learning
+stops both forms of learning questions and report use/collection. Existing reports and
+memories remain until explicitly forgotten. Silence never becomes an answer.
 
 ## If the bot is silent
 

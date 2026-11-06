@@ -7,6 +7,7 @@ import {
   events,
   notes,
   owners,
+  reminders,
   tasks,
   workBlocks,
   type ActionSource,
@@ -122,7 +123,7 @@ export async function ensureInbox(db: Writer, ownerId: string): Promise<Category
   await db
     .insert(categories)
     .values({ id: newId(), ownerId, name: "Inbox", systemKey: INBOX_KEY })
-    .onDuplicateKeyUpdate({ set: { systemKey: sql`${categories.systemKey}` } });
+    .onConflictDoNothing();
   const [row] = await db
     .select()
     .from(categories)
@@ -229,37 +230,104 @@ export async function getTask(db: Writer, ownerId: string, taskId: string): Prom
   return row;
 }
 
-// Completion changes only the task. Events, work blocks, and the deadline are untouched.
+// Keep task history, but retire its planned work and unsent check-ins atomically.
 export async function completeTask(
   db: Database,
   actor: Actor,
   taskId: string,
+): Promise<{ task: Task; changed: boolean }> {
+  return finishTask(db, actor, taskId, "completed");
+}
+
+export async function cancelTask(
+  db: Database,
+  actor: Actor,
+  taskId: string,
+): Promise<{ task: Task; changed: boolean }> {
+  return finishTask(db, actor, taskId, "canceled");
+}
+
+async function finishTask(
+  db: Database,
+  actor: Actor,
+  taskId: string,
+  status: "completed" | "canceled",
 ): Promise<{ task: Task; changed: boolean }> {
   const now = actor.now ?? new Date();
   const changed = await db.transaction(async (tx) => {
     const [current] = await tx
       .select()
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(tasks.id, taskId), eq(tasks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Task");
-    if (current.status === "completed") return false;
+    if (current.status !== "open" && current.status !== status) {
+      throw new InvalidChangeError(
+        "Reopen this task before changing its completion or cancellation.",
+      );
+    }
+    const blocks = await tx
+      .select()
+      .from(workBlocks)
+      .where(
+        and(
+          eq(workBlocks.ownerId, actor.ownerId),
+          eq(workBlocks.taskId, taskId),
+          eq(workBlocks.status, "planned"),
+        ),
+      );
+    for (const block of blocks) {
+      await tx
+        .update(workBlocks)
+        .set({
+          status: "removed",
+          removedAt: now,
+          removedReason: status === "completed" ? "task_completed" : "manual",
+          version: block.version + 1,
+        })
+        .where(eq(workBlocks.id, block.id));
+      await record(tx, actor, {
+        action: "work_block.remove",
+        entityType: "work_block",
+        entityId: block.id,
+        before: { status: block.status, taskId },
+        after: {
+          status: "removed",
+          reason: status === "completed" ? "task_completed" : "task_canceled",
+        },
+      });
+    }
+    await tx
+      .update(reminders)
+      .set({
+        status: "canceled",
+        detail: status === "completed" ? "task completed" : "task canceled",
+        version: sql`${reminders.version} + 1`,
+      })
+      .where(
+        and(
+          eq(reminders.ownerId, actor.ownerId),
+          eq(reminders.subjectType, "task"),
+          eq(reminders.subjectId, taskId),
+          eq(reminders.status, "scheduled"),
+        ),
+      );
+    if (current.status === status) return false;
 
     await tx
       .update(tasks)
       .set({
-        status: "completed",
-        completedAt: now,
-        remainingMinutes: 0,
+        status,
+        completedAt: status === "completed" ? now : null,
+        remainingMinutes: status === "completed" ? 0 : current.remainingMinutes,
         version: current.version + 1,
       })
       .where(eq(tasks.id, taskId));
     await record(tx, actor, {
-      action: "task.complete",
+      action: status === "completed" ? "task.complete" : "task.cancel",
       entityType: "task",
       entityId: taskId,
       before: { status: current.status, remainingMinutes: current.remainingMinutes },
-      after: { status: "completed", completedAt: now.toISOString() },
+      after: { status, ...(status === "completed" ? { completedAt: now.toISOString() } : {}) },
     });
     return true;
   });
@@ -335,8 +403,7 @@ export async function cancelEvent(
     const [current] = await tx
       .select()
       .from(events)
-      .where(and(eq(events.id, eventId), eq(events.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(events.id, eventId), eq(events.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Event");
     if (current.status === "canceled") return false;
 
@@ -414,8 +481,7 @@ export async function removeWorkBlock(
     const [current] = await tx
       .select()
       .from(workBlocks)
-      .where(and(eq(workBlocks.id, blockId), eq(workBlocks.ownerId, actor.ownerId)))
-      .for("update");
+      .where(and(eq(workBlocks.id, blockId), eq(workBlocks.ownerId, actor.ownerId)));
     if (!current) throw new NotFoundError("Work block");
     if (current.status === "removed") return false;
 

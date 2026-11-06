@@ -54,10 +54,12 @@ export function categoryForDashboard(category: Category) {
   return { id: category.id, name: category.name, systemKey: category.systemKey };
 }
 
-export function eventForSchedule(event: CalendarEvent): ScheduleEvent {
+export function eventForSchedule(event: CalendarEvent & { acknowledged?: boolean }): ScheduleEvent {
   return {
     id: event.id,
+    version: event.version,
     seriesId: event.seriesId,
+    ...(event.acknowledged ? { acknowledged: true } : {}),
     title: event.title,
     location: event.location,
     startsAt: event.startsAt.toISOString(),

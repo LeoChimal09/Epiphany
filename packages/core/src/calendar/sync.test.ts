@@ -23,6 +23,7 @@ import { FakeGoogle } from "./fake-google";
 import { scopesFor, type CalendarAccessMode } from "./google/oauth";
 import { selectCalendars, loadCalendarOverview, CalendarError } from "./store";
 import { assertOwnWrite, eventIdFor, resolveBlockConflict, syncAccount, syncKeyFor } from "./sync";
+import { createServices, issueOwnerPrincipal } from "../services";
 
 const OWNER_CAL = "owner@example.test";
 const T0 = new Date("2026-10-20T15:00:00.000Z");
@@ -45,6 +46,8 @@ interface Harness {
 let shared: { database: TestDatabase; handle: DatabaseHandle } | undefined;
 
 const WIPE = [
+  "confirmations",
+  "reminders",
   "calendar_event_refs",
   "synced_calendars",
   "calendar_accounts",
@@ -277,14 +280,14 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
         timezone: "America/Chicago",
         status: "scheduled",
       });
-      expect((byTitle("Chemistry lab")[0]!.starts_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Chemistry lab")[0]!.starts_at as number).toISOString()).toBe(
         "2026-10-21T19:00:00.000Z",
       );
       expect(byTitle("Fall break")[0]).toMatchObject({ all_day: 1, timezone: "America/Chicago" });
-      expect((byTitle("Fall break")[0]!.starts_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Fall break")[0]!.starts_at as number).toISOString()).toBe(
         "2026-10-23T05:00:00.000Z",
       );
-      expect((byTitle("Fall break")[0]!.ends_at as Date).toISOString()).toBe(
+      expect(new Date(byTitle("Fall break")[0]!.ends_at as number).toISOString()).toBe(
         "2026-10-25T05:00:00.000Z",
       );
       expect(byTitle("Call")[0]).toMatchObject({ timezone: "Europe/Paris" });
@@ -468,6 +471,99 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
   });
 
   describe("pushing work blocks", () => {
+    it("syncs a confirmed event time edit in place and refuses editing imported appointments", async () => {
+      h.google.addEvent(OWNER_CAL, {
+        id: "external-appointment",
+        summary: "External appointment",
+        ...timed("2026-10-21T14:00:00-05:00", "2026-10-21T15:00:00-05:00"),
+      });
+      await h.syncOnce();
+      await selectAll();
+      await h.syncOnce({ force: true });
+      const services = createServices(h.handle.db);
+      const principal = await issueOwnerPrincipal(h.handle.db, h.ownerId, {
+        source: "dashboard",
+        audience: "private",
+        initiator: "owner",
+      });
+      const imported = (await events()).find((event) => event.title === "External appointment")!;
+      const payload = {
+        startsAt: "2026-10-22T20:00:00.000Z",
+        endsAt: "2026-10-22T21:00:00.000Z",
+      };
+      await expect(
+        services.confirmations.propose(principal, {
+          action: "event.reschedule",
+          payload: { ...payload, eventId: imported.id },
+        }),
+      ).rejects.toThrow("source calendar");
+      const event = await services.events.create(principal, {
+        title: "Local appointment",
+        timezone: "America/Chicago",
+        startsAt: "2026-10-21T20:00:00Z",
+        endsAt: "2026-10-21T21:00:00Z",
+      });
+      await h.syncOnce();
+      const proposal = await services.confirmations.propose(principal, {
+        action: "event.reschedule",
+        payload: { ...payload, eventId: event.id },
+      });
+      await services.confirmations.confirm(principal, proposal);
+      const report = await h.syncOnce();
+      expect(report.pushed.updated).toBe(1);
+      expect(epiphanyCalendar().events.size).toBe(1);
+      expect([...epiphanyCalendar().events.values()][0]?.start?.dateTime).toBe(payload.startsAt);
+    });
+
+    it("removes all split-day blocks and the deadline after dashboard completion, including old and distant blocks", async () => {
+      const task = await createTask(h.handle.db, h.actor(), {
+        title: "Essay",
+        dueAt: new Date("2027-02-01T22:00:00Z"),
+      });
+      const blocks = await Promise.all(
+        ["2026-10-21", "2027-01-21"].map((date, index) =>
+          createWorkBlock(h.handle.db, h.actor(), {
+            taskId: task.id,
+            title: `Essay day ${index + 1}/2`,
+            startsAt: new Date(`${date}T20:00:00Z`),
+            endsAt: new Date(`${date}T21:00:00Z`),
+          }),
+        ),
+      );
+      await h.syncOnce();
+      expect(epiphanyCalendar().events.size).toBe(3);
+      h.clock.current = new Date("2026-11-04T15:00:00Z");
+      await completeTask(h.handle.db, h.actor(), task.id);
+      expect((await h.syncOnce()).pushed.removed).toBe(3);
+      for (const block of blocks)
+        expect(epiphanyCalendar().events.get(eventIdFor(block.id))?.status).toBe("cancelled");
+      expect(
+        (await h.query("SELECT status FROM work_blocks")).every(
+          (block) => block.status === "removed",
+        ),
+      ).toBe(true);
+      h.google.clearCalls();
+      await h.syncOnce();
+      expect(h.google.writes()).toHaveLength(0);
+    });
+
+    it("cleans legacy calendar blocks linked to already-completed tasks without exporting new ones", async () => {
+      const task = await createTask(h.handle.db, h.actor(), { title: "Legacy essay" });
+      const block = await createWorkBlock(h.handle.db, h.actor(), {
+        taskId: task.id,
+        startsAt: new Date("2026-10-21T20:00:00Z"),
+        endsAt: new Date("2026-10-21T21:00:00Z"),
+      });
+      await h.syncOnce();
+      await h.query(
+        "UPDATE tasks SET status = 'completed', completed_at = '2026-10-22 15:00:00', version = version + 1 WHERE id = ?",
+        [task.id],
+      );
+      h.clock.current = new Date("2026-11-04T15:00:00Z");
+      expect((await h.syncOnce()).pushed.removed).toBe(1);
+      expect(epiphanyCalendar().events.get(eventIdFor(block.id))?.status).toBe("cancelled");
+    });
+
     const makeBlock = (
       title = "Study chemistry",
       start = "2026-10-21T20:00:00.000Z",
@@ -925,7 +1021,7 @@ describe.skipIf(!dbTestsEnabled)("Google Calendar sync", () => {
 
       await h.query(
         "UPDATE tasks SET title = 'Call dentist office', due_at = ?, version = version + 1 WHERE id = ?",
-        ["2026-10-23 22:00:00.000", timedTask.id],
+        [Date.parse("2026-10-23T22:00:00.000Z"), timedTask.id],
       );
       h.clock.current = new Date(T0.getTime() + 12 * 60_000);
       const updated = await h.syncOnce();

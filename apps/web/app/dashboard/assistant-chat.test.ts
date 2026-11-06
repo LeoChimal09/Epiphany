@@ -19,11 +19,25 @@ function render(message: ChatMessage) {
       voice: { listen: false, speak: false },
       timezone: "America/Chicago",
       onSend: () => {},
+      onOpenItem: () => {},
     }),
   );
 }
 
 describe("assistant review messages", () => {
+  it("links a verified creation to its exact saved record without replacing the chat", () => {
+    const html = render({
+      id: 1,
+      role: "epi",
+      text: 'Added "Cleaning room".',
+      outcome: "created",
+      changed: true,
+      links: [{ label: "Open task: Cleaning room", href: "#task-saved-task" }],
+    });
+    expect(html).toContain('href="#task-saved-task"');
+    expect(html).not.toContain('target="_blank"');
+    expect(html).toContain("Open task: Cleaning room");
+  });
   it("offers approval and cancellation for an unsaved import preview", () => {
     const html = render({
       id: 1,

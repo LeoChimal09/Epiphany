@@ -41,9 +41,8 @@ export async function scheduleReminder(
   ownerId: string,
   input: NewReminder,
 ): Promise<boolean> {
-  const [result] = await db
+  const result = await db
     .insert(reminders)
-    .ignore()
     .values({
       id: newId(),
       ownerId,
@@ -54,8 +53,35 @@ export async function scheduleReminder(
       message: input.message.slice(0, 1000),
       urgency: input.urgency ?? "normal",
       dueAt: input.dueAt,
-    });
-  return result.affectedRows === 1;
+    })
+    .onConflictDoNothing();
+  if (result.rowsAffected === 1) return true;
+  const restored = await db
+    .update(reminders)
+    .set({
+      status: "scheduled",
+      dueAt: input.dueAt,
+      message: input.message.slice(0, 1000),
+      attempts: 0,
+      nextAttemptAt: null,
+      claimedAt: null,
+      detail: null,
+      version: sql`${reminders.version} + 1`,
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.dedupeKey, input.dedupeKey),
+        eq(reminders.status, "canceled"),
+        inArray(reminders.detail, [
+          "task completed",
+          "task canceled",
+          "task deadline changed",
+          "event rescheduled",
+        ]),
+      ),
+    );
+  return restored.rowsAffected === 1;
 }
 
 export async function scheduleSplitReminder(
@@ -65,7 +91,7 @@ export async function scheduleSplitReminder(
 ): Promise<boolean> {
   if (await scheduleReminder(db, ownerId, input)) return true;
   // Re-enabling a canceled future slot must not replay a sent or uncertain delivery.
-  const [result] = await db
+  const result = await db
     .update(reminders)
     .set({
       status: "scheduled",
@@ -83,7 +109,7 @@ export async function scheduleSplitReminder(
         eq(reminders.status, "canceled"),
       ),
     );
-  return result.affectedRows === 1;
+  return result.rowsAffected === 1;
 }
 
 // A briefing is scheduled once per local date. If its configured time changes while it is still
@@ -142,7 +168,7 @@ export async function scheduleBriefing(
 }
 
 export async function cancelScheduledBriefings(db: Database, ownerId: string): Promise<number> {
-  const [result] = await db
+  const result = await db
     .update(reminders)
     .set({
       status: "canceled",
@@ -156,7 +182,7 @@ export async function cancelScheduledBriefings(db: Database, ownerId: string): P
         eq(reminders.status, "scheduled"),
       ),
     );
-  return result.affectedRows;
+  return result.rowsAffected;
 }
 
 // Cancels scheduled reminders for a subject whose reminder set changed (for example a new deadline).
@@ -175,7 +201,7 @@ export async function cancelOtherReminders(
     eq(reminders.status, "scheduled"),
   ];
   if (keepKeys.length > 0) filters.push(notInArray(reminders.dedupeKey, keepKeys));
-  const [result] = await db
+  const result = await db
     .update(reminders)
     .set({
       status: "canceled",
@@ -183,13 +209,13 @@ export async function cancelOtherReminders(
       version: sql`${reminders.version} + 1`,
     })
     .where(and(...filters));
-  return result.affectedRows;
+  return result.rowsAffected;
 }
 
 // Cancels scheduled reminders about tasks that are finished or archived, and events that were
 // canceled, so nothing fires for work that no longer needs it.
 export async function cancelObsoleteReminders(db: Database, ownerId: string): Promise<number> {
-  const [doneTasks] = await db
+  const doneTasks = await db
     .update(reminders)
     .set({
       status: "canceled",
@@ -215,7 +241,7 @@ export async function cancelObsoleteReminders(db: Database, ownerId: string): Pr
         ),
       ),
     );
-  const [canceledEvents] = await db
+  const canceledEvents = await db
     .update(reminders)
     .set({ status: "canceled", detail: "event canceled", version: sql`${reminders.version} + 1` })
     .where(
@@ -232,7 +258,7 @@ export async function cancelObsoleteReminders(db: Database, ownerId: string): Pr
         ),
       ),
     );
-  return doneTasks.affectedRows + canceledEvents.affectedRows;
+  return doneTasks.rowsAffected + canceledEvents.rowsAffected;
 }
 
 // A job still marked "sending" after this long was interrupted (a crash or restart) at an unknown
@@ -245,7 +271,7 @@ export async function markInterruptedUnknown(
   now: Date,
   staleMs = SENDING_STALE_MS,
 ): Promise<number> {
-  const [result] = await db
+  const result = await db
     .update(reminders)
     .set({
       status: "unknown",
@@ -259,7 +285,7 @@ export async function markInterruptedUnknown(
         lt(reminders.claimedAt, new Date(now.getTime() - staleMs)),
       ),
     );
-  return result.affectedRows;
+  return result.rowsAffected;
 }
 
 // Takes up to `limit` due reminders for sending. Each is claimed with a conditional update, so two
@@ -286,7 +312,7 @@ export async function claimDue(
 
   const claimed: Reminder[] = [];
   for (const { id } of candidates) {
-    const [result] = await db
+    const result = await db
       .update(reminders)
       .set({
         status: "sending",
@@ -295,7 +321,7 @@ export async function claimDue(
         version: sql`${reminders.version} + 1`,
       })
       .where(and(eq(reminders.id, id), eq(reminders.status, "scheduled")));
-    if (result.affectedRows !== 1) continue;
+    if (result.rowsAffected !== 1) continue;
     const [row] = await db.select().from(reminders).where(eq(reminders.id, id));
     if (row) claimed.push(row);
   }
@@ -336,7 +362,7 @@ export const releaseUntil = (
       nextAttemptAt: until,
       claimedAt: null,
       detail: options.detail?.slice(0, 160) ?? null,
-      ...(options.countAttempt ? {} : { attempts: sql`GREATEST(${reminders.attempts} - 1, 0)` }),
+      ...(options.countAttempt ? {} : { attempts: sql`MAX(${reminders.attempts} - 1, 0)` }),
       version: bump(),
     })
     .where(eq(reminders.id, id));
@@ -371,13 +397,13 @@ export async function snoozeReminder(
   id: string,
   until: Date,
 ): Promise<boolean> {
-  const [result] = await db
+  const result = await db
     .update(reminders)
     .set({ dueAt: until, nextAttemptAt: until, detail: "snoozed", version: bump() })
     .where(
       and(eq(reminders.id, id), eq(reminders.ownerId, ownerId), eq(reminders.status, "scheduled")),
     );
-  return result.affectedRows === 1;
+  return result.rowsAffected === 1;
 }
 
 export async function recentReminders(

@@ -72,11 +72,21 @@ describe("planning preferences", () => {
     );
     expect(parsed.preferredHours.mon).toEqual([]);
   });
-  it("never offers overnight or meal time by default, and leaves school hours alone on weekdays", () => {
+  it("uses routines rather than an assumed work shift by default", () => {
     const prefs = defaultPlanningPreferences(TZ);
-    expect(prefs.preferredHours.mon).toEqual([{ start: "15:00", end: "21:00" }]);
+    expect(prefs.preferredHours.mon).toEqual([{ start: "00:00", end: "24:00" }]);
     expect(prefs.sleep).toEqual({ start: "23:00", end: "07:00" });
     expect(prefs.meals).toHaveLength(2);
+  });
+
+  it("can remove planning-hour limits and sleep without bringing back defaults after reload", () => {
+    const prefs = parsePlanningPreferences(
+      [pref("planning.preferred_hours", false), pref("planning.sleep", false)],
+      TZ,
+    );
+    expect(prefs.preferredHours.mon).toEqual([{ start: "00:00", end: "24:00" }]);
+    expect(prefs.sleep).toBeUndefined();
+    expect(validatePlanningSetting("planning.preferred_hours", null)).toBeNull();
   });
 
   it("uses the owner's confirmed values and ignores proposed or malformed ones", () => {

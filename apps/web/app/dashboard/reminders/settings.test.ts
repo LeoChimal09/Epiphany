@@ -33,7 +33,7 @@ describe("optional split reminder controls", () => {
     expect(event).not.toContain("Use workspace default");
     expect(event).not.toContain('name="splitReminderCount"');
   });
-  it("shows an editable count rather than hardcoded reminder choices", () => {
+  it("shows the saved count in a compact row, without exposing a form until editing", () => {
     const html = renderToStaticMarkup(
       createElement(SplitReminderSettings, {
         value: { enabled: true, count: 5 },
@@ -41,12 +41,13 @@ describe("optional split reminder controls", () => {
         version: 3,
       }),
     );
-    expect(html).toContain('type="number"');
-    expect(html).toContain('value="5"');
-    expect(html).toContain("checked");
-    expect(html).toContain("original deadline and event alerts stay unchanged");
-    expect(html).toContain("daily limit of 12");
-    expect(html).toContain("Save split reminder settings");
+    expect(html).toContain("5 extra per task");
+    expect(html).toContain('aria-label="Edit extra task reminders"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("Save changes");
+    expect(html).not.toContain("<details");
   });
 
   it("hides the count while split reminders are off", () => {
@@ -58,24 +59,23 @@ describe("optional split reminder controls", () => {
     );
     expect(html).not.toContain('type="number"');
     expect(html).not.toContain("checked");
-    expect(html).toContain(">Off<");
+    expect(html).toContain("Off · original alerts only");
   });
-  it("shows a required count when split reminders are enabled", () => {
+  it("does not mistake saved enabled reminders for an unsaved toggle", () => {
     const html = renderToStaticMarkup(
       createElement(SplitReminderSettings, {
         value: { enabled: true, count: 5 },
         dailyLimit: 20,
       }),
     );
-    expect(html).toContain('type="number"');
-    expect(html).toContain('value="5"');
-    expect(html).toContain('required=""');
-    expect(html).toContain(">On<");
+    expect(html).toContain("5 extra per task");
+    expect(html).not.toContain(">On<");
+    expect(html).not.toContain('type="checkbox"');
   });
 });
 
 describe("morning briefing settings UI", () => {
-  it("shows a local-time control initialized to the effective briefing time", () => {
+  it("summarizes the saved local delivery time without a misleading On badge or save button", () => {
     const html = renderToStaticMarkup(
       createElement(BriefingSettings, {
         briefingTime: "07:30",
@@ -84,13 +84,13 @@ describe("morning briefing settings UI", () => {
       }),
     );
     expect(html).toContain("Morning briefing");
-    expect(html).toContain("Times use America/Chicago.");
-    expect(html).toContain('type="time"');
-    expect(html).toContain('value="07:30"');
-    expect(html).toContain("Send morning briefing");
-    expect(html).toContain("Save briefing settings");
-    expect(html).toContain("Delivery time (AM/PM)");
-    expect(html).toContain("If today&#x27;s was already sent");
+    expect(html).not.toContain("<details");
+    expect(html).toContain("Daily at 7:30 AM");
+    expect(html).toContain('aria-label="Edit morning briefing"');
+    expect(html).toContain("lucide-sunrise");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain(">On<");
+    expect(html).not.toContain("Save changes");
   });
 
   it("shows the briefing as disabled when its saved preference is off", () => {
@@ -98,6 +98,7 @@ describe("morning briefing settings UI", () => {
       createElement(BriefingSettings, { briefingTime: null, timezone: "America/Chicago" }),
     );
     expect(html).not.toContain('type="time"');
-    expect(html).toContain("Send morning briefing");
+    expect(html).toContain(">Off<");
+    expect(html).toContain('aria-label="Edit morning briefing"');
   });
 });

@@ -19,8 +19,6 @@ const sh = (command: string, args: string[], env: Record<string, string> = {}) =
   return { ok: result.status === 0, detail: result.status === 0 ? "passed" : tail.slice(0, 300) };
 };
 
-const hasDatabase = Boolean(process.env.TEST_MYSQL_ADMIN_URL);
-
 const gates: Gate[] = [
   {
     name: "lint (no warnings)",
@@ -30,15 +28,8 @@ const gates: Gate[] = [
   { name: "typecheck", run: () => sh("bun", ["run", "typecheck"]) },
   { name: "migrations match schema", run: () => sh("bun", ["run", "db:check"]) },
   {
-    name: "tests against disposable MySQL (none skipped)",
-    run: () =>
-      hasDatabase
-        ? sh("bunx", ["vitest", "run"], { REQUIRE_DB_TESTS: "true" })
-        : {
-            ok: false,
-            detail:
-              "set TEST_MYSQL_ADMIN_URL (bun run db:test:up) so database tests cannot be skipped",
-          },
+    name: "tests against disposable SQLite (legacy MySQL checks optional)",
+    run: () => sh("bunx", ["vitest", "run"]),
   },
   {
     name: "production build",

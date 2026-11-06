@@ -1,7 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DashboardShell, EventRepeatFields, TaskRow } from "./dashboard-shell";
+import {
+  DashboardShell,
+  EventList,
+  EventRepeatFields,
+  EventTimeEditor,
+  TaskRow,
+} from "./dashboard-shell";
 import type { DashboardTask } from "./model";
 
 vi.mock("./actions", () => ({}));
@@ -10,6 +16,63 @@ vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("./voice-actions", () => ({}));
 
 describe("compact assistant dashboard", () => {
+  it("offers a direct event date/time edit rather than requiring an assistant conversation", () => {
+    const html = renderToStaticMarkup(
+      createElement(EventTimeEditor, {
+        event: {
+          id: "godzilla",
+          version: 2,
+          title: "Watching Godzilla movie",
+          location: null,
+          startsAt: "2026-11-04T19:00:00Z",
+          endsAt: "2026-11-04T21:00:00Z",
+          allDay: false,
+          timezone: "America/Chicago",
+        },
+        pending: false,
+        onSave: () => {},
+      }),
+    );
+    expect(html).toContain("Edit date or time");
+    expect(html).not.toContain("<details");
+  });
+  it("uses accessible icon actions without dropping event facts or cancellation scope", () => {
+    const html = renderToStaticMarkup(
+      createElement(EventList, {
+        result: {
+          ok: true,
+          events: [
+            {
+              id: "godzilla",
+              version: 2,
+              title: "GODZILLA MINUS ZERO",
+              location: "Cinemark Davenport",
+              startsAt: "2026-11-07T18:45:00Z",
+              endsAt: "2026-11-07T19:45:00Z",
+              allDay: false,
+              timezone: "America/Chicago",
+              seriesId: "series",
+            },
+          ],
+          truncated: false,
+        },
+        search: "",
+        pending: false,
+        onCancel: () => {},
+        onComplete: () => {},
+        onEdit: () => {},
+        clearSearch: () => {},
+      }),
+    );
+    for (const label of ["Edit date or time", "Mark done", "Cancel occurrence", "Cancel series"]) {
+      expect(html).toContain(`aria-label="${label}: GODZILLA MINUS ZERO"`);
+      expect(html).toContain(`title="${label}"`);
+      expect(html).not.toContain(`>${label}</button>`);
+    }
+    expect(html).toContain("<h2>GODZILLA MINUS ZERO</h2>");
+    expect(html).toContain("Cinemark Davenport");
+    expect(html).toContain("<dt>Duration</dt><dd>1 hour</dd>");
+  });
   const task: DashboardTask = {
     id: "fixture",
     categoryId: "inbox",
@@ -40,6 +103,7 @@ describe("compact assistant dashboard", () => {
         onSelect: () => {},
         onComplete: () => {},
         onReopen: () => {},
+        onCancel: () => {},
         onSave: () => {},
       }),
     );
@@ -65,6 +129,31 @@ describe("compact assistant dashboard", () => {
     expect(html).not.toContain("Mark done");
     expect(html).toContain("Reopen");
   });
+  it("keeps canceled task history distinct from completion and permits reopening", () => {
+    const active = renderTask(task);
+    expect(active).toContain('aria-label="Cancel: Test assignment"');
+    const canceled = renderTask({ ...task, status: "canceled" });
+    expect(canceled).toContain("Canceled, not completed");
+    expect(canceled).not.toContain("Mark done");
+    expect(canceled).toContain("Reopen");
+  });
+  it.each(["task", "todo"] as const)(
+    "uses matching accessible icon actions for %s rows",
+    (taskType) => {
+      const html = renderTask({ ...task, taskType });
+      for (const label of ["Edit", "Mark done", "Cancel"]) {
+        expect(html).toContain(`aria-label="${label}: Test assignment"`);
+        expect(html).toContain(`title="${label}"`);
+        expect(html).not.toContain(`>${label}</button>`);
+      }
+      expect(html.indexOf('aria-label="Edit:')).toBeLessThan(
+        html.indexOf('aria-label="Mark done:'),
+      );
+      expect(html.indexOf('aria-label="Mark done:')).toBeLessThan(
+        html.indexOf('aria-label="Cancel:'),
+      );
+    },
+  );
   it("keeps todo facts free of task-only deadline and priority fields", () => {
     const html = renderTask({
       ...task,
@@ -152,5 +241,8 @@ describe("compact assistant dashboard", () => {
     expect(html).toContain("Deadline task");
     expect(html).toContain('href="/dashboard/planning"');
     expect(html).toContain('href="/dashboard/calendars"');
+    expect(html).toContain("Personal field station");
+    expect(html).toContain("PERSONAL OPERATIONS / EPIPHANY");
+    expect(html).not.toContain('id="dashboard-categories" hidden=""');
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VersionConflictError } from "@epiphany/core/services";
-import { savePlanningSetting } from "./actions";
+import { saveLearningAllowance, saveLearningSetting, savePlanningSetting } from "./actions";
 
 const mocks = vi.hoisted(() => ({ context: vi.fn(), set: vi.fn(), revalidate: vi.fn() }));
 vi.mock("../server-data", () => ({ dashboardContext: mocks.context }));
@@ -14,6 +14,78 @@ beforeEach(() => {
 });
 
 describe("planning settings action", () => {
+  it("requires separate explicit consent for proactive messages", async () => {
+    expect(await saveLearningSetting("tracking.check_ins", true, 2, false)).toMatchObject({
+      ok: false,
+    });
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(await saveLearningSetting("tracking.check_ins", true, 2, true)).toMatchObject({
+      ok: true,
+    });
+    expect(mocks.set).toHaveBeenCalledWith(principal, {
+      key: "tracking.check_ins",
+      value: true,
+      expectedVersion: 2,
+      status: "confirmed",
+    });
+  });
+  it("applies a single allow choice and clears a legacy pause with both expected versions", async () => {
+    expect(await saveLearningAllowance(true, 2, 4, true)).toEqual({
+      ok: true,
+      version: 3,
+      pausedVersion: 3,
+    });
+    expect(mocks.set.mock.calls).toEqual([
+      [
+        principal,
+        { key: "tracking.enabled", value: true, expectedVersion: 2, status: "confirmed" },
+      ],
+      [
+        principal,
+        { key: "tracking.paused", value: false, expectedVersion: 4, status: "confirmed" },
+      ],
+    ]);
+  });
+  it("turns learning off without enabling it or changing stored reports", async () => {
+    expect(await saveLearningAllowance(false, 2, 4, false)).toMatchObject({ ok: true });
+    expect(mocks.set).toHaveBeenCalledTimes(1);
+    expect(mocks.set).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({ key: "tracking.enabled", value: false }),
+    );
+  });
+  it("does not bypass consent or silently report a partially applied allowance as success", async () => {
+    expect(await saveLearningAllowance(true, 2, 4, false)).toMatchObject({ ok: false });
+    expect(mocks.set).not.toHaveBeenCalled();
+    mocks.set
+      .mockResolvedValueOnce({ version: 3 })
+      .mockRejectedValueOnce(new VersionConflictError("Preference", 5));
+    expect(await saveLearningAllowance(true, 2, 4, true)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Reload"),
+    });
+  });
+  it("persists routines-only mode without writing SQL NULL", async () => {
+    expect(await savePlanningSetting("planning.preferred_hours", null, 2)).toMatchObject({
+      ok: true,
+    });
+    expect(mocks.set).toHaveBeenCalledWith(principal, expect.objectContaining({ value: false }));
+  });
+  it("requires explicit consent before enabling learning and saves the owner's version-bound choice", async () => {
+    expect(await saveLearningSetting("tracking.enabled", true, 2, false)).toMatchObject({
+      ok: false,
+    });
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(await saveLearningSetting("tracking.enabled", true, 2, true)).toMatchObject({
+      ok: true,
+    });
+    expect(mocks.set).toHaveBeenCalledWith(principal, {
+      key: "tracking.enabled",
+      value: true,
+      expectedVersion: 2,
+      status: "confirmed",
+    });
+  });
   it("saves one validated confirmed setting through owner-scoped services", async () => {
     expect(await savePlanningSetting("planning.buffer_minutes", 20, 2)).toEqual({
       ok: true,

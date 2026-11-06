@@ -21,8 +21,10 @@ const protectedSchema = z
     window: windowSchema,
   })
   .strict();
-const settingSchemas = {
-  "planning.preferred_hours": z.partialRecord(weekdaySchema, z.array(daytimeSchema).max(8)),
+export const planningSettingSchemas = {
+  "planning.preferred_hours": z
+    .partialRecord(weekdaySchema, z.array(daytimeSchema).max(8))
+    .nullable(),
   "planning.sleep": windowSchema.nullable(),
   "planning.meals": z.array(windowSchema).max(8),
   "planning.protected_time": z.array(protectedSchema).max(30),
@@ -31,31 +33,28 @@ const settingSchemas = {
   "planning.travel_before_minutes": z.number().int().min(0).max(240),
   "planning.travel_after_minutes": z.number().int().min(0).max(240),
 };
-export type PlanningSettingKey = keyof typeof settingSchemas;
+export type PlanningSettingKey = keyof typeof planningSettingSchemas;
 
 export function validatePlanningSetting(key: unknown, value: unknown) {
-  if (typeof key !== "string" || !Object.hasOwn(settingSchemas, key)) {
+  if (typeof key !== "string" || !Object.hasOwn(planningSettingSchemas, key)) {
     throw new RangeError("Unknown planning setting.");
   }
-  return settingSchemas[key as PlanningSettingKey].parse(value);
+  return planningSettingSchemas[key as PlanningSettingKey].parse(value);
 }
 
-// When the owner has set nothing, work is only planned after school/work hours on weekdays and in
-// the daytime on weekends, never overnight or at meals. These are defaults, not facts about the
-// owner: they are replaced by the owner's own `planning.*` preferences.
+// Without explicit planning hours, routines and calendar commitments define availability.
 export function defaultPlanningPreferences(timezone: string): PlanningPreferences {
-  const weekday: TimeWindow[] = [{ start: "15:00", end: "21:00" }];
-  const weekend: TimeWindow[] = [{ start: "10:00", end: "18:00" }];
+  const day: TimeWindow[] = [{ start: "00:00", end: "24:00" }];
   return {
     timezone,
     preferredHours: {
-      mon: weekday,
-      tue: weekday,
-      wed: weekday,
-      thu: weekday,
-      fri: weekday,
-      sat: weekend,
-      sun: weekend,
+      mon: day,
+      tue: day,
+      wed: day,
+      thu: day,
+      fri: day,
+      sat: day,
+      sun: day,
     },
     sleep: { start: "23:00", end: "07:00" },
     meals: [
@@ -93,6 +92,7 @@ export function parsePlanningPreferences(
     const value = preference.value as unknown;
     switch (preference.key) {
       case "planning.preferred_hours": {
+        if (value === null || value === false) break;
         if (!value || typeof value !== "object") break;
         const hours: Partial<Record<Weekday, TimeWindow[]>> = {};
         for (const day of WEEKDAYS) {
@@ -107,7 +107,7 @@ export function parsePlanningPreferences(
         break;
       }
       case "planning.sleep": {
-        if (value === null) {
+        if (value === null || value === false) {
           result.sleep = undefined;
           break;
         }
@@ -121,7 +121,7 @@ export function parsePlanningPreferences(
         }
         break;
       case "planning.protected_time": {
-        const parsed = settingSchemas["planning.protected_time"].safeParse(value);
+        const parsed = planningSettingSchemas["planning.protected_time"].safeParse(value);
         if (parsed.success) result.protectedTime = parsed.data;
         break;
       }

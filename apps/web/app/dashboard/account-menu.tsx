@@ -106,7 +106,7 @@ export function AccountMenu({
             className={`${styles.menuItem} ${styles.menuLink}`}
           >
             <CalendarDays size={15} aria-hidden="true" />
-            Scheduling preferences
+            Planning defaults
           </a>
           <a
             href="/dashboard/calendars"

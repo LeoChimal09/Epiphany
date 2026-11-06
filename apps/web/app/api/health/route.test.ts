@@ -5,7 +5,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("GET /api/health", () => {
   it("returns 200 with valid configuration", async () => {
-    vi.stubEnv("DATABASE_URL", "mysql://epiphany:placeholder-fixture@127.0.0.1:3407/epiphany");
+    vi.stubEnv("DATABASE_URL", "file:/tmp/epiphany-config-fixture.sqlite");
     const response = GET();
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");

@@ -42,7 +42,7 @@ export function AvailabilityPanel({
         {schedule.syncWarning ? " (tentative: calendar sync needs attention)" : ""}
       </summary>
       <p>
-        <a href="/dashboard/planning">Scheduling preferences</a> | {timezone}. Empty calendar time
+        <a href="/dashboard/planning">Planning defaults</a> | {timezone}. Empty calendar time
         outside preferred hours, sleep, meals, protected time, event buffers, or booked work is not
         offered. Availability uses saved data; check connected calendar sync status before relying
         on it.

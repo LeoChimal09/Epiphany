@@ -18,7 +18,10 @@ const examples = {
   capture: { items: [{ type: "idea", title: "Tool library", details: "Share tools" }] },
   recategorize: { target_id: "task-1", category: "Home" },
   complete_task: { target_id: "task-1" },
+  cancel_task: { reference: "Return drill" },
   update_task: { reference: "Return drill", task_type: "task", due_date: "2026-10-24" },
+  reschedule_event: { reference: "Study group", due_time: "17:00" },
+  move_work: { reference: "Return drill", due_date: "2026-10-24", due_time: "15:00" },
   reopen_task: { reference: "Return drill" },
   acknowledge_event: { reference: "Study group" },
   cancel_event: { reference: "Study group", scope: "occurrence", event_date: "2026-10-23" },
@@ -47,6 +50,45 @@ const examples = {
 };
 
 describe("minimal action tools", () => {
+  it("accepts a date-only event move without requiring the owner to repeat the saved time", () => {
+    expect(
+      toolToIntent("reschedule_event", { reference: "Godzilla", due_date: "2026-11-07" }),
+    ).toEqual({
+      kind: "reschedule_event",
+      reference: "Godzilla",
+      newDate: "2026-11-07",
+    });
+    expect(() => toolToIntent("reschedule_event", { reference: "Godzilla" })).toThrow(IntentError);
+    expect(() =>
+      toolToIntent("reschedule_event", { due_date: "2026-11-07", due_time: "1pm" }),
+    ).toThrow(IntentError);
+  });
+  it("accepts time-only deadline edits and shares the dashboard's planning-hours validation", () => {
+    expect(toolToIntent("update_task", { reference: "Essay", due_time: "16:30" })).toEqual({
+      kind: "update_task",
+      reference: "Essay",
+      dueTime: "16:30",
+    });
+    expect(
+      toolToIntent("set_preference", {
+        search: "planning.preferred_hours",
+        details: '{"mon":[{"start":"16:00","end":"20:00"}]}',
+      }),
+    ).toMatchObject({ kind: "set_preference", value: { mon: [{ start: "16:00", end: "20:00" }] } });
+    expect(() =>
+      toolToIntent("set_preference", {
+        search: "planning.preferred_hours",
+        details: '{"mon":[{"start":"20:00","end":"16:00"}]}',
+      }),
+    ).toThrow(IntentError);
+    expect(
+      toolToIntent("set_preference", {
+        search: "planning.preferred_hours",
+        details: "null",
+      }),
+    ).toMatchObject({ kind: "set_preference", value: false });
+  });
+
   it("retains every existing action capability", () => {
     const names = INTENT_KINDS.filter((kind) => !["respond", "clarify"].includes(kind)).sort();
     expect(Object.keys(examples).sort()).toEqual(names);

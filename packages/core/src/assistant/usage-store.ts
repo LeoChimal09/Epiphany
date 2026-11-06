@@ -19,7 +19,8 @@ export function createDbUsageStore(db: Database, ownerId: string): UsageStore {
       await db
         .insert(aiUsage)
         .values({ ownerId, period, costMicros: micros, calls: 1 })
-        .onDuplicateKeyUpdate({
+        .onConflictDoUpdate({
+          target: [aiUsage.ownerId, aiUsage.period],
           set: {
             costMicros: sql`${aiUsage.costMicros} + ${micros}`,
             calls: sql`${aiUsage.calls} + 1`,

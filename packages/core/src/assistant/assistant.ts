@@ -25,9 +25,16 @@ import {
   parsePlanningPreferences,
   type FixedEvent,
   type PlannedBlock,
+  type PlanningPreferences,
 } from "../planning";
 import { needsConsent } from "./settings";
 import { buildInsights, estimateFor } from "../insights";
+import {
+  askedLearningQuestions,
+  learningQuestionDue,
+  nextLearningQuestion,
+} from "./learning-questions";
+import { savedItemLink } from "./item-links";
 import type { Budget } from "./budget";
 import type { CaptureItem, Intent } from "./intent";
 import { createHash } from "node:crypto";
@@ -37,6 +44,7 @@ import { routineIntent } from "./routine";
 import { listedEntryCount, parseCourseList } from "./intake";
 import { appendIdeaPoints } from "./idea-journal";
 import { ProviderOutputError, ProviderUnavailableError } from "./provider";
+import { plain } from "../overview";
 import type { VoiceCapability, WorkspaceCapability, WorkspaceSetupResult } from "./workspace";
 import type {
   InterpretRequest,
@@ -105,8 +113,25 @@ export interface PendingCapture {
   expiresAt: string;
 }
 
+export interface EventFocus {
+  ownerId: string;
+  ids: string[];
+  expiresAt: string;
+  action?: "acknowledge_event" | "cancel_event";
+  scope?: "occurrence" | "series";
+}
+
+export interface LearningQuestion {
+  ownerId: string;
+  question: string;
+  expiresAt: string;
+  taskId?: string;
+}
+
 export interface ConversationState {
   turns: Turn[];
+  eventFocus?: EventFocus | null;
+  learningQuestion?: LearningQuestion | null;
   activeIdea?: { ownerId: string; noteId: string } | null;
   pendingCapture?: PendingCapture | null;
   pendingMemory?: PendingMemory | null;
@@ -144,6 +169,7 @@ export interface AssistantReply {
   outcome: Outcome;
   // True only when a record was actually persisted by this message.
   changed: boolean;
+  links?: { label: string; href: string }[];
 }
 
 // Extra facts about one incoming message.
@@ -363,6 +389,20 @@ export function createAssistant(options: AssistantOptions) {
       }
       const userText = message.trim();
       if (
+        state.eventFocus &&
+        (state.eventFocus.ownerId !== principal.ownerId ||
+          Date.parse(state.eventFocus.expiresAt) <= clock().getTime())
+      ) {
+        state = { ...state, eventFocus: null };
+      }
+      if (
+        state.learningQuestion &&
+        (state.learningQuestion.ownerId !== principal.ownerId ||
+          Date.parse(state.learningQuestion.expiresAt) <= clock().getTime())
+      ) {
+        state = { ...state, learningQuestion: null };
+      }
+      if (
         state.lastReminder?.receivedAt &&
         clock().getTime() - Date.parse(state.lastReminder.receivedAt) > 60 * 60_000
       ) {
@@ -410,19 +450,69 @@ export function createAssistant(options: AssistantOptions) {
       let categories: string[];
       let activeIdea: Note | undefined;
       let currentEvents: CalendarEvent[];
+      let currentBlocks: InterpretRequest["workBlocks"];
+      let currentPlanning: PlanningPreferences;
       try {
         const today = dateKeyOf(clock(), timezone);
-        const [taskRows, noteRows, categoryRows, eventRows] = await Promise.all([
-          services.tasks.list(principal, { status: "open", limit: POOL_LIMIT }),
-          services.notes.list(principal, { limit: POOL_LIMIT }),
-          services.categories.list(principal),
-          services.events.list(principal, {
-            from: localWallToUtc(addDays(today, -1), 0, timezone),
-            to: localWallToUtc(addDays(today, 7), 0, timezone),
-            limit: 40,
-          }),
+        const [taskRows, noteRows, categoryRows, eventRows, blockRows, preferences] =
+          await Promise.all([
+            services.tasks.list(principal, { status: "open", limit: POOL_LIMIT }),
+            services.notes.list(principal, { limit: POOL_LIMIT }),
+            services.categories.list(principal),
+            services.events.list(principal, {
+              from: localWallToUtc(addDays(today, -1), 0, timezone),
+              to: localWallToUtc(addDays(today, 7), 0, timezone),
+              limit: 40,
+            }),
+            services.workBlocks.list(principal, {
+              from: localWallToUtc(addDays(today, -1), 0, timezone),
+              to: localWallToUtc(addDays(today, 7), 0, timezone),
+              limit: 20,
+            }),
+            services.preferences.list(principal),
+          ]);
+        currentPlanning = parsePlanningPreferences(preferences, timezone);
+        const learningActive =
+          preferences.some(
+            (preference) =>
+              preference.key === "tracking.enabled" &&
+              preference.status === "confirmed" &&
+              preference.value === true,
+          ) &&
+          !preferences.some(
+            (preference) =>
+              preference.key === "tracking.paused" &&
+              preference.status === "confirmed" &&
+              preference.value === true,
+          );
+        if (!learningActive) state = { ...state, learningQuestion: null };
+        currentBlocks = blockRows.map((block) => ({
+          id: block.id,
+          title:
+            block.title ?? taskRows.find((task) => task.id === block.taskId)?.title ?? "Work block",
+          startsAt: block.startsAt.toISOString(),
+          endsAt: block.endsAt.toISOString(),
+        }));
+        const contextIds = new Set([
+          ...(state.eventFocus?.ids ?? []),
+          ...(state.lastReminder?.subjectType === "event" && state.lastReminder.subjectId
+            ? [state.lastReminder.subjectId]
+            : []),
         ]);
-        currentEvents = eventRows;
+        const missing = await Promise.all(
+          [...contextIds]
+            .filter((id) => !eventRows.some((event) => event.id === id))
+            .map(async (id) => {
+              try {
+                const event = await services.events.get(principal, id);
+                return event.status === "scheduled" ? event : null;
+              } catch (error) {
+                if (!isMissingRecord(error)) throw error;
+                return null;
+              }
+            }),
+        );
+        currentEvents = [...eventRows, ...missing.filter((event) => event !== null)];
         openTasks = taskRows;
         notes = noteRows;
         categories = categoryRows.map((category) => category.name);
@@ -474,7 +564,20 @@ export function createAssistant(options: AssistantOptions) {
           startsAt: event.startsAt.toISOString(),
           endsAt: event.endsAt.toISOString(),
           allDay: event.allDay,
+          seriesId: event.seriesId,
         })),
+        workBlocks: currentBlocks,
+        planningPreferences: currentPlanning,
+        eventFocus: state.eventFocus
+          ? {
+              ids: state.eventFocus.ids.filter((id) =>
+                currentEvents.some((event) => event.id === id),
+              ),
+              action: state.eventFocus.action,
+              scope: state.eventFocus.scope,
+            }
+          : null,
+        learningQuestion: state.learningQuestion?.question ?? null,
         history: state.turns,
         pending:
           state.pending?.summary ??
@@ -587,7 +690,16 @@ export function createAssistant(options: AssistantOptions) {
               changed: false,
             });
           }
-          return await dispatch(principal, userText, intent, base, openTasks, notes, context);
+          const result = await dispatch(
+            principal,
+            userText,
+            intent,
+            base,
+            openTasks,
+            notes,
+            context,
+          );
+          return await maybeAskLearning(principal, userText, intent, result);
         } catch (error) {
           logFailure("action_failed", error);
           if (error instanceof ValidationError) {
@@ -655,6 +767,7 @@ export function createAssistant(options: AssistantOptions) {
       events,
       blocks,
       eventRows,
+      blockRows,
     };
   }
 
@@ -698,24 +811,43 @@ export function createAssistant(options: AssistantOptions) {
       notBefore: now,
     });
 
-    const days: string[] = [];
+    const days: { label: string; items: string[]; eventIds: string[] }[] = [];
     for (let key = from; key <= last; key = addDays(key, 1)) {
-      const parts: string[] = [];
+      const parts: { at: number; text: string; eventId?: string }[] = [];
       for (const event of context.eventRows) {
         if (event.status !== "scheduled") continue;
         if (dateKeyOf(event.startsAt, event.allDay ? event.timezone : timezone) !== key) continue;
-        parts.push(
-          event.allDay
-            ? `${event.title} (all day)`
-            : `${event.title} (${clockLabel(event.startsAt)} to ${clockLabel(event.endsAt)})`,
-        );
+        const timing = event.allDay
+          ? "All day"
+          : `${clockLabel(event.startsAt)}–${clockLabel(event.endsAt)}`;
+        parts.push({
+          at: event.allDay ? -2 : event.startsAt.getTime(),
+          text: `- **${timing}** · Event: ${plain(event.title)}`,
+          eventId: event.id,
+        });
+      }
+      for (const block of context.blockRows) {
+        if (block.status !== "planned" || dateKeyOf(block.startsAt, timezone) !== key) continue;
+        parts.push({
+          at: block.startsAt.getTime(),
+          text: `- **${clockLabel(block.startsAt)}–${clockLabel(block.endsAt)}** · Planned work: ${plain(block.title ?? "Work block")}`,
+        });
       }
       for (const task of openTasks) {
-        if (localDue(task, timezone) === key)
-          parts.push(`${task.title} due ${dueText(task, timezone).replace(/^due /, "")}`);
+        if (localDue(task, timezone) === key) {
+          parts.push({
+            at: task.dueDateOnly ? -1 : task.dueAt!.getTime(),
+            text: `- **${task.dueDateOnly ? "Date only" : clockLabel(task.dueAt!)}** · Deadline: ${plain(task.title)}`,
+          });
+        }
       }
       if (parts.length > 0) {
-        days.push(`• ${dayLabel(key)}: ${parts.join("; ")}`);
+        const ordered = parts.toSorted((a, b) => a.at - b.at);
+        days.push({
+          label: dayLabel(key),
+          items: ordered.map((part) => part.text),
+          eventIds: ordered.flatMap((part) => (part.eventId ? [part.eventId] : [])),
+        });
       }
     }
 
@@ -735,34 +867,40 @@ export function createAssistant(options: AssistantOptions) {
     );
 
     const label = from === last ? dayLabel(from) : `${dayLabel(from)} to ${dayLabel(last)}`;
-    const lines: string[] = [
-      days.length > 0 ? `Here's ${label}:` : `Nothing is scheduled or due for ${label}.`,
-    ];
-    lines.push(...days.slice(0, 10));
+    const lines: string[] = [`**Schedule · ${label}**`];
+    if (days.length > 0) {
+      lines.push("", "**On your calendar and due**");
+      for (const day of days.slice(0, 10)) lines.push("", `**${day.label}**`, ...day.items);
+      if (days.length > 10) lines.push("", `…and ${days.length - 10} more days`);
+    } else {
+      lines.push("", `Nothing is scheduled or due for ${label}.`);
+    }
     if (windows.length === 0) {
-      lines.push("I don't see free time inside your preferred hours in that stretch.");
+      lines.push("", "**Availability**", "No free time inside your saved planning hours.");
     } else {
       const free = windows
         .slice(0, 4)
         .map(
           (window) =>
-            `${dayWord(window.start)} ${clockLabel(window.start)} to ${clockLabel(window.end)}`,
+            `- **${dayWord(window.start)}** · ${clockLabel(window.start)}–${clockLabel(window.end)}`,
         );
-      lines.push(`Time you could use: ${free.join("; ")}.`);
+      lines.push("", "**Available time**", ...free);
     }
     if (recs.length > 0) {
-      lines.push("What I'd tackle:");
+      lines.push("", "**Suggested focus**");
       lines.push(
         numbered(
           recs.map(
             (rec) =>
-              `${rec.title}: ${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)} to ${clockLabel(rec.endsAt)}`,
+              `**${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)}–${clockLabel(rec.endsAt)}** · ${plain(rec.title)}`,
           ),
         ),
       );
-      lines.push("Want me to put those on your calendar?");
+      lines.push("", "Want me to put these work blocks on your calendar?");
     } else if (dueInRange.length > 0) {
       lines.push(
+        "",
+        "**Planning note**",
         "I couldn't fit what's due into your free time, so you may want to move something or free up a window.",
       );
     }
@@ -782,6 +920,11 @@ export function createAssistant(options: AssistantOptions) {
                 })),
               }
             : null,
+        eventFocus: focusEvents(
+          principal,
+          days.slice(0, 10).flatMap((day) => day.eventIds),
+        ),
+        lastReminder: null,
       },
     );
   }
@@ -835,22 +978,20 @@ export function createAssistant(options: AssistantOptions) {
         status: "planned",
       });
       created.push(
-        `${item.title} (${dayWord(candidate.startsAt)}, ${clockLabel(candidate.startsAt)})`,
+        `- **${dayWord(candidate.startsAt)}, ${clockLabel(candidate.startsAt)}–${clockLabel(candidate.endsAt)}** · ${plain(item.title)}`,
       );
     }
     const parts = [
-      created.length > 0
-        ? `Done, I put ${created.length === 1 ? "this" : "these"} on your calendar: ${created.join("; ")}.`
-        : "",
+      created.length > 0 ? `**Work blocks added to your calendar**\n${created.join("\n")}` : "",
       skipped.length > 0
-        ? `I skipped ${skipped.map((title) => `"${title}"`).join(", ")} because the time is no longer free or the task changed.`
+        ? `**Not scheduled**\n${skipped.map((title) => `- I skipped "${plain(title)}" because the time is no longer free or the task changed.`).join("\n")}`
         : "",
     ].filter(Boolean);
     return finish(
       state,
       userText,
       {
-        text: parts.join(" ") || "There was nothing to schedule.",
+        text: parts.join("\n\n") || "There was nothing to schedule.",
         outcome: created.length > 0 ? "created" : "failed",
         changed: created.length > 0,
       },
@@ -951,6 +1092,89 @@ export function createAssistant(options: AssistantOptions) {
     return { enabled: on, paused: isPaused, active: on && !isPaused };
   }
 
+  async function maybeAskLearning(
+    principal: Principal,
+    userText: string,
+    intent: Intent,
+    result: { reply: AssistantReply; state: ConversationState },
+  ) {
+    if (
+      asksNotToSave(userText) ||
+      !(
+        (intent.kind === "complete_task" && result.reply.changed) ||
+        (["show_insights", "show_schedule"].includes(intent.kind) &&
+          result.reply.outcome === "answered")
+      ) ||
+      result.state.pending ||
+      result.state.pendingSetting ||
+      result.state.pendingMemory ||
+      result.state.pendingPlan ||
+      result.state.pendingCapture
+    )
+      return result;
+    try {
+      if (!(await tracking(principal)).active) return result;
+      const last = await services.preferences.get(principal, "learning.last_question");
+      const day = dateKeyOf(clock(), timezone);
+      if (!learningQuestionDue(last?.value, clock(), day)) return result;
+      const completed = result.state.lastChange;
+      const next = nextLearningQuestion(last?.value);
+      const task =
+        intent.kind === "complete_task" && completed?.kind === "completed" ? completed : null;
+      if (!task && !next) return result;
+      const question = task
+        ? `About how many minutes did "${task.title.slice(0, 120)}" take? You can skip this; I'll only learn from what you report.`
+        : `${next!.question} You can skip this; I'll ask before remembering your answer.`;
+      await services.preferences.set(principal, {
+        key: "learning.last_question",
+        value: {
+          day,
+          at: clock().toISOString(),
+          asked: task ? askedLearningQuestions(last?.value) : next!.asked,
+        },
+        status: "confirmed",
+        ...(last ? { expectedVersion: last.version } : {}),
+      });
+      const reply = { ...result.reply, text: `${result.reply.text}\n\n${question}` };
+      return {
+        reply,
+        state: {
+          ...result.state,
+          learningQuestion: {
+            ownerId: principal.ownerId,
+            question,
+            expiresAt: new Date(clock().getTime() + 10 * 60_000).toISOString(),
+            ...(task ? { taskId: task.taskId } : {}),
+          },
+          turns: [
+            ...result.state.turns.slice(0, -1),
+            { role: "assistant" as const, text: reply.text.slice(-1000) },
+          ],
+        },
+      };
+    } catch (error) {
+      logFailure("learning_question_unavailable", error);
+      return result;
+    }
+  }
+
+  function focusEvents(
+    principal: Principal,
+    ids: string[],
+    action?: EventFocus["action"],
+    scope?: EventFocus["scope"],
+  ): EventFocus | null {
+    return ids.length
+      ? {
+          ownerId: principal.ownerId,
+          ids: ids.slice(0, 15),
+          expiresAt: new Date(clock().getTime() + 60 * 60_000).toISOString(),
+          ...(action ? { action } : {}),
+          ...(scope ? { scope } : {}),
+        }
+      : null;
+  }
+
   async function loadCorrections(principal: Principal) {
     const rows = await services.preferences.list(principal);
     return rows
@@ -1013,23 +1237,6 @@ export function createAssistant(options: AssistantOptions) {
         },
       },
     );
-  }
-
-  // Removes the task's remaining planned work blocks once it is done. The blocks are marked
-  // removed, not deleted, so history keeps them.
-  async function clearPlannedBlocks(principal: Principal, taskId: string): Promise<number> {
-    const from = clock();
-    const to = new Date(from.getTime() + 60 * 24 * 3_600_000);
-    const blocks = await services.workBlocks.list(principal, { from, to, limit: 200 });
-    let cleared = 0;
-    for (const block of blocks) {
-      if (block.taskId !== taskId) continue;
-      await services.workBlocks.remove(principal, block.id, "task_completed", {
-        intent: "explicit",
-      });
-      cleared++;
-    }
-    return cleared;
   }
 
   // True when the task was finished at least a day before its deadline.
@@ -1133,36 +1340,40 @@ export function createAssistant(options: AssistantOptions) {
       const lines = shown.map(({ task, category }) => {
         const effort = task.estimatedMinutes ? `, about ${task.estimatedMinutes} min` : "";
         const where = category === "Inbox" ? "" : `, ${category}`;
-        return `${task.title} (${dueText(task, timezone)}${effort}${where})`;
+        return `${plain(task.title)} (${dueText(task, timezone)}${effort}${where})`;
       });
       const more = savedTasks.length - shown.length;
       parts.push(
-        `Tasks:\n${numbered(lines)}${more > 0 ? `\n...and ${more} more, all saved. You'll find them in your Inbox.` : ""}`,
+        `**Tasks added**\n${numbered(lines)}${more > 0 ? `\n...and ${more} more, all saved. You'll find them in your Inbox.` : ""}`,
       );
     }
     if (savedNotes.length > 0) {
       parts.push(
-        `Saved separately: ${savedNotes.map(({ kind, text }) => `${kind} "${text}"`).join(", ")}.`,
+        `**Notes and ideas saved**\n${savedNotes.map(({ kind, text }) => `• ${kind} "${plain(text)}"`).join("\n")}`,
       );
     }
     const flagged = savedTasks.filter((entry) => entry.flagged);
     if (flagged.length > 0) {
       parts.push(
-        `${flagged.length === 1 ? "One needs" : "A few need"} a look, so I flagged ${flagged.length === 1 ? "it" : "them"} for review in your Inbox: ${flagged.map(({ task }) => `"${task.title}" (${task.reviewNote})`).join("; ")}. Tell me what's missing and I'll fix it.`,
+        `**Needs review**\n${flagged.map(({ task }) => `• ${plain(task.title)} — ${plain(task.reviewNote ?? "missing details")}`).join("\n")}\nThese need a look. Tell me what's missing and I'll fix it.`,
       );
     }
-    parts.push(...remarks);
-    for (const entry of skipped) {
-      parts.push(`I skipped "${entry.title}" because you already have "${entry.existing}".`);
+    if (remarks.length > 0) {
+      parts.push(`**Category notes**\n${remarks.map((remark) => `• ${plain(remark)}`).join("\n")}`);
+    }
+    if (skipped.length > 0) {
+      parts.push(
+        `**Already on your list**\n${skipped.map((entry) => `• I skipped "${plain(entry.title)}" because you already have "${plain(entry.existing)}".`).join("\n")}`,
+      );
     }
     if (failed.length > 0) {
       parts.push(
-        `I couldn't save ${failed.map((title) => `"${title}"`).join(", ")}, so nothing was stored for ${failed.length === 1 ? "it" : "those"}.`,
+        `**Not saved**\n${failed.map((title) => `• I couldn't save "${plain(title)}".`).join("\n")}\nNothing was stored for ${failed.length === 1 ? "it" : "those items"}.`,
       );
     }
     if (unverified.length > 0) {
       parts.push(
-        `I couldn't verify whether ${unverified.map((title) => `"${title}"`).join(", ")} ${unverified.length === 1 ? "was" : "were"} saved. Please check your Inbox before retrying; don't assume ${unverified.length === 1 ? "it was" : "they were"} saved or lost.`,
+        `**Save status unclear**\n${unverified.map((title) => `• I couldn't verify whether "${plain(title)}" was saved.`).join("\n")} Please check your Inbox before retrying; don't assume these were saved or lost.`,
       );
     }
     if (omitted > 0) {
@@ -1194,6 +1405,13 @@ export function createAssistant(options: AssistantOptions) {
                 ? "failed"
                 : "answered",
         changed: total > 0,
+        ...(savedTasks.length
+          ? {
+              links: savedTasks.map(({ task }) =>
+                savedItemLink(task.taskType, task.id, task.title),
+              ),
+            }
+          : {}),
       },
       {
         listed: savedTasks.slice(0, LIST_LINES).map(({ task }) => taskContext(task, timezone)),
@@ -1440,6 +1658,13 @@ export function createAssistant(options: AssistantOptions) {
     // Saying "don't save this" or "just chatting" is honored whatever the model decided.
     if (
       (intent.kind === "create_task" ||
+        intent.kind === "cancel_task" ||
+        intent.kind === "acknowledge_event" ||
+        intent.kind === "cancel_event" ||
+        intent.kind === "report_duration" ||
+        intent.kind === "reschedule_event" ||
+        intent.kind === "move_work" ||
+        intent.kind === "update_task" ||
         intent.kind === "create_event" ||
         intent.kind === "create_note" ||
         intent.kind === "develop_idea" ||
@@ -1514,16 +1739,20 @@ export function createAssistant(options: AssistantOptions) {
         }
         const shown = matched.slice(0, LIST_LINES);
         const more = matched.length - shown.length;
-        const lines = shown.map((task) =>
-          task.taskType === "todo"
-            ? `${task.title} (to-do)`
-            : `${task.title} (${task.priority}, ${dueText(task, timezone)}${task.estimatedMinutes ? `, ${task.estimatedMinutes} min` : ""})`,
+        const lines = shown.map(
+          (task) =>
+            `- **${plain(task.title)}**\n  ${task.taskType === "todo" ? "To-do" : `${task.priority} · ${dueText(task, timezone)}${task.estimatedMinutes ? ` · ${task.estimatedMinutes} min` : ""}`}`,
         );
-        const closing = more > 0 ? "" : "\nWant me to check any of these off?";
-        const text = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun} (${matched.length}):\n${numbered(lines)}${more > 0 ? `\n...and ${more} more.` : ""}${closing}`;
+        const closing = more > 0 ? "" : "\n\nWant me to check any of these off?";
+        const heading = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun}`;
+        const text = `**${heading} · ${matched.length}**\n\n${lines.join("\n\n")}${more > 0 ? `\n\n…and ${more} more.` : ""}${closing}`;
         return reply(
           { text, outcome: "listed", changed: false },
-          { listed: shown.map((task) => taskContext(task, timezone)) },
+          {
+            listed: shown.map((task) => taskContext(task, timezone)),
+            eventFocus: null,
+            lastReminder: null,
+          },
         );
       }
 
@@ -1567,6 +1796,7 @@ export function createAssistant(options: AssistantOptions) {
               : `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
           outcome: "created",
           changed: true,
+          links: [savedItemLink(task.taskType, task.id, task.title)],
         });
       }
 
@@ -1583,11 +1813,21 @@ export function createAssistant(options: AssistantOptions) {
             location: intent.location,
             recurrence: intent.recurrence,
           });
-          return reply({
-            text: `I saved ${events.length} ${intent.recurrence.frequency} occurrences of "${intent.title}", from ${dayLabel(dateKeyOf(events[0]!.startsAt, timezone))} through ${dayLabel(dateKeyOf(events.at(-1)!.startsAt, timezone))}, at ${intent.startTime} to ${intent.endTime} (${timezone}). You can ask to cancel one occurrence or the whole series; I'll show the scope before confirming.`,
-            outcome: "created",
-            changed: true,
-          });
+          return reply(
+            {
+              text: `I saved ${events.length} ${intent.recurrence.frequency} occurrences of "${intent.title}", from ${dayLabel(dateKeyOf(events[0]!.startsAt, timezone))} through ${dayLabel(dateKeyOf(events.at(-1)!.startsAt, timezone))}, at ${intent.startTime} to ${intent.endTime} (${timezone}). You can ask to cancel one occurrence or the whole series; I'll show the scope before confirming.`,
+              outcome: "created",
+              changed: true,
+              links: [savedItemLink("event", events[0]!.id, events[0]!.title)],
+            },
+            {
+              eventFocus: focusEvents(
+                principal,
+                events.map((event) => event.id),
+              ),
+              lastReminder: null,
+            },
+          );
         }
         const event = await services.events.create(principal, {
           title: intent.title,
@@ -1603,11 +1843,15 @@ export function createAssistant(options: AssistantOptions) {
         });
         const startTime = time.format(startsAt).replace(/\u202f/g, " ");
         const endTime = time.format(endsAt).replace(/\u202f/g, " ");
-        return reply({
-          text: `I added "${event.title}" to your calendar for ${dayLabel(intent.date)} from ${startTime} to ${endTime}.`,
-          outcome: "created",
-          changed: true,
-        });
+        return reply(
+          {
+            text: `I added "${event.title}" to your calendar for ${dayLabel(intent.date)} from ${startTime} to ${endTime}.`,
+            outcome: "created",
+            changed: true,
+            links: [savedItemLink("event", event.id, event.title)],
+          },
+          { eventFocus: focusEvents(principal, [event.id]), lastReminder: null, listed: [] },
+        );
       }
 
       case "create_note": {
@@ -1760,11 +2004,18 @@ export function createAssistant(options: AssistantOptions) {
             changed: false,
           });
         }
-        const pool = openTasks.map((task) => ({ id: task.id, title: task.title }));
+        const askedTask = state.learningQuestion?.taskId
+          ? await services.tasks.get(principal, state.learningQuestion.taskId)
+          : null;
+        const pool = [...openTasks, ...(askedTask ? [askedTask] : [])].map((task) => ({
+          id: task.id,
+          title: task.title,
+        }));
         const found = resolveReference(intent.reference, pool, {
-          listed: state.listed.map(({ id, title }) => ({ id, title })),
+          listed: askedTask ? [askedTask] : state.listed.map(({ id, title }) => ({ id, title })),
           ...(intent.targetId ? { targetId: intent.targetId } : {}),
         });
+        if (found.kind === "many") return clarify(found.items);
         const subject =
           found.kind === "one"
             ? found.item.title
@@ -1783,11 +2034,14 @@ export function createAssistant(options: AssistantOptions) {
           key: subject,
           value: intent.minutes,
         });
-        return reply({
-          text: `Thanks, I noted that "${subject}" took about ${intent.minutes} minutes. The more you tell me, the better my estimates get.`,
-          outcome: "created",
-          changed: true,
-        });
+        return reply(
+          {
+            text: `Thanks, I noted that "${subject}" took about ${intent.minutes} minutes. The more you tell me, the better my estimates get.`,
+            outcome: "created",
+            changed: true,
+          },
+          { learningQuestion: null },
+        );
       }
 
       case "show_insights": {
@@ -1907,7 +2161,7 @@ export function createAssistant(options: AssistantOptions) {
         }
         const text = intent.text.trim();
         const key = memoryKey(text);
-        if (intent.explicit) {
+        if (intent.explicit && !state.learningQuestion) {
           await services.preferences.set(principal, { key, value: { text }, status: "confirmed" });
           return reply({
             text: `Got it, I'll remember that: ${text}`,
@@ -1923,7 +2177,7 @@ export function createAssistant(options: AssistantOptions) {
             outcome: "confirmation_needed",
             changed: false,
           },
-          { pendingMemory: { key, text } },
+          { pendingMemory: { key, text }, learningQuestion: null },
         );
       }
 
@@ -2174,6 +2428,155 @@ export function createAssistant(options: AssistantOptions) {
       case "recategorize":
         return recategorize(principal, userText, intent, state, openTasks, notes);
 
+      case "reschedule_event":
+      case "move_work": {
+        const today = dateKeyOf(clock(), timezone);
+        const range = {
+          from: localWallToUtc(intent.date ?? addDays(today, -30), 0, timezone),
+          to: localWallToUtc(
+            intent.date ? addDays(intent.date, 1) : addDays(today, 31),
+            0,
+            timezone,
+          ),
+          limit: 500,
+        };
+        const isEvent = intent.kind === "reschedule_event";
+        const rows = isEvent
+          ? await services.events.list(principal, range)
+          : (await services.workBlocks.list(principal, range)).map((block) => ({
+              ...block,
+              title:
+                block.title ??
+                openTasks.find((task) => task.id === block.taskId)?.title ??
+                "Work block",
+            }));
+        const referenceOptions = {
+          listed:
+            isEvent && state.eventFocus
+              ? state.eventFocus.ids.flatMap((id) => rows.filter((row) => row.id === id))
+              : state.listed.flatMap((item) => rows.filter((row) => row.id === item.id)),
+        };
+        let found = resolveReference(intent.reference, rows, referenceOptions);
+        if (isEvent && found.kind === "none") {
+          found = resolveReference(
+            intent.reference.replace(/\b(?:event|appointment)\b/gi, "").trim(),
+            rows,
+            referenceOptions,
+          );
+        }
+        if (rows.length === range.limit)
+          return reply({
+            text: "There are too many calendar items to choose safely. Which original date is it on?",
+            outcome: "clarification",
+            changed: false,
+          });
+        if (found.kind === "many")
+          return clarify(
+            found.items.map((row) => ({
+              id: row.id,
+              title: `${row.title.slice(0, 240)} (${dayWord(row.startsAt)}, ${clockLabel(row.startsAt)})`,
+            })),
+          );
+        if (found.kind === "none")
+          return reply({
+            text: "Which existing calendar item should I move? Tell me its name and original date. Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
+        const row = found.item;
+        const zone = "timezone" in row ? row.timezone : timezone;
+        const newDate = intent.newDate ?? dateKeyOf(row.startsAt, zone);
+        const originalTime = localParts(row.startsAt, zone);
+        const startsAt = localWallToUtc(
+          newDate,
+          intent.time ? parseTimeOfDay(intent.time) : originalTime.hour * 60 + originalTime.minute,
+          zone,
+        );
+        const endsAt = intent.endTime
+          ? localWallToUtc(newDate, parseTimeOfDay(intent.endTime), zone)
+          : new Date(
+              startsAt.getTime() +
+                (intent.minutes
+                  ? intent.minutes * 60_000
+                  : row.endsAt.getTime() - row.startsAt.getTime()),
+            );
+        if (endsAt <= startsAt)
+          return reply({
+            text: "The end must be after the start. What time should it end?",
+            outcome: "clarification",
+            changed: false,
+          });
+        if (isEvent) {
+          if (
+            startsAt.getTime() === row.startsAt.getTime() &&
+            endsAt.getTime() === row.endsAt.getTime()
+          ) {
+            return reply({
+              text: `"${row.title}" is already at that date and time. Nothing changed.`,
+              outcome: "answered",
+              changed: false,
+            });
+          }
+          const proposal = await services.confirmations.propose(principal, {
+            action: "event.reschedule",
+            payload: {
+              eventId: row.id,
+              startsAt: startsAt.toISOString(),
+              endsAt: endsAt.toISOString(),
+            },
+          });
+          const summary = String(proposal.preview.summary);
+          return reply(
+            {
+              text: `${summary} Old unsent reminders will stop; Google changes wait for successful sync. Should I save this?`,
+              outcome: "confirmation_needed",
+              changed: false,
+            },
+            {
+              pending: {
+                confirmationId: proposal.confirmationId,
+                payloadHash: proposal.payloadHash,
+                summary: summary.slice(0, 400),
+                expiresAt: proposal.expiresAt.toISOString(),
+              },
+            },
+          );
+        }
+        const day = dateKeyOf(startsAt, timezone);
+        const context = await planningContext(principal, day, dateKeyOf(endsAt, timezone));
+        const conflicts = findConflicts(
+          { startsAt, endsAt },
+          {
+            events: context.events,
+            workBlocks: context.blocks.filter((block) => block.id !== row.id),
+            preferences: context.preferences,
+          },
+        );
+        if (conflicts.length)
+          return reply({
+            text: "That time overlaps your calendar or routine, or is outside your planning availability. I left the existing block unchanged.",
+            outcome: "failed",
+            changed: false,
+          });
+        const result = await services.workBlocks.update(
+          principal,
+          row.id,
+          {
+            startsAt,
+            endsAt,
+            expectedVersion: row.version,
+          },
+          { intent: "explicit" },
+        );
+        return reply({
+          text: result.changed
+            ? `I moved "${row.title}" to ${dayWord(startsAt)}, ${clockLabel(startsAt)} to ${clockLabel(endsAt)}. Its deadline is unchanged. Connected-calendar sync is pending.`
+            : `"${row.title}" is already at that time.`,
+          outcome: "completed",
+          changed: result.changed,
+        });
+      }
+
       case "cancel_event":
       case "acknowledge_event": {
         const last = state.lastReminder;
@@ -2187,25 +2590,47 @@ export function createAssistant(options: AssistantOptions) {
           ),
           limit: 500,
         });
+        const focusIds =
+          state.eventFocus?.ids ??
+          (last?.subjectType === "event" && last.subjectId ? [last.subjectId] : []);
+        if (!intent.date) {
+          for (const id of focusIds) {
+            if (eventRows.some((event) => event.id === id)) continue;
+            try {
+              const event = await services.events.get(principal, id);
+              if (event.status === "scheduled") eventRows.push({ ...event, acknowledged: false });
+            } catch (error) {
+              if (!isMissingRecord(error)) throw error;
+            }
+          }
+        }
         const rows = intent.startTime
           ? eventRows.filter((event) => {
               const { hour, minute } = localParts(event.startsAt, timezone);
               return hour * 60 + minute === parseTimeOfDay(intent.startTime!);
             })
           : eventRows;
-        let found = resolveReference(intent.reference, rows, {
-          listed:
-            last?.subjectType === "event"
-              ? rows.filter((event) => event.id === last.subjectId)
-              : state.listed.flatMap((item) => rows.filter((event) => event.id === item.id)),
+        const reference = intent.reference
+          .trim()
+          .replace(/^(?:(?:my|the|that|this|it|one|event|appointment)\s*)+$/i, "");
+        const focused = focusIds.flatMap((id) => rows.filter((event) => event.id === id));
+        let found = resolveReference(reference, rows, {
+          listed: focused.length
+            ? focused
+            : state.listed.flatMap((item) => rows.filter((event) => event.id === item.id)),
         });
-        if (!intent.reference.trim() && (intent.date || intent.startTime) && rows.length) {
+        if (!reference && !intent.date && !intent.startTime && focused.length > 1) {
+          found = { kind: "many", items: focused };
+        }
+        if (!reference && (intent.date || intent.startTime) && rows.length) {
           found =
             rows.length === 1 ? { kind: "one", item: rows[0]! } : { kind: "many", items: rows };
         }
         if (found.kind === "many") {
           const matches = found.items;
           const reminded = matches.find((event) => event.id === last?.subjectId);
+          const focusedMatch =
+            focused.length === 1 ? matches.find((event) => event.id === focused[0]!.id) : undefined;
           if (
             intent.kind === "cancel_event" &&
             intent.scope === "series" &&
@@ -2213,16 +2638,35 @@ export function createAssistant(options: AssistantOptions) {
             matches.every((event) => event.seriesId === matches[0]!.seriesId)
           ) {
             found = { kind: "one", item: matches[0] };
-          } else if (reminded && !intent.date) {
+          } else if (focusedMatch && !intent.date) {
+            found = { kind: "one", item: focusedMatch };
+          } else if (reminded && !intent.date && !state.eventFocus) {
             found = { kind: "one", item: reminded };
           }
         }
         if (found.kind === "many") {
-          return clarify(
-            found.items.map((event) => ({
-              ...event,
-              title: `${event.title.slice(0, 240)} (${dayWord(event.startsAt)}, ${clockLabel(event.startsAt)})`,
-            })),
+          const shown = found.items.slice(0, 5);
+          return reply(
+            {
+              text: `Which event occurrence do you mean?\n${numbered(
+                shown.map(
+                  (event) =>
+                    `${event.title.slice(0, 200)} (${dayWord(event.startsAt)}, ${clockLabel(event.startsAt)})`,
+                ),
+              )}`,
+              outcome: "clarification",
+              changed: false,
+            },
+            {
+              eventFocus: focusEvents(
+                principal,
+                shown.map((event) => event.id),
+                intent.kind,
+                intent.kind === "cancel_event" ? intent.scope : undefined,
+              ),
+              lastReminder: null,
+              listed: shown.map((event) => ({ id: event.id, title: event.title, due: null })),
+            },
           );
         }
         if (found.kind === "none")
@@ -2241,7 +2685,7 @@ export function createAssistant(options: AssistantOptions) {
             outcome: "completed",
             changed: result.changed,
           },
-          { lastReminder: null, listed: [] },
+          { lastReminder: null, listed: [], eventFocus: focusEvents(principal, [found.item.id]) },
         );
       }
 
@@ -2249,7 +2693,9 @@ export function createAssistant(options: AssistantOptions) {
       case "reopen_task": {
         const rows =
           intent.kind === "reopen_task"
-            ? await services.tasks.list(principal, { status: "completed", limit: POOL_LIMIT })
+            ? (await services.tasks.list(principal, { status: "all", limit: POOL_LIMIT })).filter(
+                (task) => task.status !== "open",
+              )
             : openTasks;
         const found = resolveReference(intent.reference, rows, {
           listed: state.listed.flatMap((item) => {
@@ -2264,6 +2710,26 @@ export function createAssistant(options: AssistantOptions) {
             outcome: "clarification",
             changed: false,
           });
+        const existing = found.item;
+        if (intent.kind === "update_task" && intent.dueTime && !intent.dueDate && !existing.dueAt) {
+          return reply({
+            text: "What date should that deadline be on? Nothing was changed.",
+            outcome: "clarification",
+            changed: false,
+          });
+        }
+        const dueDate =
+          intent.kind === "update_task"
+            ? (intent.dueDate ??
+              (intent.dueTime ? (localDue(existing, timezone) ?? undefined) : undefined))
+            : undefined;
+        const dueTime =
+          intent.kind === "update_task"
+            ? (intent.dueTime ??
+              (dueDate && existing.dueAt && !existing.dueDateOnly
+                ? `${String(localParts(existing.dueAt, timezone).hour).padStart(2, "0")}:${String(localParts(existing.dueAt, timezone).minute).padStart(2, "0")}`
+                : undefined))
+            : undefined;
         const result =
           intent.kind === "reopen_task"
             ? await services.tasks.reopen(principal, found.item.id)
@@ -2275,7 +2741,7 @@ export function createAssistant(options: AssistantOptions) {
                   : {}),
                 ...(intent.priority ? { priority: intent.priority } : {}),
                 ...(intent.estimatedMinutes ? { estimatedMinutes: intent.estimatedMinutes } : {}),
-                ...(intent.dueDate ? dueFields(intent.dueDate, intent.dueTime) : {}),
+                ...(dueDate ? dueFields(dueDate, dueTime) : {}),
               });
         return reply({
           text: result.changed
@@ -2286,6 +2752,7 @@ export function createAssistant(options: AssistantOptions) {
         });
       }
 
+      case "cancel_task":
       case "complete_task": {
         const pool = openTasks.map((task) => ({ id: task.id, title: task.title }));
         const last = state.lastReminder;
@@ -2328,13 +2795,22 @@ export function createAssistant(options: AssistantOptions) {
             changed: false,
           });
         }
+        if (intent.kind === "cancel_task") {
+          const result = await services.tasks.cancel(principal, found.item.id);
+          return reply(
+            {
+              text: `Canceled "${result.task.title}", without marking it completed. Planned blocks and unsent reminders are cleared; history is kept. You can reopen it. Connected-calendar removal waits for successful sync.`,
+              outcome: "completed",
+              changed: result.changed,
+            },
+            { lastChange: null, lastReminder: null },
+          );
+        }
         const { task, changed } = await services.tasks.complete(principal, found.item.id);
         let extra = "";
         if (changed) {
-          const cleared = await clearPlannedBlocks(principal, task.id);
-          if (cleared > 0) {
-            extra += ` I also cleared ${cleared} planned work ${cleared === 1 ? "block" : "blocks"} for it; the task and its deadline stay in your history.`;
-          }
+          extra +=
+            " Its planned work blocks and remaining reminders are cleared; its deadline stays in history. Connected-calendar removal is pending the next successful sync.";
           if (finishedEarly(task)) {
             extra +=
               " You're well ahead of the deadline, so you've earned some time. Want to use it for catch-up work, a workout, or a break?";
@@ -2485,14 +2961,16 @@ export function createAssistant(options: AssistantOptions) {
         return reply(
           {
             text:
-              gone.canceled === "events"
-                ? `Done. I canceled ${gone.count} event occurrence${gone.count === 1 ? "" : "s"}. They stay in history, and remaining reminders stop.`
-                : gone.cleared
-                  ? "Done. I've forgotten what I learned about how long things take. Estimates go back to what you set."
-                  : gone.deleted === "preference"
-                    ? "Done. I've forgotten that."
-                    : "Done. The note is deleted.",
-            outcome: gone.canceled ? "completed" : "deleted",
+              gone.rescheduled === "event"
+                ? "Saved the event's new time for that occurrence only. Old unsent reminders are canceled; connected-calendar changes are pending successful sync."
+                : gone.canceled === "events"
+                  ? `Done. I canceled ${gone.count} event occurrence${gone.count === 1 ? "" : "s"}. They stay in history, and remaining reminders stop.`
+                  : gone.cleared
+                    ? "Done. I've forgotten what I learned about how long things take. Estimates go back to what you set."
+                    : gone.deleted === "preference"
+                      ? "Done. I've forgotten that."
+                      : "Done. The note is deleted.",
+            outcome: gone.canceled || gone.rescheduled ? "completed" : "deleted",
             changed: true,
           },
           { pending: null },

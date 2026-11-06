@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { BellRing, Sunrise } from "lucide-react";
 import { saveBriefingSetting, saveSplitReminderSetting } from "./actions";
-import styles from "../planning/settings.module.css";
+import { clockSummary, DefaultEditor } from "../planning/default-editor";
 import workspaceStyles from "../workspace.module.css";
 
 export function SplitReminderFields({
@@ -72,84 +72,53 @@ export function SplitReminderSettings({
   const [enabled, setEnabled] = useState(value.enabled);
   const [count, setCount] = useState(String(value.count));
   const [savedVersion, setSavedVersion] = useState(version);
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
   return (
-    <details className={styles.section} data-tone="reminders">
-      <summary>
-        <BellRing size={22} aria-hidden="true" />
-        <span className={styles.summaryText}>
-          <strong>Optional split-day reminders</strong>
-          <small>Extra check-ins before task deadlines</small>
-        </span>
-        <span className={styles.stateTag}>{enabled ? "On" : "Off"}</span>
-      </summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setPending(true);
-          setMessage("");
-          try {
-            const result = await saveSplitReminderSetting(
-              { enabled, count: enabled ? Number(count) : value.count },
-              savedVersion,
-            );
-            setFailed(!result.ok);
-            setMessage(result.ok ? "Saved." : result.error);
-            if (result.ok) {
-              setSavedVersion(result.version);
-            }
-          } catch {
-            setFailed(true);
-            setMessage("Could not confirm the save. Reload to check before trying again.");
-          } finally {
-            setPending(false);
-          }
-        }}
-      >
-        <fieldset disabled={pending} className={styles.fields}>
-          <p>
-            Extra check-ins for each unfinished task on its due day. Your original deadline and
-            event alerts stay unchanged.
-          </p>
-          <p>
-            Split the window from your morning briefing (8 AM if off) to the deadline or
-            quiet/sleep/bedtime cutoff, whichever is earlier. Two reminders land halfway and
-            three-quarters through; larger counts divide that window into more parts. Tasks added
-            later start from their creation time.
-          </p>
-          <p>
-            The morning brief is separate. Your daily limit of {dailyLimit} ordinary reminders still
-            applies across all tasks and reminders; selecting a larger count does not raise it.
-          </p>
-          <label>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
-            />{" "}
-            Add split-day reminders
-          </label>
-          {enabled ? (
-            <label>
-              Extra reminders per task (1–100){" "}
-              <input
-                type="number"
-                min={1}
-                max={100}
-                step={1}
-                required
-                value={count}
-                onChange={(event) => setCount(event.target.value)}
-              />
-            </label>
-          ) : null}
-          <button type="submit">{pending ? "Saving..." : "Save split reminder settings"}</button>
-        </fieldset>
-        {message ? <p role={failed ? "alert" : "status"}>{message}</p> : null}
-      </form>
-    </details>
+    <DefaultEditor
+      title="Extra task reminders"
+      icon={BellRing}
+      value={{ enabled, count: Number(count) }}
+      summary={(saved) =>
+        saved.enabled ? `${saved.count} extra per task · on due day` : "Off · original alerts only"
+      }
+      onReset={(saved) => {
+        setEnabled(saved.enabled);
+        setCount(String(saved.count));
+      }}
+      onSave={async (draft) => {
+        const result = await saveSplitReminderSetting(draft, savedVersion);
+        if (result.ok) {
+          setSavedVersion(result.version);
+        }
+        return result;
+      }}
+    >
+      <p>
+        Before deadlines, within awake hours. Original alerts stay unchanged. Individual task
+        choices override this default; daily limit: {dailyLimit}.
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />{" "}
+        Add split-day reminders
+      </label>
+      {enabled ? (
+        <label>
+          Extra reminders per task (1–100){" "}
+          <input
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            required
+            value={count}
+            onChange={(event) => setCount(event.target.value)}
+          />
+        </label>
+      ) : null}
+    </DefaultEditor>
   );
 }
 
@@ -165,67 +134,45 @@ export function BriefingSettings({
   const [enabled, setEnabled] = useState(briefingTime !== null);
   const [time, setTime] = useState(briefingTime ?? "08:00");
   const [savedVersion, setSavedVersion] = useState(version);
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
-
   return (
-    <details className={styles.section} data-tone="briefing">
-      <summary>
-        <Sunrise size={22} aria-hidden="true" />
-        <span className={styles.summaryText}>
-          <strong>Morning briefing</strong>
-          <small>A daily overview of your plan</small>
-        </span>
-        <span className={styles.stateTag}>{enabled ? time : "Off"}</span>
-      </summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setPending(true);
-          setMessage("");
-          try {
-            const result = await saveBriefingSetting(enabled ? time : null, savedVersion);
-            setFailed(!result.ok);
-            setMessage(result.ok ? "Saved." : result.error);
-            if (result.ok) setSavedVersion(result.version);
-          } catch {
-            setFailed(true);
-            setMessage("Could not confirm the save. Reload to check before trying again.");
-          } finally {
-            setPending(false);
-          }
-        }}
-      >
-        <fieldset disabled={pending} className={styles.fields}>
-          <p>Choose when your morning briefing arrives. Times use {timezone}.</p>
-          <p>
-            A saved change updates pending briefings. If today&apos;s was already sent, it starts
-            tomorrow.
-          </p>
-          <label>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
-            />{" "}
-            Send morning briefing
-          </label>
-          {enabled ? (
-            <label>
-              Delivery time (AM/PM){" "}
-              <input
-                type="time"
-                required
-                value={time}
-                onChange={(event) => setTime(event.target.value)}
-              />
-            </label>
-          ) : null}
-          <button type="submit">{pending ? "Saving..." : "Save briefing settings"}</button>
-        </fieldset>
-        {message ? <p role={failed ? "alert" : "status"}>{message}</p> : null}
-      </form>
-    </details>
+    <DefaultEditor
+      title="Morning briefing"
+      icon={Sunrise}
+      value={enabled ? time : null}
+      summary={(saved) => (saved ? `Daily at ${clockSummary(saved)}` : "Off")}
+      onReset={(saved) => {
+        setEnabled(saved !== null);
+        setTime(saved ?? "08:00");
+      }}
+      onSave={async (draft) => {
+        const result = await saveBriefingSetting(draft, savedVersion);
+        if (result.ok) setSavedVersion(result.version);
+        return result;
+      }}
+    >
+      <p>
+        Times use {timezone}. Overrides quiet hours, not pauses or the daily limit. Updates pending
+        briefings; if today&apos;s was sent, starts tomorrow.
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />{" "}
+        Send morning briefing
+      </label>
+      {enabled ? (
+        <label>
+          Delivery time (AM/PM){" "}
+          <input
+            type="time"
+            required
+            value={time}
+            onChange={(event) => setTime(event.target.value)}
+          />
+        </label>
+      ) : null}
+    </DefaultEditor>
   );
 }

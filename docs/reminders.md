@@ -39,7 +39,8 @@ Decided in one place (`packages/core/src/reminders/policy.ts`), in this order:
    hours**; a morning briefing for **3 hours**; an event reminder, check-in, or wind-down for **30
    minutes**. After an outage the owner gets what still matters, not every missed hourly prompt.
 4. Quiet hours (10 PM–7 AM local by default): an ordinary reminder is held until they end, unless that would make it
-   stale, in which case it is dropped. Urgent reminders go through.
+   stale, in which case it is dropped. Urgent reminders and the explicitly scheduled
+   morning briefing go through; the chosen briefing time is not postponed to quiet-hours end.
 5. Daily limit (12 ordinary reminders a day by default): extras are skipped.
 6. Late but relevant: sent with "(a little late)". If more than 3 unrelated reminders are late at once,
    they are merged into one short summary.
@@ -67,6 +68,55 @@ The morning briefing defaults to 08:00 local time. Change its delivery time from
 in conversation; pending briefings are moved to the new time. If today's briefing was already sent,
 the new time applies to the next scheduled briefing. Uncheck **Send morning briefing** in the
 dashboard to disable delivery.
+
+Briefings use local wall-clock time in `APP_TIMEZONE`, including daylight-saving changes.
+Set the same IANA timezone on both web and worker services. A briefing chosen during quiet
+hours is delivered at that chosen time, not held for an hour and then labeled late.
+Actual outages/retries can still delay it; a delay over five minutes is reported honestly,
+and stale briefings are skipped. A worker that is stopped cannot deliver a briefing.
+
+### Planning routines and personal learning
+
+**Daily routine** groups sleep, meals, protected time, and optional planning-hour limits.
+There is no assumed weekday work shift when limits have not been saved. Existing explicit
+hours remain in effect; uncheck **Limit planning to specific hours** and save to use routines
+and calendar commitments alone. An empty weekday is intentionally unavailable when limits
+are enabled. Actual work shifts should be calendar events, not planning-hour preferences.
+
+**Personal learning** exposes the existing opt-in duration/snooze learning controls.
+Use the single **Allow Epi to learn from what I tell it** checkbox and save to give permission,
+then tell Epi how long work took. Uncheck and save to stop collecting and using reports.
+This control also clears any older saved pause when you allow learning again; there is no
+separate pause checkbox on this page. At least three similar reports
+support a typical-duration estimate; repeated snoozes need more evidence. Saved corrections
+take precedence. These are stored observations and statistical estimates, not model
+fine-tuning or passive surveillance. Pausing/disabling stops new observation use/collection;
+ask Epi to forget learned reports to erase them through confirmation.
+
+The **Planning defaults** page groups Routine, Notifications, and Learning into compact
+saved summaries. **Edit** opens a setting; unsaved drafts do not change its saved summary.
+Save applies a changed draft and Cancel restores the saved value. These settings define usual
+planning behavior, not edits to individual appointments or tasks. Buffer, travel, and
+minimum-block defaults remain optional.
+
+While learning is enabled and unpaused, Epi can append an optional question after completion
+or schedule/insight review. A separate **Discord check-ins** permission allows proactive
+questions in private `#check-ins`. Both modes share a minimum **three-day** cooldown and
+persist topic IDs in `learning.last_question`; twelve general topics are asked once each,
+then general questions stop. Completion-duration questions do not reset this topic history.
+Sending a question consumes its topic/cooldown even if delivery fails, rather than nagging.
+
+Proactive questions use the regular persisted reminder queue and daily cap. Eligibility is
+rechecked at delivery: opt-outs, quiet hours, pauses, calendar/routine availability, recent
+reminders, and stale age can prevent sending. Calendar freedom is not live presence.
+See [Discord personal check-ins](discord.md#optional-personal-check-ins) for timing and controls.
+
+You can ignore questions. A duration answer binds to the completed task; a lasting preference
+needs approval before becoming confirmed memory. Approved tone/length preferences enter the
+AI context, but do not change fixed templates or silently update planning hours/protected time.
+Conversation questions expire after ten minutes; proactive answer context lasts 24 hours
+and can be recovered from a persisted reminder after restart. Disabling/pausing learning
+clears active question context. Explicit memory/forget controls remain separate from reports.
 
 ### Optional split-day reminders
 

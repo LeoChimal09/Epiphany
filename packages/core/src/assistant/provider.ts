@@ -1,4 +1,5 @@
 import type { Intent } from "./intent";
+import type { PlanningPreferences } from "../planning";
 
 export interface OpenTaskContext {
   id: string;
@@ -39,7 +40,22 @@ export interface InterpretRequest {
     subjectId: string | null;
     title: string;
   } | null;
-  events?: { id: string; title: string; startsAt: string; endsAt: string; allDay: boolean }[];
+  events?: {
+    id: string;
+    title: string;
+    startsAt: string;
+    endsAt: string;
+    allDay: boolean;
+    seriesId?: string | null;
+  }[];
+  workBlocks?: { id: string; title: string; startsAt: string; endsAt: string }[];
+  planningPreferences?: PlanningPreferences;
+  eventFocus?: {
+    ids: string[];
+    action?: "acknowledge_event" | "cancel_event";
+    scope?: "occurrence" | "series";
+  } | null;
+  learningQuestion?: string | null;
   history: Turn[];
   // Summary of an action waiting for yes or no, if any.
   pending: string | null;

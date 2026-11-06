@@ -30,7 +30,8 @@ export function createProviderUsageStore(
       await db
         .insert(providerUsage)
         .values({ ownerId, provider, period, costMicros: micros, calls: 1 })
-        .onDuplicateKeyUpdate({
+        .onConflictDoUpdate({
+          target: [providerUsage.ownerId, providerUsage.provider, providerUsage.period],
           set: {
             costMicros: sql`${providerUsage.costMicros} + ${micros}`,
             calls: sql`${providerUsage.calls} + 1`,

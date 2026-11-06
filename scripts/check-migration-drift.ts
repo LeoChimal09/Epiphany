@@ -5,8 +5,8 @@ import { join, relative } from "node:path";
 
 // Fails when schema.ts differs from the committed migrations (a schema change without a
 // migration) or when the migration snapshots are inconsistent. Needs no database.
-const migrations = "packages/core/drizzle";
-const schema = "packages/core/src/db/schema.ts";
+const migrations = "packages/core/drizzle-sqlite";
+const schema = "packages/core/src/db/sqlite-schema.ts";
 
 function drizzleKit(args: string[]): string {
   try {
@@ -25,7 +25,7 @@ const sqlFiles = (folder: string) => readdirSync(folder).filter((name) => name.e
 function main(): void {
   const scratch = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "epiphany-drift-"));
   try {
-    drizzleKit(["check", "--dialect", "mysql", "--out", migrations]);
+    drizzleKit(["check", "--dialect", "sqlite", "--out", migrations]);
 
     const copy = join(scratch, "drizzle");
     cpSync(migrations, copy, { recursive: true });
@@ -33,7 +33,7 @@ function main(): void {
     const output = drizzleKit([
       "generate",
       "--dialect",
-      "mysql",
+      "sqlite",
       "--schema",
       schema,
       "--out",

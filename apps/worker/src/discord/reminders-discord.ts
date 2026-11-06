@@ -11,6 +11,8 @@ import {
   type ReminderDelivery,
 } from "@epiphany/core/reminders";
 import { errorDetails } from "../error-details";
+import { LEARNING_CHECK_IN_PREFIX } from "@epiphany/core/assistant";
+import { availableForLearningCheckIn, scheduleLearningCheckIn } from "./learning-check-ins";
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(
@@ -88,6 +90,8 @@ export function createReminderRunner(options: {
   ownerUserId: string;
   timezone: string;
   clock?: () => Date;
+  learningCheckIns?: boolean;
+  canAskLearning?: () => boolean;
   // Called after a reminder was delivered, so a reply in that private channel can be tied to it.
   onDelivered?: (reminders: Reminder[], result: { channelId?: string }) => void | Promise<void>;
 }): ReminderRunner {
@@ -108,6 +112,13 @@ export function createReminderRunner(options: {
       if (!principal) return;
       const services = createServices(db, { clock });
       const now = clock();
+      if (options.learningCheckIns && (options.canAskLearning?.() ?? true)) {
+        try {
+          await scheduleLearningCheckIn(services, principal, now, timezone);
+        } catch (error) {
+          log("learning_check_in_unavailable", errorDetails(error));
+        }
+      }
       const settings = parseReminderSettings(await services.preferences.list(principal), now);
       const scheduled = await syncReminders({
         db,
@@ -123,6 +134,12 @@ export function createReminderRunner(options: {
         timezone,
         settings,
         delivery,
+        eligible: async (reminder) =>
+          !reminder.message.startsWith(LEARNING_CHECK_IN_PREFIX) ||
+          (!!options.learningCheckIns &&
+            (options.canAskLearning?.() ?? true) &&
+            now.getTime() - reminder.dueAt.getTime() < 30 * 60_000 &&
+            (await availableForLearningCheckIn(services, principal, now, timezone))),
         compose: async (reminder) =>
           reminder.kind === "briefing"
             ? renderBriefing(await loadOverviewData(services, principal, now, timezone))

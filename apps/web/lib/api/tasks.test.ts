@@ -84,7 +84,7 @@ describe.skipIf(!dbTestsEnabled)("tasks API", () => {
   });
 
   describe("the owner", () => {
-    it("creates a task and gets back exactly what MySQL stored", async () => {
+    it("creates a task and gets back exactly what SQLite stored", async () => {
       const response = await createTask(
         post(
           "/api/tasks",

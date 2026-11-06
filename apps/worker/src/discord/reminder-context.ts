@@ -1,5 +1,34 @@
-import { emptyConversation, type ConversationState } from "@epiphany/core/assistant";
+import {
+  emptyConversation,
+  LEARNING_CHECK_IN_PREFIX,
+  type ConversationState,
+} from "@epiphany/core/assistant";
 import type { Reminder } from "@epiphany/core/db";
+
+export function createReplyContexts(clock: () => Date) {
+  const replies = new Map<
+    string,
+    { channelId: string; state: ConversationState; expiresAt: number }
+  >();
+  return {
+    remember(id: string, channelId: string, state: ConversationState) {
+      replies.set(id, { channelId, state, expiresAt: clock().getTime() + 60 * 60_000 });
+      while (replies.size > 100) replies.delete(replies.keys().next().value!);
+    },
+    get(id: string, channelId: string): ConversationState | null {
+      const reply = replies.get(id);
+      if (!reply || reply.channelId !== channelId) return null;
+      if (reply.expiresAt <= clock().getTime()) {
+        replies.delete(id);
+        return null;
+      }
+      return reply.state;
+    },
+    clear() {
+      replies.clear();
+    },
+  };
+}
 
 export function reminderIdFromMessage(content: string): string | null {
   return /(?:^|\n)-# epi:reminder:([0-9a-f-]{36})$/.exec(content)?.[1] ?? null;
@@ -42,6 +71,14 @@ export function withDeliveredReminders(
           subjectId: reminder.subjectId,
           title,
           receivedAt: now.toISOString(),
+        }
+      : null,
+    eventFocus: null,
+    learningQuestion: reminder?.message.startsWith(LEARNING_CHECK_IN_PREFIX)
+      ? {
+          ownerId: reminder.ownerId,
+          question: reminder.message.slice(LEARNING_CHECK_IN_PREFIX.length),
+          expiresAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
         }
       : null,
     listed:

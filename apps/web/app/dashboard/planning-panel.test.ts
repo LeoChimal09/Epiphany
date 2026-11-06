@@ -8,7 +8,10 @@ import { calendarSyncWarning } from "./planning-model";
 import type { CalendarOverview } from "@epiphany/core/calendar";
 import type { ScheduleData } from "./schedule";
 
-vi.mock("./planning/actions", () => ({ savePlanningSetting: vi.fn() }));
+vi.mock("./planning/actions", () => ({
+  savePlanningSetting: vi.fn(),
+  saveLearningAllowance: vi.fn(),
+}));
 
 const schedule: ScheduleData = {
   weekStart: "2026-10-19",
@@ -56,30 +59,46 @@ describe("planning UI", () => {
     expect(incomplete).toContain("cannot be calculated");
     expect(incomplete).not.toContain("<h3>Available windows");
   });
-  it("renders compact, separately saved controls using 12-hour time fields", () => {
+  it("groups defaults into compact icon-led saved summaries without nested disclosures or exposed forms", () => {
     const html = renderToStaticMarkup(
       createElement(PlanningSettings, {
         preferences: schedule.planningPreferences!,
         versions: {},
       }),
     );
-    expect(html.match(/<details/g)).toHaveLength(10);
-    expect(html).toContain("Work hours");
-    expect(html).toContain("Daily routine");
-    expect(html).toContain("More planning options");
-    expect(html).toContain("Protect sleep every day");
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<input");
+    expect(html).toContain('aria-label="Planning default groups"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("Personal learning");
+    expect(html).toContain("Not allowed");
+    expect(html).not.toContain("Pause collecting");
+    expect(html).not.toContain("Save pause learning");
+    expect(html).toContain("Planning hours");
+    expect(html).toContain('aria-label="Routine defaults"');
+    expect(html).toContain('aria-label="Notification defaults"');
+    expect(html).toContain('aria-label="Learning defaults"');
+    expect(html).toContain("Scheduling details");
     expect(html).toContain("Protected time");
     expect(html).toContain("Travel before events");
-    expect(html).toContain("Minimum usable minutes");
-    expect(html).toContain("Save work hours");
-    expect(html).toContain("Start (AM/PM)");
-    expect(html).toContain("End (AM/PM)");
-    expect(html).toContain('aria-label="End time"');
-    expect(html).not.toContain("<details open");
-    expect(html).toContain('data-tone="work"');
-    expect(html).toContain('data-tone="routine"');
-    expect(html).toContain('data-tone="advanced"');
-    expect(html).toContain("Sleep, meals, and protected personal time");
+    expect(html).toContain('aria-label="Edit sleep"');
+    expect(html).toContain("11:00 PM – 7:00 AM");
+    expect(html).toContain("lucide-moon");
+    expect(html).toContain("lucide-coffee");
+    expect(html).toContain("Use free time around your routine");
+  });
+  it("shows previously paused learning as not allowed, without a second pause control", () => {
+    const html = renderToStaticMarkup(
+      createElement(PlanningSettings, {
+        preferences: schedule.planningPreferences!,
+        versions: {},
+        learning: { enabled: true, paused: true, insights: [] },
+      }),
+    );
+    expect(html).toContain("Not allowed");
+    expect(html).not.toContain("Allowed · reported durations");
+    expect(html).not.toContain("Pause collecting");
   });
 });
 

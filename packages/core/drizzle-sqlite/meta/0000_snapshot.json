@@ -1,0 +1,2348 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "d8974cf3-12eb-4d86-b61e-cca666022df3",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "action_history": {
+      "name": "action_history",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "before": {
+          "name": "before",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "after": {
+          "name": "after",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "undo_of_id": {
+          "name": "undo_of_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "action_history_owner_created_idx": {
+          "name": "action_history_owner_created_idx",
+          "columns": ["owner_id", "created_at"],
+          "isUnique": false
+        },
+        "action_history_entity_idx": {
+          "name": "action_history_entity_idx",
+          "columns": ["entity_type", "entity_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "action_history_owner_id_owners_id_fk": {
+          "name": "action_history_owner_id_owners_id_fk",
+          "tableFrom": "action_history",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "action_history_source_valid": {
+          "name": "action_history_source_valid",
+          "value": "\"source\" IN ('dashboard', 'discord', 'voice', 'worker', 'system')"
+        }
+      }
+    },
+    "ai_usage": {
+      "name": "ai_usage",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_micros": {
+          "name": "cost_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "calls": {
+          "name": "calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "ai_usage_owner_id_owners_id_fk": {
+          "name": "ai_usage_owner_id_owners_id_fk",
+          "tableFrom": "ai_usage",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "ai_usage_owner_id_period_pk": {
+          "columns": ["owner_id", "period"],
+          "name": "ai_usage_owner_id_period_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "ai_usage_cost_micros_nonnegative": {
+          "name": "ai_usage_cost_micros_nonnegative",
+          "value": "\"cost_micros\" >= 0"
+        },
+        "ai_usage_calls_nonnegative": {
+          "name": "ai_usage_calls_nonnegative",
+          "value": "\"calls\" >= 0"
+        }
+      }
+    },
+    "calendar_accounts": {
+      "name": "calendar_accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_account_id": {
+          "name": "provider_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_email": {
+          "name": "account_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'connected'"
+        },
+        "scopes": {
+          "name": "scopes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "access_token_enc": {
+          "name": "access_token_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "refresh_token_enc": {
+          "name": "refresh_token_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "access_token_expires_at": {
+          "name": "access_token_expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "epiphany_calendar_id": {
+          "name": "epiphany_calendar_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "connected_at": {
+          "name": "connected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "disconnected_at": {
+          "name": "disconnected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "calendar_accounts_owner_provider_account_uq": {
+          "name": "calendar_accounts_owner_provider_account_uq",
+          "columns": ["owner_id", "provider", "provider_account_id"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "calendar_accounts_owner_id_owners_id_fk": {
+          "name": "calendar_accounts_owner_id_owners_id_fk",
+          "tableFrom": "calendar_accounts",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "calendar_accounts_tokens_only_when_connected": {
+          "name": "calendar_accounts_tokens_only_when_connected",
+          "value": "\"calendar_accounts\".\"status\" = 'connected' OR (\"calendar_accounts\".\"access_token_enc\" IS NULL AND \"calendar_accounts\".\"refresh_token_enc\" IS NULL)"
+        },
+        "calendar_accounts_provider_valid": {
+          "name": "calendar_accounts_provider_valid",
+          "value": "\"provider\" IN ('google')"
+        },
+        "calendar_accounts_status_valid": {
+          "name": "calendar_accounts_status_valid",
+          "value": "\"status\" IN ('connected', 'needs_reauth', 'revoked')"
+        },
+        "calendar_accounts_version_positive": {
+          "name": "calendar_accounts_version_positive",
+          "value": "\"calendar_accounts\".\"version\" >= 1"
+        }
+      }
+    },
+    "calendar_event_refs": {
+      "name": "calendar_event_refs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "calendar_id": {
+          "name": "calendar_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ownership": {
+          "name": "ownership",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "work_block_id": {
+          "name": "work_block_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sync_key": {
+          "name": "sync_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "etag": {
+          "name": "etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "remote_updated_at": {
+          "name": "remote_updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "recurring_event_id": {
+          "name": "recurring_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "original_start_at": {
+          "name": "original_start_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "synced_version": {
+          "name": "synced_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sync_state": {
+          "name": "sync_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'synced'"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_synced_at": {
+          "name": "last_synced_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "calendar_event_refs_calendar_external_uq": {
+          "name": "calendar_event_refs_calendar_external_uq",
+          "columns": ["calendar_id", "external_id"],
+          "isUnique": true
+        },
+        "calendar_event_refs_event_uq": {
+          "name": "calendar_event_refs_event_uq",
+          "columns": ["event_id"],
+          "isUnique": true
+        },
+        "calendar_event_refs_work_block_uq": {
+          "name": "calendar_event_refs_work_block_uq",
+          "columns": ["work_block_id"],
+          "isUnique": true
+        },
+        "calendar_event_refs_owner_state_idx": {
+          "name": "calendar_event_refs_owner_state_idx",
+          "columns": ["owner_id", "sync_state"],
+          "isUnique": false
+        },
+        "calendar_event_refs_recurring_idx": {
+          "name": "calendar_event_refs_recurring_idx",
+          "columns": ["calendar_id", "recurring_event_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "calendar_event_refs_owner_id_owners_id_fk": {
+          "name": "calendar_event_refs_owner_id_owners_id_fk",
+          "tableFrom": "calendar_event_refs",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "calendar_event_refs_account_id_calendar_accounts_id_fk": {
+          "name": "calendar_event_refs_account_id_calendar_accounts_id_fk",
+          "tableFrom": "calendar_event_refs",
+          "tableTo": "calendar_accounts",
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "calendar_event_refs_calendar_id_synced_calendars_id_fk": {
+          "name": "calendar_event_refs_calendar_id_synced_calendars_id_fk",
+          "tableFrom": "calendar_event_refs",
+          "tableTo": "synced_calendars",
+          "columnsFrom": ["calendar_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "calendar_event_refs_event_id_events_id_fk": {
+          "name": "calendar_event_refs_event_id_events_id_fk",
+          "tableFrom": "calendar_event_refs",
+          "tableTo": "events",
+          "columnsFrom": ["event_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "calendar_event_refs_work_block_id_work_blocks_id_fk": {
+          "name": "calendar_event_refs_work_block_id_work_blocks_id_fk",
+          "tableFrom": "calendar_event_refs",
+          "tableTo": "work_blocks",
+          "columnsFrom": ["work_block_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "calendar_event_refs_ownership_link": {
+          "name": "calendar_event_refs_ownership_link",
+          "value": "(\"calendar_event_refs\".\"ownership\" = 'external' AND \"calendar_event_refs\".\"work_block_id\" IS NULL) OR (\"calendar_event_refs\".\"ownership\" = 'epiphany' AND \"calendar_event_refs\".\"event_id\" IS NULL)"
+        },
+        "calendar_event_refs_ownership_valid": {
+          "name": "calendar_event_refs_ownership_valid",
+          "value": "\"ownership\" IN ('external', 'epiphany')"
+        },
+        "calendar_event_refs_sync_state_valid": {
+          "name": "calendar_event_refs_sync_state_valid",
+          "value": "\"sync_state\" IN ('synced', 'pending', 'uncertain', 'conflict', 'remote_deleted', 'removed', 'detached')"
+        },
+        "calendar_event_refs_synced_version_nonnegative": {
+          "name": "calendar_event_refs_synced_version_nonnegative",
+          "value": "\"synced_version\" >= 0"
+        }
+      }
+    },
+    "categories": {
+      "name": "categories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "system_key": {
+          "name": "system_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "categories_owner_name_uq": {
+          "name": "categories_owner_name_uq",
+          "columns": ["owner_id", "name"],
+          "isUnique": true
+        },
+        "categories_owner_system_key_uq": {
+          "name": "categories_owner_system_key_uq",
+          "columns": ["owner_id", "system_key"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "categories_owner_id_owners_id_fk": {
+          "name": "categories_owner_id_owners_id_fk",
+          "tableFrom": "categories",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "confirmations": {
+      "name": "confirmations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "targets": {
+          "name": "targets",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preview": {
+          "name": "preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "confirmations_owner_status_idx": {
+          "name": "confirmations_owner_status_idx",
+          "columns": ["owner_id", "status", "expires_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "confirmations_owner_id_owners_id_fk": {
+          "name": "confirmations_owner_id_owners_id_fk",
+          "tableFrom": "confirmations",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "confirmations_resolved_at_matches_status": {
+          "name": "confirmations_resolved_at_matches_status",
+          "value": "(\"confirmations\".\"status\" = 'pending') = (\"confirmations\".\"resolved_at\" IS NULL)"
+        },
+        "confirmations_status_valid": {
+          "name": "confirmations_status_valid",
+          "value": "\"status\" IN ('pending', 'executed', 'expired', 'canceled', 'superseded')"
+        },
+        "confirmations_source_valid": {
+          "name": "confirmations_source_valid",
+          "value": "\"source\" IN ('dashboard', 'discord', 'voice', 'worker', 'system')"
+        }
+      }
+    },
+    "discord_overviews": {
+      "name": "discord_overviews",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "guild_id": {
+          "name": "guild_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "view_key": {
+          "name": "view_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "discord_overviews_owner_id_owners_id_fk": {
+          "name": "discord_overviews_owner_id_owners_id_fk",
+          "tableFrom": "discord_overviews",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "discord_overviews_pk": {
+          "columns": ["owner_id", "guild_id", "view_key"],
+          "name": "discord_overviews_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "events": {
+      "name": "events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "series_id": {
+          "name": "series_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "all_day": {
+          "name": "all_day",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "split_reminder_count": {
+          "name": "split_reminder_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'scheduled'"
+        },
+        "canceled_at": {
+          "name": "canceled_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "events_owner_status_start_idx": {
+          "name": "events_owner_status_start_idx",
+          "columns": ["owner_id", "status", "starts_at"],
+          "isUnique": false
+        },
+        "events_owner_series_idx": {
+          "name": "events_owner_series_idx",
+          "columns": ["owner_id", "series_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "events_owner_id_owners_id_fk": {
+          "name": "events_owner_id_owners_id_fk",
+          "tableFrom": "events",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "events_ends_not_before_starts": {
+          "name": "events_ends_not_before_starts",
+          "value": "\"events\".\"ends_at\" >= \"events\".\"starts_at\""
+        },
+        "events_canceled_at_matches_status": {
+          "name": "events_canceled_at_matches_status",
+          "value": "(\"events\".\"status\" = 'canceled') = (\"events\".\"canceled_at\" IS NOT NULL)"
+        },
+        "events_status_valid": {
+          "name": "events_status_valid",
+          "value": "\"status\" IN ('scheduled', 'canceled')"
+        },
+        "events_all_day_boolean": {
+          "name": "events_all_day_boolean",
+          "value": "\"events\".\"all_day\" IN (0, 1)"
+        },
+        "events_split_reminder_count_nonnegative": {
+          "name": "events_split_reminder_count_nonnegative",
+          "value": "\"split_reminder_count\" >= 0"
+        },
+        "events_version_positive": {
+          "name": "events_version_positive",
+          "value": "\"events\".\"version\" >= 1"
+        }
+      }
+    },
+    "notes": {
+      "name": "notes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'note'"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_ref": {
+          "name": "source_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "notes_owner_category_idx": {
+          "name": "notes_owner_category_idx",
+          "columns": ["owner_id", "category_id"],
+          "isUnique": false
+        },
+        "notes_owner_created_idx": {
+          "name": "notes_owner_created_idx",
+          "columns": ["owner_id", "created_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "notes_owner_id_owners_id_fk": {
+          "name": "notes_owner_id_owners_id_fk",
+          "tableFrom": "notes",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "notes_category_id_categories_id_fk": {
+          "name": "notes_category_id_categories_id_fk",
+          "tableFrom": "notes",
+          "tableTo": "categories",
+          "columnsFrom": ["category_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "notes_kind_valid": {
+          "name": "notes_kind_valid",
+          "value": "\"kind\" IN ('note', 'idea')"
+        },
+        "notes_version_positive": {
+          "name": "notes_version_positive",
+          "value": "\"notes\".\"version\" >= 1"
+        }
+      }
+    },
+    "observations": {
+      "name": "observations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subject_key": {
+          "name": "subject_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "observations_owner_kind_idx": {
+          "name": "observations_owner_kind_idx",
+          "columns": ["owner_id", "kind", "created_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "observations_owner_id_owners_id_fk": {
+          "name": "observations_owner_id_owners_id_fk",
+          "tableFrom": "observations",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "observations_kind_valid": {
+          "name": "observations_kind_valid",
+          "value": "\"kind\" IN ('duration', 'snooze')"
+        },
+        "observations_value_nonnegative": {
+          "name": "observations_value_nonnegative",
+          "value": "\"value\" >= 0"
+        }
+      }
+    },
+    "owners": {
+      "name": "owners",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'America/Chicago'"
+        },
+        "discord_user_id": {
+          "name": "discord_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "avatar_hash": {
+          "name": "avatar_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "owners_discord_user_id_uq": {
+          "name": "owners_discord_user_id_uq",
+          "columns": ["discord_user_id"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "preferences": {
+      "name": "preferences",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pref_key": {
+          "name": "pref_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'confirmed'"
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'dashboard'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "preferences_owner_key_uq": {
+          "name": "preferences_owner_key_uq",
+          "columns": ["owner_id", "pref_key"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "preferences_owner_id_owners_id_fk": {
+          "name": "preferences_owner_id_owners_id_fk",
+          "tableFrom": "preferences",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "preferences_status_valid": {
+          "name": "preferences_status_valid",
+          "value": "\"status\" IN ('proposed', 'confirmed')"
+        },
+        "preferences_source_valid": {
+          "name": "preferences_source_valid",
+          "value": "\"source\" IN ('dashboard', 'discord', 'voice', 'worker', 'system')"
+        },
+        "preferences_version_positive": {
+          "name": "preferences_version_positive",
+          "value": "\"preferences\".\"version\" >= 1"
+        }
+      }
+    },
+    "provider_usage": {
+      "name": "provider_usage",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_micros": {
+          "name": "cost_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "calls": {
+          "name": "calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "provider_usage_owner_id_owners_id_fk": {
+          "name": "provider_usage_owner_id_owners_id_fk",
+          "tableFrom": "provider_usage",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "provider_usage_owner_id_provider_period_pk": {
+          "columns": ["owner_id", "provider", "period"],
+          "name": "provider_usage_owner_id_provider_period_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "provider_usage_cost_micros_nonnegative": {
+          "name": "provider_usage_cost_micros_nonnegative",
+          "value": "\"cost_micros\" >= 0"
+        },
+        "provider_usage_calls_nonnegative": {
+          "name": "provider_usage_calls_nonnegative",
+          "value": "\"calls\" >= 0"
+        }
+      }
+    },
+    "reminders": {
+      "name": "reminders",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dedupe_key": {
+          "name": "dedupe_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "urgency": {
+          "name": "urgency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'normal'"
+        },
+        "due_at": {
+          "name": "due_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'scheduled'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sent_at": {
+          "name": "sent_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "reminders_owner_dedupe_uq": {
+          "name": "reminders_owner_dedupe_uq",
+          "columns": ["owner_id", "dedupe_key"],
+          "isUnique": true
+        },
+        "reminders_due_idx": {
+          "name": "reminders_due_idx",
+          "columns": ["status", "due_at"],
+          "isUnique": false
+        },
+        "reminders_subject_idx": {
+          "name": "reminders_subject_idx",
+          "columns": ["subject_type", "subject_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "reminders_owner_id_owners_id_fk": {
+          "name": "reminders_owner_id_owners_id_fk",
+          "tableFrom": "reminders",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "reminders_kind_valid": {
+          "name": "reminders_kind_valid",
+          "value": "\"kind\" IN ('task_deadline', 'event', 'check_in', 'briefing', 'wind_down', 'custom')"
+        },
+        "reminders_urgency_valid": {
+          "name": "reminders_urgency_valid",
+          "value": "\"urgency\" IN ('normal', 'high')"
+        },
+        "reminders_status_valid": {
+          "name": "reminders_status_valid",
+          "value": "\"status\" IN ('scheduled', 'sending', 'sent', 'skipped', 'failed', 'unknown', 'canceled')"
+        },
+        "reminders_attempts_nonnegative": {
+          "name": "reminders_attempts_nonnegative",
+          "value": "\"attempts\" >= 0"
+        },
+        "reminders_version_positive": {
+          "name": "reminders_version_positive",
+          "value": "\"reminders\".\"version\" >= 1"
+        }
+      }
+    },
+    "sessions": {
+      "name": "sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "sessions_owner_idx": {
+          "name": "sessions_owner_idx",
+          "columns": ["owner_id"],
+          "isUnique": false
+        },
+        "sessions_expires_idx": {
+          "name": "sessions_expires_idx",
+          "columns": ["expires_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "sessions_owner_id_owners_id_fk": {
+          "name": "sessions_owner_id_owners_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "synced_calendars": {
+      "name": "synced_calendars",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'external'"
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "access_role": {
+          "name": "access_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_primary": {
+          "name": "is_primary",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "selected": {
+          "name": "selected",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "sync_token": {
+          "name": "sync_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "full_synced_at": {
+          "name": "full_synced_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_synced_at": {
+          "name": "last_synced_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_attempt_at": {
+          "name": "last_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sync_status": {
+          "name": "sync_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "synced_calendars_account_external_uq": {
+          "name": "synced_calendars_account_external_uq",
+          "columns": ["account_id", "external_id"],
+          "isUnique": true
+        },
+        "synced_calendars_owner_idx": {
+          "name": "synced_calendars_owner_idx",
+          "columns": ["owner_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "synced_calendars_owner_id_owners_id_fk": {
+          "name": "synced_calendars_owner_id_owners_id_fk",
+          "tableFrom": "synced_calendars",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "synced_calendars_account_id_calendar_accounts_id_fk": {
+          "name": "synced_calendars_account_id_calendar_accounts_id_fk",
+          "tableFrom": "synced_calendars",
+          "tableTo": "calendar_accounts",
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "synced_calendars_kind_valid": {
+          "name": "synced_calendars_kind_valid",
+          "value": "\"kind\" IN ('external', 'epiphany')"
+        },
+        "synced_calendars_sync_status_valid": {
+          "name": "synced_calendars_sync_status_valid",
+          "value": "\"sync_status\" IN ('pending', 'ok', 'stale', 'error')"
+        },
+        "synced_calendars_is_primary_boolean": {
+          "name": "synced_calendars_is_primary_boolean",
+          "value": "\"synced_calendars\".\"is_primary\" IN (0, 1)"
+        },
+        "synced_calendars_selected_boolean": {
+          "name": "synced_calendars_selected_boolean",
+          "value": "\"synced_calendars\".\"selected\" IN (0, 1)"
+        },
+        "synced_calendars_version_positive": {
+          "name": "synced_calendars_version_positive",
+          "value": "\"synced_calendars\".\"version\" >= 1"
+        }
+      }
+    },
+    "tasks": {
+      "name": "tasks",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "task_type": {
+          "name": "task_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'task'"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "priority": {
+          "name": "priority",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'minor'"
+        },
+        "details": {
+          "name": "details",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_text": {
+          "name": "source_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_ref": {
+          "name": "source_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "review_note": {
+          "name": "review_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "due_at": {
+          "name": "due_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "due_date_only": {
+          "name": "due_date_only",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "split_reminder_count": {
+          "name": "split_reminder_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "estimated_minutes": {
+          "name": "estimated_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "remaining_minutes": {
+          "name": "remaining_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'open'"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "tasks_owner_status_due_idx": {
+          "name": "tasks_owner_status_due_idx",
+          "columns": ["owner_id", "status", "due_at"],
+          "isUnique": false
+        },
+        "tasks_owner_category_idx": {
+          "name": "tasks_owner_category_idx",
+          "columns": ["owner_id", "category_id"],
+          "isUnique": false
+        },
+        "tasks_owner_archived_idx": {
+          "name": "tasks_owner_archived_idx",
+          "columns": ["owner_id", "archived_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "tasks_owner_id_owners_id_fk": {
+          "name": "tasks_owner_id_owners_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "tasks_category_id_categories_id_fk": {
+          "name": "tasks_category_id_categories_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "categories",
+          "columnsFrom": ["category_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "tasks_completed_at_matches_status": {
+          "name": "tasks_completed_at_matches_status",
+          "value": "(\"tasks\".\"status\" = 'completed') = (\"tasks\".\"completed_at\" IS NOT NULL)"
+        },
+        "tasks_task_type_valid": {
+          "name": "tasks_task_type_valid",
+          "value": "\"task_type\" IN ('task', 'todo')"
+        },
+        "tasks_priority_valid": {
+          "name": "tasks_priority_valid",
+          "value": "\"priority\" IN ('minor', 'major')"
+        },
+        "tasks_status_valid": {
+          "name": "tasks_status_valid",
+          "value": "\"status\" IN ('open', 'completed', 'canceled')"
+        },
+        "tasks_due_date_only_boolean": {
+          "name": "tasks_due_date_only_boolean",
+          "value": "\"tasks\".\"due_date_only\" IN (0, 1)"
+        },
+        "tasks_split_reminder_count_nonnegative": {
+          "name": "tasks_split_reminder_count_nonnegative",
+          "value": "\"split_reminder_count\" >= 0"
+        },
+        "tasks_estimated_minutes_nonnegative": {
+          "name": "tasks_estimated_minutes_nonnegative",
+          "value": "\"estimated_minutes\" >= 0"
+        },
+        "tasks_remaining_minutes_nonnegative": {
+          "name": "tasks_remaining_minutes_nonnegative",
+          "value": "\"remaining_minutes\" >= 0"
+        },
+        "tasks_version_positive": {
+          "name": "tasks_version_positive",
+          "value": "\"tasks\".\"version\" >= 1"
+        }
+      }
+    },
+    "work_blocks": {
+      "name": "work_blocks",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'planned'"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "removed_at": {
+          "name": "removed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "removed_reason": {
+          "name": "removed_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+        }
+      },
+      "indexes": {
+        "work_blocks_owner_status_start_idx": {
+          "name": "work_blocks_owner_status_start_idx",
+          "columns": ["owner_id", "status", "starts_at"],
+          "isUnique": false
+        },
+        "work_blocks_task_idx": {
+          "name": "work_blocks_task_idx",
+          "columns": ["task_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "work_blocks_owner_id_owners_id_fk": {
+          "name": "work_blocks_owner_id_owners_id_fk",
+          "tableFrom": "work_blocks",
+          "tableTo": "owners",
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "work_blocks_task_id_tasks_id_fk": {
+          "name": "work_blocks_task_id_tasks_id_fk",
+          "tableFrom": "work_blocks",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "work_blocks_ends_after_starts": {
+          "name": "work_blocks_ends_after_starts",
+          "value": "\"work_blocks\".\"ends_at\" > \"work_blocks\".\"starts_at\""
+        },
+        "work_blocks_timestamps_match_status": {
+          "name": "work_blocks_timestamps_match_status",
+          "value": "(\"work_blocks\".\"status\" = 'completed') = (\"work_blocks\".\"completed_at\" IS NOT NULL) AND (\"work_blocks\".\"status\" = 'removed') = (\"work_blocks\".\"removed_at\" IS NOT NULL) AND (\"work_blocks\".\"status\" = 'removed' OR \"work_blocks\".\"removed_reason\" IS NULL)"
+        },
+        "work_blocks_status_valid": {
+          "name": "work_blocks_status_valid",
+          "value": "\"status\" IN ('planned', 'completed', 'removed')"
+        },
+        "work_blocks_removed_reason_valid": {
+          "name": "work_blocks_removed_reason_valid",
+          "value": "\"work_blocks\".\"removed_reason\" IS NULL OR (\"removed_reason\" IN ('manual', 'task_completed', 'replanned'))"
+        },
+        "work_blocks_version_positive": {
+          "name": "work_blocks_version_positive",
+          "value": "\"work_blocks\".\"version\" >= 1"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

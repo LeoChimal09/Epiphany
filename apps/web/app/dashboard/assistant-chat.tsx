@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   Bot,
+  ArrowUpRight,
   CalendarDays,
   CircleAlert,
   CircleCheck,
@@ -23,6 +24,7 @@ export interface ChatMessage {
   text: string;
   outcome?: AssistantReply["outcome"];
   changed?: boolean;
+  links?: { label: string; href: string }[];
 }
 
 export type AssistantSetup = "ready" | "needs_key" | "misconfigured";
@@ -55,7 +57,13 @@ function SetupHelp({ setup }: { setup: Exclude<AssistantSetup, "ready"> }) {
   );
 }
 
-function Bubble({ message }: { message: ChatMessage }) {
+function Bubble({
+  message,
+  onOpenItem,
+}: {
+  message: ChatMessage;
+  onOpenItem: (href: string) => void;
+}) {
   const isUser = message.role === "user";
   const failed = ["failed", "unavailable", "denied", "not_found"].includes(message.outcome ?? "");
   const uncertain = message.outcome === "uncertain";
@@ -68,6 +76,22 @@ function Bubble({ message }: { message: ChatMessage }) {
         className={`${styles.bubble} ${failed || uncertain ? styles.bubbleFailed : ""} ${message.changed ? styles.bubbleChanged : ""}`}
       >
         <p>{message.text}</p>
+        {!isUser && message.links?.length ? (
+          <div className={styles.savedItemLinks}>
+            {message.links.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onOpenItem(link.href);
+                }}
+              >
+                {link.label} <ArrowUpRight size={14} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        ) : null}
         {message.changed ? (
           <span className={styles.bubbleTag}>
             <CircleCheck size={12} aria-hidden="true" /> Saved
@@ -96,6 +120,7 @@ export function AssistantChat({
   timezone,
   voice,
   onSend,
+  onOpenItem,
 }: {
   setup: AssistantSetup;
   messages: ChatMessage[];
@@ -104,6 +129,7 @@ export function AssistantChat({
   timezone: string;
   voice: { listen: boolean; speak: boolean };
   onSend: (text: string) => void;
+  onOpenItem: (href: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
@@ -183,7 +209,7 @@ export function AssistantChat({
       ) : (
         <ol className={styles.thread} role="log" aria-live="polite" aria-label="Conversation">
           {messages.map((message) => (
-            <Bubble key={message.id} message={message} />
+            <Bubble key={message.id} message={message} onOpenItem={onOpenItem} />
           ))}
           {asking ? (
             <li className={`${styles.bubbleRow} ${styles.bubbleEpi}`} aria-label="Epi is thinking">

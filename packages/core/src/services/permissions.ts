@@ -30,6 +30,7 @@ export const ACTIONS = {
   "owner.read": { kind: "read" },
   "task.create": { kind: "apply" },
   "task.complete": { kind: "apply" },
+  "task.cancel": { kind: "apply" },
   "task.update": { kind: "apply" },
   "task.reopen": { kind: "apply" },
   "note.create": { kind: "apply" },
@@ -38,6 +39,7 @@ export const ACTIONS = {
   "event.acknowledge": { kind: "apply" },
   "event.cancel": { kind: "apply", confirmWhenExternal: true },
   "event.cancel_series": { kind: "destructive" },
+  "event.reschedule": { kind: "external" },
   "category.create": { kind: "apply" },
   "reminder.snooze": { kind: "apply" },
   "reminder.create": { kind: "apply" },
@@ -54,6 +56,7 @@ export const ACTIONS = {
   "workspace.setup": { kind: "apply" }, // adds Epiphany's own private channels; never edits others
   "work_block.create": { kind: "schedule" },
   "work_block.remove": { kind: "schedule" },
+  "work_block.update": { kind: "schedule" },
   "event.update_external": { kind: "external" },
   "note.delete": { kind: "destructive" },
   "task.delete": { kind: "destructive" },
