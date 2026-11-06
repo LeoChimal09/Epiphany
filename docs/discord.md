@@ -93,6 +93,11 @@ duration, Epi adds an event spanning that interval.
   the full answer into `#schedule`, `#priorities`, or `#check-ins`, respectively. Epi replies in
   `#assistant` with a Discord jump link to the new message; the destination must be private and
   visible to you. Direct messages continue to receive their answer directly.
+- Schedule answers and the schedule overview separate days with bold headings and show one entry
+  per line, with bold time ranges and explicit event, deadline, and planned-work labels. Task and
+  to-do answers separate each bold title from its timing/priority details; work-block confirmations
+  list each result separately instead of joining everything into a paragraph.
+  Long read-only answers are split across messages, including in DMs and channel-routing fallbacks.
 - If someone **deletes an overview message**, Epi posts it again. Only the message is gone; no task,
   note, or event is touched.
 - A lost record of which message belongs to a view does not cause a duplicate: Epi finds its earlier

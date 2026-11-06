@@ -767,6 +767,7 @@ export function createAssistant(options: AssistantOptions) {
       events,
       blocks,
       eventRows,
+      blockRows,
     };
   }
 
@@ -810,26 +811,43 @@ export function createAssistant(options: AssistantOptions) {
       notBefore: now,
     });
 
-    const days: { label: string; items: string[] }[] = [];
+    const days: { label: string; items: string[]; eventIds: string[] }[] = [];
     for (let key = from; key <= last; key = addDays(key, 1)) {
-      const parts: string[] = [];
+      const parts: { at: number; text: string; eventId?: string }[] = [];
       for (const event of context.eventRows) {
         if (event.status !== "scheduled") continue;
         if (dateKeyOf(event.startsAt, event.allDay ? event.timezone : timezone) !== key) continue;
-        parts.push(
-          event.allDay
-            ? `• ${plain(event.title)} · all day`
-            : `• ${plain(event.title)} · ${clockLabel(event.startsAt)}–${clockLabel(event.endsAt)}`,
-        );
+        const timing = event.allDay
+          ? "All day"
+          : `${clockLabel(event.startsAt)}–${clockLabel(event.endsAt)}`;
+        parts.push({
+          at: event.allDay ? -2 : event.startsAt.getTime(),
+          text: `- **${timing}** · Event: ${plain(event.title)}`,
+          eventId: event.id,
+        });
+      }
+      for (const block of context.blockRows) {
+        if (block.status !== "planned" || dateKeyOf(block.startsAt, timezone) !== key) continue;
+        parts.push({
+          at: block.startsAt.getTime(),
+          text: `- **${clockLabel(block.startsAt)}–${clockLabel(block.endsAt)}** · Planned work: ${plain(block.title ?? "Work block")}`,
+        });
       }
       for (const task of openTasks) {
-        if (localDue(task, timezone) === key)
-          parts.push(
-            `• ${plain(task.title)} · due ${dueText(task, timezone).replace(/^due /, "")}`,
-          );
+        if (localDue(task, timezone) === key) {
+          parts.push({
+            at: task.dueDateOnly ? -1 : task.dueAt!.getTime(),
+            text: `- **${task.dueDateOnly ? "Date only" : clockLabel(task.dueAt!)}** · Deadline: ${plain(task.title)}`,
+          });
+        }
       }
       if (parts.length > 0) {
-        days.push({ label: dayLabel(key), items: parts });
+        const ordered = parts.toSorted((a, b) => a.at - b.at);
+        days.push({
+          label: dayLabel(key),
+          items: ordered.map((part) => part.text),
+          eventIds: ordered.flatMap((part) => (part.eventId ? [part.eventId] : [])),
+        });
       }
     }
 
@@ -864,7 +882,7 @@ export function createAssistant(options: AssistantOptions) {
         .slice(0, 4)
         .map(
           (window) =>
-            `• ${dayWord(window.start)} · ${clockLabel(window.start)}–${clockLabel(window.end)}`,
+            `- **${dayWord(window.start)}** · ${clockLabel(window.start)}–${clockLabel(window.end)}`,
         );
       lines.push("", "**Available time**", ...free);
     }
@@ -874,7 +892,7 @@ export function createAssistant(options: AssistantOptions) {
         numbered(
           recs.map(
             (rec) =>
-              `${plain(rec.title)} · ${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)}–${clockLabel(rec.endsAt)}`,
+              `**${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)}–${clockLabel(rec.endsAt)}** · ${plain(rec.title)}`,
           ),
         ),
       );
@@ -904,9 +922,7 @@ export function createAssistant(options: AssistantOptions) {
             : null,
         eventFocus: focusEvents(
           principal,
-          context.eventRows
-            .filter((event) => event.status === "scheduled")
-            .map((event) => event.id),
+          days.slice(0, 10).flatMap((day) => day.eventIds),
         ),
         lastReminder: null,
       },
@@ -962,22 +978,20 @@ export function createAssistant(options: AssistantOptions) {
         status: "planned",
       });
       created.push(
-        `${item.title} (${dayWord(candidate.startsAt)}, ${clockLabel(candidate.startsAt)})`,
+        `- **${dayWord(candidate.startsAt)}, ${clockLabel(candidate.startsAt)}–${clockLabel(candidate.endsAt)}** · ${plain(item.title)}`,
       );
     }
     const parts = [
-      created.length > 0
-        ? `Done, I put ${created.length === 1 ? "this" : "these"} on your calendar: ${created.join("; ")}.`
-        : "",
+      created.length > 0 ? `**Work blocks added to your calendar**\n${created.join("\n")}` : "",
       skipped.length > 0
-        ? `I skipped ${skipped.map((title) => `"${title}"`).join(", ")} because the time is no longer free or the task changed.`
+        ? `**Not scheduled**\n${skipped.map((title) => `- I skipped "${plain(title)}" because the time is no longer free or the task changed.`).join("\n")}`
         : "",
     ].filter(Boolean);
     return finish(
       state,
       userText,
       {
-        text: parts.join(" ") || "There was nothing to schedule.",
+        text: parts.join("\n\n") || "There was nothing to schedule.",
         outcome: created.length > 0 ? "created" : "failed",
         changed: created.length > 0,
       },
@@ -1725,14 +1739,13 @@ export function createAssistant(options: AssistantOptions) {
         }
         const shown = matched.slice(0, LIST_LINES);
         const more = matched.length - shown.length;
-        const lines = shown.map((task) =>
-          task.taskType === "todo"
-            ? `${task.title} (to-do)`
-            : `${task.title} (${task.priority}, ${dueText(task, timezone)}${task.estimatedMinutes ? `, ${task.estimatedMinutes} min` : ""})`,
+        const lines = shown.map(
+          (task) =>
+            `- **${plain(task.title)}**\n  ${task.taskType === "todo" ? "To-do" : `${task.priority} · ${dueText(task, timezone)}${task.estimatedMinutes ? ` · ${task.estimatedMinutes} min` : ""}`}`,
         );
-        const closing = more > 0 ? "" : "\nWant me to check any of these off?";
+        const closing = more > 0 ? "" : "\n\nWant me to check any of these off?";
         const heading = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun}`;
-        const text = `**${heading} · ${matched.length}**\n${lines.map((line) => `• ${plain(line)}`).join("\n")}${more > 0 ? `\n…and ${more} more.` : ""}${closing}`;
+        const text = `**${heading} · ${matched.length}**\n\n${lines.join("\n\n")}${more > 0 ? `\n\n…and ${more} more.` : ""}${closing}`;
         return reply(
           { text, outcome: "listed", changed: false },
           {

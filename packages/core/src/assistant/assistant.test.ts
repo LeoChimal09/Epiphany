@@ -1149,9 +1149,13 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       expect(reply.outcome).toBe("listed");
       expect(reply.changed).toBe(false);
       expect(reply.text).toContain("**Open tasks · 4**");
-      expect(reply.text).toContain("Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)");
-      expect(reply.text).toContain("History essay draft (minor, due Wed, Oct 14, 11:59 PM)");
-      expect(reply.text).toContain("Biology reading (to-do)");
+      expect(reply.text).toContain(
+        "- **Chemistry lab report**\n  minor · due Fri, Oct 16, 5:00 PM",
+      );
+      expect(reply.text).toContain(
+        "- **History essay draft**\n  minor · due Wed, Oct 14, 11:59 PM",
+      );
+      expect(reply.text).toContain("- **Biology reading**\n  To-do");
       expect(state.listed).toHaveLength(4);
       expect((await taskRows()).every((t) => t.status === "open")).toBe(true);
     });
@@ -1164,7 +1168,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
           : { kind: "list_tasks", status: "open", dueFrom: "2026-10-16", dueThrough: "2026-10-16" },
       );
       expect((await say(assistant, "anything chem?")).reply.text).toBe(
-        "**Open tasks · 1**\n• Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)\nWant me to check any of these off?",
+        "**Open tasks · 1**\n\n- **Chemistry lab report**\n  minor · due Fri, Oct 16, 5:00 PM\n\nWant me to check any of these off?",
       );
       const dated = await say(assistant, "what's due Friday");
       expect(dated.reply.text).toContain("Chemistry lab report");
@@ -2351,8 +2355,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       const list = build(() => ({ kind: "list_tasks", status: "open", taskType: "todo" }));
       const listed = await say(list.assistant, "Show my to-dos");
       expect(listed.reply.text).toContain("**Open to-dos · 1**");
-      expect(listed.reply.text).toContain("Repair drone (to-do)");
-      expect(listed.reply.text).toContain("• Repair drone");
+      expect(listed.reply.text).toContain("- **Repair drone**\n  To-do");
       expect(listed.reply.text).not.toContain("Chemistry assignment");
       expect(listed.state.listed).toHaveLength(1);
     });
@@ -2578,6 +2581,65 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       });
     const showWeek: Intent = { kind: "show_schedule", from: "2026-10-14", through: "2026-10-18" };
 
+    it("renders a chronological daily timeline with distinct events, deadlines and saved work", async () => {
+      const owner = await ownerPrincipal();
+      const late = await services.events.create(owner, {
+        title: "Late meeting",
+        startsAt: "2026-10-15T22:00:00.000Z",
+        endsAt: "2026-10-15T23:00:00.000Z",
+        timezone: TZ,
+      });
+      const early = await services.events.create(owner, {
+        title: "Morning meeting",
+        startsAt: "2026-10-15T15:00:00.000Z",
+        endsAt: "2026-10-15T16:00:00.000Z",
+        timezone: TZ,
+      });
+      await services.tasks.create(owner, {
+        title: "Date-only assignment",
+        dueAt: "2026-10-15T00:00:00.000Z",
+        dueDateOnly: true,
+      });
+      await services.tasks.create(owner, {
+        title: "Timed assignment",
+        dueAt: "2026-10-15T21:00:00.000Z",
+      });
+      await services.workBlocks.create(
+        owner,
+        {
+          title: "@everyone **Study**",
+          startsAt: "2026-10-15T18:00:00.000Z",
+          endsAt: "2026-10-15T19:00:00.000Z",
+        },
+        { intent: "explicit" },
+      );
+      const { assistant } = build(() => ({
+        kind: "show_schedule",
+        from: "2026-10-15",
+        through: "2026-10-15",
+      }));
+      const { reply, state } = await say(assistant, "show tomorrow's schedule");
+      const entries = reply.text
+        .split("**Available time**")[0]!
+        .split("\n")
+        .filter((line) => line.startsWith("- "));
+      expect(entries).toEqual([
+        "- **Date only** · Deadline: Date-only assignment",
+        "- **10:00 AM–11:00 AM** · Event: Morning meeting",
+        "- **1:00 PM–2:00 PM** · Planned work: @\u200beveryone \\*\\*Study\\*\\*",
+        "- **4:00 PM** · Deadline: Timed assignment",
+        "- **5:00 PM–6:00 PM** · Event: Late meeting",
+      ]);
+      expect(reply.changed).toBe(false);
+      expect(state.eventFocus?.ids).toEqual([early.id, late.id]);
+      expect(
+        await services.workBlocks.list(owner, {
+          from: new Date("2026-10-15T00:00:00.000Z"),
+          to: new Date("2026-10-16T00:00:00.000Z"),
+        }),
+      ).toHaveLength(1);
+    });
+
     it("gives a grounded overview with free time and proposals, and schedules them only after a yes", async () => {
       const owner = await seed();
       await services.events.create(owner, {
@@ -2593,8 +2655,8 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       expect(shown.reply).toMatchObject({ outcome: "answered", changed: false });
       expect(shown.reply.text).toContain("**Schedule · Wed, Oct 14 to Sun, Oct 18**");
       expect(shown.reply.text).toContain("**On your calendar and due**");
-      expect(shown.reply.text).toContain("• Chem lecture · 3:30 PM–5:00 PM");
-      expect(shown.reply.text).toContain("• Chemistry lab report · due");
+      expect(shown.reply.text).toContain("- **3:30 PM–5:00 PM** · Event: Chem lecture");
+      expect(shown.reply.text).toContain("- **5:00 PM** · Deadline: Chemistry lab report");
       expect(shown.reply.text).toContain("**Available time**");
       expect(shown.reply.text).toContain("**Suggested focus**");
       expect(shown.reply.text).toContain("Want me to put these work blocks on your calendar?");
@@ -2604,6 +2666,10 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       expect(plan.items.length).toBeGreaterThan(0);
       const done = await say(assistant, "yes", shown.state);
       expect(done.reply).toMatchObject({ outcome: "created", changed: true });
+      expect(done.reply.text).toContain("**Work blocks added to your calendar**\n- **");
+      expect(done.reply.text.split("\n").filter((line) => line.startsWith("- **"))).toHaveLength(
+        plan.items.length,
+      );
 
       const blocks = await handle.db.select().from(workBlocks);
       expect(blocks).toHaveLength(plan.items.length);
@@ -2713,7 +2779,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         through: "2026-10-17",
       }));
       const { reply } = await say(assistant, "what's free this week?");
-      expect(reply.text).toContain("• Thu, Oct 15 · 7:00 PM–8:00 PM");
+      expect(reply.text).toContain("- **Thu, Oct 15** · 7:00 PM–8:00 PM");
       const free = reply.text.split("**Available time**")[1] ?? "";
       expect(free).not.toMatch(/Mon|Tue|Wed|Fri|Sat|Sun/);
     });

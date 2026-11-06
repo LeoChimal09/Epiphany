@@ -90,7 +90,10 @@ const review = (task: Task) => (task.reviewNote ? " ⚠ needs review" : "");
 // Joins sections, keeping the message under Discord's limit by dropping whole trailing lines.
 function assemble(view: OverviewView, title: string, lines: string[], empty: string): string {
   const tail = `\n${marker(view)}`;
-  const body = lines.length > 0 ? lines : [empty];
+  const body =
+    lines.length > 0
+      ? lines.flatMap((line) => (line.startsWith("**") ? ["", line] : [line]))
+      : ["", empty];
   const head = `**${title}**`;
   let text = [head, ...body].join("\n");
   if (text.length + tail.length > MAX_CHARS) {
@@ -182,28 +185,34 @@ function schedule(data: OverviewData): string {
     put(
       key,
       task.dueDateOnly ? -1 : task.dueAt.getTime(),
-      `Due: ${plain(task.title)} (${dueText(task, timezone, false)})${review(task)}`,
+      `**${task.dueDateOnly ? "Date only" : timeLabel(task.dueAt, timezone)}** · Deadline: ${plain(task.title)}${review(task)}`,
     );
   }
   for (const event of data.events) {
     if (event.status !== "scheduled") continue;
     const key = dateKeyOf(event.startsAt, event.allDay ? event.timezone : timezone);
-    const when = event.allDay ? "all day" : timeLabel(event.startsAt, timezone);
-    put(key, event.allDay ? -2 : event.startsAt.getTime(), `${when}: ${plain(event.title)}`);
+    const when = event.allDay
+      ? "All day"
+      : `${timeLabel(event.startsAt, timezone)}–${timeLabel(event.endsAt, timezone)}`;
+    put(
+      key,
+      event.allDay ? -2 : event.startsAt.getTime(),
+      `**${when}** · Event: ${plain(event.title)}`,
+    );
   }
   for (const block of data.blocks) {
     if (block.status !== "planned") continue;
     put(
       dateKeyOf(block.startsAt, timezone),
       block.startsAt.getTime(),
-      `${timeLabel(block.startsAt, timezone)}: work on ${plain(block.title ?? "a task")}`,
+      `**${timeLabel(block.startsAt, timezone)}–${timeLabel(block.endsAt, timezone)}** · Planned work: ${plain(block.title ?? "a task")}`,
     );
   }
 
   const lines: string[] = [];
   for (const key of [...days.keys()].toSorted()) {
     lines.push(`**${dayLabel(key)}**`);
-    for (const item of days.get(key)!.toSorted((a, b) => a.at - b.at)) lines.push(`• ${item.text}`);
+    for (const item of days.get(key)!.toSorted((a, b) => a.at - b.at)) lines.push(`- ${item.text}`);
   }
   return assemble("schedule", "Next 7 days", lines, "Nothing scheduled in the next 7 days.");
 }
@@ -225,7 +234,7 @@ function priorities(data: OverviewData): string {
       countdown = days < 0 ? `, ${-days}d overdue` : days === 0 ? ", today" : `, in ${days}d`;
     }
     const category = data.categoryNames.get(task.categoryId);
-    return `${index + 1}. ${plain(task.title)} (${task.taskType === "todo" ? "to-do" : `${task.priority}, ${dueText(task, timezone)}${countdown}`}${category && category !== "Inbox" ? `, ${plain(category)}` : ""})${review(task)}`;
+    return `${index > 0 ? "\n" : ""}${index + 1}. **${plain(task.title)}**\n   ${task.taskType === "todo" ? "To-do" : `${task.priority} · ${dueText(task, timezone)}${countdown}`}${category && category !== "Inbox" ? ` · ${plain(category)}` : ""}${review(task)}`;
   });
   if (ranked.length > 10) lines.push(`…and ${ranked.length - 10} more open tasks`);
   return assemble(

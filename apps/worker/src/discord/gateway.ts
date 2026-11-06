@@ -506,7 +506,8 @@ export async function startDiscordGateway(
       result.state.pendingCapture ||
       state.pendingCapture ||
       result.state.activeIdea ||
-      state.activeIdea
+      state.activeIdea ||
+      ["answered", "listed"].includes(result.reply.outcome)
         ? splitDiscordMessage(reply)
         : [fitDiscordMessage(reply)];
     for (const content of replies) {

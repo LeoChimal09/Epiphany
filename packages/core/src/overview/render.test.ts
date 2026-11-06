@@ -114,7 +114,7 @@ describe("overview rendering", () => {
     const fixture = data({ openTasks: [task({ title: "Repair drone", taskType: "todo" })] });
     expect(renderOverview("today", fixture)).toContain("**To-dos**\n• Repair drone (to-do)");
     expect(renderOverview("today", fixture)).not.toContain("Nothing due");
-    expect(renderOverview("priorities", fixture)).toContain("Repair drone (to-do)");
+    expect(renderOverview("priorities", fixture)).toContain("1. **Repair drone**\n   To-do");
     expect(renderOverview("priorities", fixture)).not.toContain("minor");
   });
   it("shows overdue, due-today, events and planned work for today, in the owner's timezone", () => {
@@ -185,9 +185,9 @@ describe("overview rendering", () => {
       }),
     );
     expect(text.indexOf("**Thu, Oct 15**")).toBeLessThan(text.indexOf("**Fri, Oct 16**"));
-    expect(text).toContain("3:00 PM: work on Study");
-    expect(text).toContain("10:00 AM: Lab");
-    expect(text).toContain("Due: Chem lab (5:00 PM)");
+    expect(text).toContain("\n\n**Thu, Oct 15**\n- **3:00 PM–4:00 PM** · Planned work: Study");
+    expect(text).toContain("\n\n**Fri, Oct 16**\n- **10:00 AM–11:00 AM** · Event: Lab");
+    expect(text).toContain("- **5:00 PM** · Deadline: Chem lab");
     expect(text).not.toContain("Far away");
     expect(renderOverview("schedule", data())).toContain("Nothing scheduled in the next 7 days.");
   });
@@ -216,8 +216,8 @@ describe("overview rendering", () => {
       }),
     );
     expect(text).toContain("Priorities · 15 open");
-    expect(text).toContain("1. Overdue one (minor, due Sun, Oct 11, 11:59 PM, 3d overdue)");
-    expect(text).toContain("2. Today one (minor, due Wed, Oct 14, 11:59 PM, today)");
+    expect(text).toContain("1. **Overdue one**\n   minor · due Sun, Oct 11, 11:59 PM, 3d overdue");
+    expect(text).toContain("\n\n2. **Today one**\n   minor · due Wed, Oct 14, 11:59 PM, today");
     expect(text).not.toContain("Whenever");
     expect(text).toContain("…and 5 more open tasks");
   });
