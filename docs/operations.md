@@ -43,6 +43,44 @@ children after 15 seconds. Configure Railway's termination grace period longer
 than that timeout. No shell, detached worker, or independently restarted bot is
 used. Shutdown during migration also stops the migration process.
 
+### Build fails at `mise install` with a Bun download 504
+
+This is a tool-download failure before dependency installation or application
+startup, not a Discord or SQLite error. `libatomic1` installation is unrelated
+when the failing step is the GitHub Bun release download.
+
+A log containing `mise install` indicates Railpack is building the service,
+not the repository's Dockerfile. Retrying can resolve a transient 504, but the
+SQLite deployment should use the Dockerfile:
+
+1. In the intended combined service's Railway settings, select the commit
+   containing the SQLite Dockerfile, set the source root to the repository root
+   (not `apps/worker`), and select the Dockerfile builder with path `Dockerfile`.
+2. Remove old build/start overrides and the old pre-deploy migration command.
+   The Dockerfile builds Next.js and its CMD runs the supervised web and worker;
+   migrations run at startup with the volume mounted.
+3. Before deploying, complete the cutover below: attach `/data`, configure the
+   SQLite URL and all web/bot variables, import and verify existing data, and stop
+   old writers. Do not deploy both former services as combined services.
+
+The Dockerfile obtains Bun from `oven/bun:1.3.14` rather than the failing mise
+GitHub download. Image registries can still have outages. A successful build
+does not prove that the persistent volume or imported data is configured.
+
+### Container exits before `process_started`
+
+The supervisor checks configuration before migrations or application startup.
+New logs identify the failed check without printing the database URL or credentials:
+missing/invalid `DATABASE_URL`, a missing/unwritable parent directory, colliding
+ports, or unsupported Bun/Node versions. Earlier builds print only the combined
+"Require Bun 1.3.14, Node 24+..." message; that message alone cannot identify the cause.
+
+Check the combined service has `DATABASE_URL=file:/data/epiphany.sqlite` rather
+than a reference to MySQL's URL, a volume mounted at `/data`, and different
+`PORT`/`WORKER_HEALTH_PORT` values. Keep all existing data and complete the import
+before enabling the new writers; do not fix startup by using an empty temporary
+database or deleting the old database.
+
 ### SQLite placement constraints
 
 The Node web process and Bun worker open the **same file on the same machine**

@@ -1148,7 +1148,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       const { reply, state } = await say(assistant, "what do I have going on?");
       expect(reply.outcome).toBe("listed");
       expect(reply.changed).toBe(false);
-      expect(reply.text).toContain("Open tasks (4):");
+      expect(reply.text).toContain("**Open tasks · 4**");
       expect(reply.text).toContain("Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)");
       expect(reply.text).toContain("History essay draft (minor, due Wed, Oct 14, 11:59 PM)");
       expect(reply.text).toContain("Biology reading (to-do)");
@@ -1164,7 +1164,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
           : { kind: "list_tasks", status: "open", dueFrom: "2026-10-16", dueThrough: "2026-10-16" },
       );
       expect((await say(assistant, "anything chem?")).reply.text).toBe(
-        "Open tasks (1):\n1. Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)\nWant me to check any of these off?",
+        "**Open tasks · 1**\n• Chemistry lab report (minor, due Fri, Oct 16, 5:00 PM)\nWant me to check any of these off?",
       );
       const dated = await say(assistant, "what's due Friday");
       expect(dated.reply.text).toContain("Chemistry lab report");
@@ -1879,6 +1879,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       const { reply, state } = await say(assistant, "yes", preview.state);
       expect(await taskRows()).toHaveLength(15);
       expect(reply.text).toContain("saved 15 things");
+      expect(reply.text).toContain("**Tasks added**");
       expect(reply.text).toContain("...and 3 more, all saved");
       expect(reply.text).toContain("12. Assignment 12");
       expect(reply.text).not.toContain("13. Assignment 13");
@@ -2349,8 +2350,9 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
 
       const list = build(() => ({ kind: "list_tasks", status: "open", taskType: "todo" }));
       const listed = await say(list.assistant, "Show my to-dos");
-      expect(listed.reply.text).toContain("Open to-dos (1)");
+      expect(listed.reply.text).toContain("**Open to-dos · 1**");
       expect(listed.reply.text).toContain("Repair drone (to-do)");
+      expect(listed.reply.text).toContain("• Repair drone");
       expect(listed.reply.text).not.toContain("Chemistry assignment");
       expect(listed.state.listed).toHaveLength(1);
     });
@@ -2589,11 +2591,13 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       );
       const shown = await say(assistant, "what's my week look like, what can I crunch?");
       expect(shown.reply).toMatchObject({ outcome: "answered", changed: false });
-      expect(shown.reply.text).toContain("Here's Wed, Oct 14 to Sun, Oct 18");
-      expect(shown.reply.text).toContain("Chem lecture (3:30 PM to 5:00 PM)");
-      expect(shown.reply.text).toContain("Chemistry lab report due");
-      expect(shown.reply.text).toContain("Time you could use");
-      expect(shown.reply.text).toContain("Want me to put those on your calendar?");
+      expect(shown.reply.text).toContain("**Schedule · Wed, Oct 14 to Sun, Oct 18**");
+      expect(shown.reply.text).toContain("**On your calendar and due**");
+      expect(shown.reply.text).toContain("• Chem lecture · 3:30 PM–5:00 PM");
+      expect(shown.reply.text).toContain("• Chemistry lab report · due");
+      expect(shown.reply.text).toContain("**Available time**");
+      expect(shown.reply.text).toContain("**Suggested focus**");
+      expect(shown.reply.text).toContain("Want me to put these work blocks on your calendar?");
       expect(await handle.db.select().from(workBlocks)).toHaveLength(0);
 
       const plan = shown.state.pendingPlan!;
@@ -2709,9 +2713,8 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         through: "2026-10-17",
       }));
       const { reply } = await say(assistant, "what's free this week?");
-      expect(reply.text).toContain("Thu, Oct 15 7:00 PM to 8:00 PM");
-      const free =
-        reply.text.split("\n").find((line) => line.startsWith("Time you could use")) ?? "";
+      expect(reply.text).toContain("• Thu, Oct 15 · 7:00 PM–8:00 PM");
+      const free = reply.text.split("**Available time**")[1] ?? "";
       expect(free).not.toMatch(/Mon|Tue|Wed|Fri|Sat|Sun/);
     });
 

@@ -44,6 +44,7 @@ import { routineIntent } from "./routine";
 import { listedEntryCount, parseCourseList } from "./intake";
 import { appendIdeaPoints } from "./idea-journal";
 import { ProviderOutputError, ProviderUnavailableError } from "./provider";
+import { plain } from "../overview";
 import type { VoiceCapability, WorkspaceCapability, WorkspaceSetupResult } from "./workspace";
 import type {
   InterpretRequest,
@@ -809,7 +810,7 @@ export function createAssistant(options: AssistantOptions) {
       notBefore: now,
     });
 
-    const days: string[] = [];
+    const days: { label: string; items: string[] }[] = [];
     for (let key = from; key <= last; key = addDays(key, 1)) {
       const parts: string[] = [];
       for (const event of context.eventRows) {
@@ -817,16 +818,18 @@ export function createAssistant(options: AssistantOptions) {
         if (dateKeyOf(event.startsAt, event.allDay ? event.timezone : timezone) !== key) continue;
         parts.push(
           event.allDay
-            ? `${event.title} (all day)`
-            : `${event.title} (${clockLabel(event.startsAt)} to ${clockLabel(event.endsAt)})`,
+            ? `• ${plain(event.title)} · all day`
+            : `• ${plain(event.title)} · ${clockLabel(event.startsAt)}–${clockLabel(event.endsAt)}`,
         );
       }
       for (const task of openTasks) {
         if (localDue(task, timezone) === key)
-          parts.push(`${task.title} due ${dueText(task, timezone).replace(/^due /, "")}`);
+          parts.push(
+            `• ${plain(task.title)} · due ${dueText(task, timezone).replace(/^due /, "")}`,
+          );
       }
       if (parts.length > 0) {
-        days.push(`• ${dayLabel(key)}: ${parts.join("; ")}`);
+        days.push({ label: dayLabel(key), items: parts });
       }
     }
 
@@ -846,34 +849,40 @@ export function createAssistant(options: AssistantOptions) {
     );
 
     const label = from === last ? dayLabel(from) : `${dayLabel(from)} to ${dayLabel(last)}`;
-    const lines: string[] = [
-      days.length > 0 ? `Here's ${label}:` : `Nothing is scheduled or due for ${label}.`,
-    ];
-    lines.push(...days.slice(0, 10));
+    const lines: string[] = [`**Schedule · ${label}**`];
+    if (days.length > 0) {
+      lines.push("", "**On your calendar and due**");
+      for (const day of days.slice(0, 10)) lines.push("", `**${day.label}**`, ...day.items);
+      if (days.length > 10) lines.push("", `…and ${days.length - 10} more days`);
+    } else {
+      lines.push("", `Nothing is scheduled or due for ${label}.`);
+    }
     if (windows.length === 0) {
-      lines.push("I don't see free time inside your preferred hours in that stretch.");
+      lines.push("", "**Availability**", "No free time inside your saved planning hours.");
     } else {
       const free = windows
         .slice(0, 4)
         .map(
           (window) =>
-            `${dayWord(window.start)} ${clockLabel(window.start)} to ${clockLabel(window.end)}`,
+            `• ${dayWord(window.start)} · ${clockLabel(window.start)}–${clockLabel(window.end)}`,
         );
-      lines.push(`Time you could use: ${free.join("; ")}.`);
+      lines.push("", "**Available time**", ...free);
     }
     if (recs.length > 0) {
-      lines.push("What I'd tackle:");
+      lines.push("", "**Suggested focus**");
       lines.push(
         numbered(
           recs.map(
             (rec) =>
-              `${rec.title}: ${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)} to ${clockLabel(rec.endsAt)}`,
+              `${plain(rec.title)} · ${dayWord(rec.startsAt)}, ${clockLabel(rec.startsAt)}–${clockLabel(rec.endsAt)}`,
           ),
         ),
       );
-      lines.push("Want me to put those on your calendar?");
+      lines.push("", "Want me to put these work blocks on your calendar?");
     } else if (dueInRange.length > 0) {
       lines.push(
+        "",
+        "**Planning note**",
         "I couldn't fit what's due into your free time, so you may want to move something or free up a window.",
       );
     }
@@ -1317,36 +1326,40 @@ export function createAssistant(options: AssistantOptions) {
       const lines = shown.map(({ task, category }) => {
         const effort = task.estimatedMinutes ? `, about ${task.estimatedMinutes} min` : "";
         const where = category === "Inbox" ? "" : `, ${category}`;
-        return `${task.title} (${dueText(task, timezone)}${effort}${where})`;
+        return `${plain(task.title)} (${dueText(task, timezone)}${effort}${where})`;
       });
       const more = savedTasks.length - shown.length;
       parts.push(
-        `Tasks:\n${numbered(lines)}${more > 0 ? `\n...and ${more} more, all saved. You'll find them in your Inbox.` : ""}`,
+        `**Tasks added**\n${numbered(lines)}${more > 0 ? `\n...and ${more} more, all saved. You'll find them in your Inbox.` : ""}`,
       );
     }
     if (savedNotes.length > 0) {
       parts.push(
-        `Saved separately: ${savedNotes.map(({ kind, text }) => `${kind} "${text}"`).join(", ")}.`,
+        `**Notes and ideas saved**\n${savedNotes.map(({ kind, text }) => `• ${kind} "${plain(text)}"`).join("\n")}`,
       );
     }
     const flagged = savedTasks.filter((entry) => entry.flagged);
     if (flagged.length > 0) {
       parts.push(
-        `${flagged.length === 1 ? "One needs" : "A few need"} a look, so I flagged ${flagged.length === 1 ? "it" : "them"} for review in your Inbox: ${flagged.map(({ task }) => `"${task.title}" (${task.reviewNote})`).join("; ")}. Tell me what's missing and I'll fix it.`,
+        `**Needs review**\n${flagged.map(({ task }) => `• ${plain(task.title)} — ${plain(task.reviewNote ?? "missing details")}`).join("\n")}\nThese need a look. Tell me what's missing and I'll fix it.`,
       );
     }
-    parts.push(...remarks);
-    for (const entry of skipped) {
-      parts.push(`I skipped "${entry.title}" because you already have "${entry.existing}".`);
+    if (remarks.length > 0) {
+      parts.push(`**Category notes**\n${remarks.map((remark) => `• ${plain(remark)}`).join("\n")}`);
+    }
+    if (skipped.length > 0) {
+      parts.push(
+        `**Already on your list**\n${skipped.map((entry) => `• I skipped "${plain(entry.title)}" because you already have "${plain(entry.existing)}".`).join("\n")}`,
+      );
     }
     if (failed.length > 0) {
       parts.push(
-        `I couldn't save ${failed.map((title) => `"${title}"`).join(", ")}, so nothing was stored for ${failed.length === 1 ? "it" : "those"}.`,
+        `**Not saved**\n${failed.map((title) => `• I couldn't save "${plain(title)}".`).join("\n")}\nNothing was stored for ${failed.length === 1 ? "it" : "those items"}.`,
       );
     }
     if (unverified.length > 0) {
       parts.push(
-        `I couldn't verify whether ${unverified.map((title) => `"${title}"`).join(", ")} ${unverified.length === 1 ? "was" : "were"} saved. Please check your Inbox before retrying; don't assume ${unverified.length === 1 ? "it was" : "they were"} saved or lost.`,
+        `**Save status unclear**\n${unverified.map((title) => `• I couldn't verify whether "${plain(title)}" was saved.`).join("\n")} Please check your Inbox before retrying; don't assume these were saved or lost.`,
       );
     }
     if (omitted > 0) {
@@ -1718,7 +1731,8 @@ export function createAssistant(options: AssistantOptions) {
             : `${task.title} (${task.priority}, ${dueText(task, timezone)}${task.estimatedMinutes ? `, ${task.estimatedMinutes} min` : ""})`,
         );
         const closing = more > 0 ? "" : "\nWant me to check any of these off?";
-        const text = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun} (${matched.length}):\n${numbered(lines)}${more > 0 ? `\n...and ${more} more.` : ""}${closing}`;
+        const heading = `${label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : "Matching"} ${noun}`;
+        const text = `**${heading} · ${matched.length}**\n${lines.map((line) => `• ${plain(line)}`).join("\n")}${more > 0 ? `\n…and ${more} more.` : ""}${closing}`;
         return reply(
           { text, outcome: "listed", changed: false },
           {

@@ -12,16 +12,23 @@ export interface AppCommands {
   worker: Command;
 }
 
+class StartupConfigError extends Error {}
+
 function port(value: string | undefined, fallback: number, name: string): number {
   const parsed = Number(value || fallback);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`${name} must be a whole number between 1 and 65535.`);
+    throw new StartupConfigError(`${name} must be a whole number between 1 and 65535.`);
   }
   return parsed;
 }
 
 export function appEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
   const url = env.DATABASE_URL?.trim() ?? "";
+  if (!url) {
+    throw new StartupConfigError(
+      "DATABASE_URL is missing. Attach the persistent volume at /data and set DATABASE_URL=file:/data/epiphany.sqlite.",
+    );
+  }
   let path: string;
   try {
     if (!url.startsWith("file:") || /[?#]/.test(url)) throw new Error();
@@ -29,15 +36,27 @@ export function appEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.Proc
     if (!path || path.includes(":memory:") || path.includes("\0")) throw new Error();
     if ([".", "..", "/"].includes(path)) throw new Error();
   } catch {
-    throw new Error(
-      "DATABASE_URL must name a persistent SQLite file (Railway: file:/data/epiphany.sqlite); memory and remote databases are not supported.",
+    throw new StartupConfigError(
+      "DATABASE_URL must name a persistent SQLite file (Railway: file:/data/epiphany.sqlite); remove any old MySQL reference. Memory and remote databases are not supported.",
     );
   }
   const webPort = port(env.PORT, 3000, "PORT");
   const workerPort = port(env.WORKER_HEALTH_PORT, 3001, "WORKER_HEALTH_PORT");
-  if (webPort === workerPort) throw new Error("PORT and WORKER_HEALTH_PORT must differ.");
+  if (webPort === workerPort)
+    throw new StartupConfigError(
+      "PORT and WORKER_HEALTH_PORT must differ. Set WORKER_HEALTH_PORT to an unused port, e.g. 3002.",
+    );
   const file = resolve(cwd, path);
-  accessSync(dirname(file), constants.W_OK);
+  try {
+    accessSync(dirname(file), constants.W_OK);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new StartupConfigError(
+      code === "ENOENT"
+        ? "The DATABASE_URL parent directory does not exist. Attach the Railway volume at /data before starting; locally, create the database directory."
+        : "The DATABASE_URL parent directory is not writable. Check the volume mount and runtime user permissions.",
+    );
+  }
   return {
     ...env,
     DATABASE_URL: pathToFileURL(file).href,
@@ -129,11 +148,16 @@ export async function supervise(
 async function main(): Promise<void> {
   const cwd = fileURLToPath(new URL("..", import.meta.url));
   const env = appEnvironment(process.env, cwd);
-  if (Bun.version !== "1.3.14") throw new Error("The app supervisor requires Bun 1.3.14.");
+  if (Bun.version !== "1.3.14")
+    throw new StartupConfigError(
+      "The app supervisor requires Bun 1.3.14. Use the repository Dockerfile.",
+    );
   const nodeVersion = spawnSync("node", ["--version"], { encoding: "utf8" });
   const nodeMajor = Number(nodeVersion.stdout?.trim().match(/^v(\d+)\./)?.[1]);
   if (nodeVersion.status !== 0 || !(nodeMajor >= 24)) {
-    throw new Error("Next.js requires Node 24 or newer on PATH.");
+    throw new StartupConfigError(
+      "Next.js requires Node 24 or newer on PATH. Use the repository Dockerfile.",
+    );
   }
   const require = createRequire(import.meta.url);
   process.exitCode = await supervise(
@@ -156,10 +180,11 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  main().catch(() => {
-    // Configuration paths and provider errors can contain private values.
+  main().catch((error: unknown) => {
     console.error(
-      "App startup failed. Require Bun 1.3.14, Node 24+, a writable file DATABASE_URL parent directory, and distinct PORT/WORKER_HEALTH_PORT. See docs/operations.md.",
+      error instanceof StartupConfigError
+        ? `App startup failed: ${error.message}`
+        : "App startup failed unexpectedly; details withheld to protect private values. Check the image dependencies and see docs/operations.md.",
     );
     process.exitCode = 1;
   });

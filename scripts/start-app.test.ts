@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -83,7 +83,6 @@ const idle = () => "setInterval(() => {}, 1000);";
 
 describe("single-service startup configuration", () => {
   it.each([
-    undefined,
     "mysql://example.invalid/epiphany",
     ":memory:",
     "file::memory:",
@@ -94,6 +93,38 @@ describe("single-service startup configuration", () => {
     expect(() => appEnvironment({ DATABASE_URL: databaseUrl }, fixture)).toThrow(
       "persistent SQLite file",
     );
+  });
+
+  it.each([
+    { databaseUrl: "", expected: "DATABASE_URL is missing" },
+    {
+      databaseUrl: "mysql://synthetic-user:synthetic-secret@example.invalid/private-db",
+      expected: "remove any old MySQL reference",
+    },
+    {
+      databaseUrl: "file:epiphany.sqlite",
+      port: "3001",
+      expected: "PORT and WORKER_HEALTH_PORT must differ",
+    },
+    {
+      databaseUrl: pathToFileURL(resolve(".local", "missing-parent", "private-db.sqlite")).href,
+      expected: "parent directory does not exist",
+    },
+  ])("logs an actionable, redacted CLI error: $expected", ({ databaseUrl, port, expected }) => {
+    const result = spawnSync("bun", ["scripts/start-app.ts"], {
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        PORT: port ?? "3000",
+        WORKER_HEALTH_PORT: "3001",
+      },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(expected);
+    expect(result.stderr).not.toContain("synthetic-secret");
+    expect(result.stderr).not.toContain("private-db");
+    expect(result.stdout).not.toContain("process_started");
   });
 
   it("uses a writable local file, production mode and separate configurable ports", () => {

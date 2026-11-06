@@ -129,19 +129,19 @@ function today(data: OverviewData): string {
   );
 
   if (overdue.length > 0) {
-    lines.push("__Overdue__");
+    lines.push("**Overdue**");
     for (const task of overdue) {
       lines.push(`• ${plain(task.title)} (${dueText(task, timezone)})${review(task)}`);
     }
   }
   if (dueToday.length > 0) {
-    lines.push("__Due today__");
+    lines.push("**Due today**");
     for (const task of dueToday) {
       lines.push(`• ${plain(task.title)} (${dueText(task, timezone, false)})${review(task)}`);
     }
   }
   if (events.length > 0) {
-    lines.push("__Events__");
+    lines.push("**Events**");
     for (const event of events.toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime())) {
       const when = event.allDay
         ? "all day"
@@ -150,7 +150,7 @@ function today(data: OverviewData): string {
     }
   }
   if (blocks.length > 0) {
-    lines.push("__Planned work__");
+    lines.push("**Planned work**");
     for (const block of blocks.toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime())) {
       lines.push(
         `• ${plain(block.title ?? "Work block")} (${timeLabel(block.startsAt, timezone)} to ${timeLabel(block.endsAt, timezone)})`,
@@ -159,7 +159,7 @@ function today(data: OverviewData): string {
   }
   const todos = data.openTasks.filter((task) => task.taskType === "todo");
   if (todos.length) {
-    lines.push("__To-dos__");
+    lines.push("**To-dos**");
     for (const task of todos) lines.push(`• ${plain(task.title)} (to-do)`);
   }
   return assemble("today", `Today · ${dayLabel(key)}`, lines, "Nothing due or scheduled today.");
@@ -202,7 +202,7 @@ function schedule(data: OverviewData): string {
 
   const lines: string[] = [];
   for (const key of [...days.keys()].toSorted()) {
-    lines.push(`__${dayLabel(key)}__`);
+    lines.push(`**${dayLabel(key)}**`);
     for (const item of days.get(key)!.toSorted((a, b) => a.at - b.at)) lines.push(`• ${item.text}`);
   }
   return assemble("schedule", "Next 7 days", lines, "Nothing scheduled in the next 7 days.");
@@ -257,7 +257,7 @@ function checkIns(data: OverviewData): string {
     .toSorted((a, b) => a.dueAt.getTime() - b.dueAt.getTime())
     .slice(0, 8);
   if (upcoming.length > 0) {
-    lines.push("__Coming up__");
+    lines.push("**Coming up**");
     for (const reminder of upcoming) {
       lines.push(`• ${stamp(reminder.dueAt)}: ${short(reminder.message)}`);
     }
@@ -273,7 +273,7 @@ function checkIns(data: OverviewData): string {
     .toSorted((a, b) => b.dueAt.getTime() - a.dueAt.getTime())
     .slice(0, 5);
   if (problems.length > 0) {
-    lines.push("__Didn't reach you__");
+    lines.push("**Didn't reach you**");
     for (const reminder of problems) {
       lines.push(
         `• ${stamp(reminder.dueAt)}: ${short(reminder.message)} (${plain(reminder.detail ?? reminder.status)})`,
@@ -345,8 +345,8 @@ export function renderOverview(view: OverviewView, data: OverviewData): string {
 }
 
 // The text of the morning briefing, built from today's records at the moment it is sent (a message
-// scheduled the night before would be out of date). Plain DM text: no marker, no formatting that
-// depends on a channel.
+// scheduled the night before would be out of date). Plain DM text: no marker, with compact Markdown
+// headings and bullets.
 export function renderBriefing(data: OverviewData): string {
   const { timezone } = data;
   const key = dateKeyOf(data.now, timezone);
@@ -369,14 +369,14 @@ export function renderBriefing(data: OverviewData): string {
     .toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 
   if (events.length > 0) {
-    lines.push("", "On your calendar:");
+    lines.push("", "**On your calendar**");
     for (const event of events) {
       const when = event.allDay ? "all day" : timeLabel(event.startsAt, timezone);
       lines.push(`• ${when}: ${plain(event.title)}`);
     }
   }
   if (blocks.length > 0) {
-    lines.push("", "Work you planned:");
+    lines.push("", "**Work you planned**");
     for (const block of blocks) {
       lines.push(
         `• ${timeLabel(block.startsAt, timezone)} to ${timeLabel(block.endsAt, timezone)}: ${plain(block.title ?? "Work block")}`,
@@ -384,7 +384,7 @@ export function renderBriefing(data: OverviewData): string {
     }
   }
   if (overdue.length > 0 || dueToday.length > 0) {
-    lines.push("", "Needs attention:");
+    lines.push("", "**Needs attention**");
     for (const task of overdue.slice(0, 5)) {
       lines.push(`• Overdue: ${plain(task.title)} (${dueText(task, timezone)})`);
     }
@@ -398,7 +398,7 @@ export function renderBriefing(data: OverviewData): string {
     .toSorted((a, b) => a.dueAt!.getTime() - b.dueAt!.getTime())
     .slice(0, 3);
   if (upcoming.length > 0) {
-    lines.push("", "Coming up:");
+    lines.push("", "**Coming up**");
     for (const task of upcoming) lines.push(`• ${plain(task.title)} (${dueText(task, timezone)})`);
   }
 
