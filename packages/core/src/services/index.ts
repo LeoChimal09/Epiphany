@@ -374,6 +374,25 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
     },
 
     events: {
+      async listForSearch(principal: unknown, input: unknown): Promise<CalendarEvent[]> {
+        const { principal: p } = gate(principal, "event.read");
+        const query = parseInput(
+          z
+            .object({
+              limit: z.number().int().min(1).max(100).default(100),
+              offset: z.number().int().min(0).max(100_000).default(0),
+            })
+            .strict(),
+          input,
+        );
+        return db
+          .select()
+          .from(events)
+          .where(eq(events.ownerId, p.ownerId))
+          .orderBy(desc(events.createdAt), asc(events.id))
+          .limit(query.limit)
+          .offset(query.offset);
+      },
       // Attendance/completion stops check-ins, not the calendar appointment itself.
       async acknowledge(principal: unknown, eventId: unknown) {
         const { principal: p, actor } = gate(principal, "event.acknowledge");

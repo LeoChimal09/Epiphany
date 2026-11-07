@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   taskReopen: vi.fn(),
   noteCreate: vi.fn(),
   noteList: vi.fn(),
+  noteGet: vi.fn(),
   noteUpdate: vi.fn(),
   categoryCreate: vi.fn(),
   eventCreate: vi.fn(),
@@ -92,7 +93,12 @@ beforeEach(() => {
         update: mocks.taskUpdate,
         reopen: mocks.taskReopen,
       },
-      notes: { create: mocks.noteCreate, list: mocks.noteList, update: mocks.noteUpdate },
+      notes: {
+        get: mocks.noteGet,
+        create: mocks.noteCreate,
+        list: mocks.noteList,
+        update: mocks.noteUpdate,
+      },
       categories: { create: mocks.categoryCreate },
       events: {
         create: mocks.eventCreate,
@@ -109,6 +115,16 @@ beforeEach(() => {
 });
 
 describe("dashboard mutations", () => {
+  it.each(["note", "idea"])(
+    "opens an exact owner-scoped %s independently of pagination",
+    async (kind) => {
+      const note = { id: "saved-note", kind, title: "Garden plan", body: "Grow herbs" };
+      mocks.noteGet.mockResolvedValue(note);
+      expect(await loadDashboardItem("note", note.id)).toEqual({ ok: true, note });
+      expect(mocks.noteGet).toHaveBeenCalledWith(principal, note.id);
+      expect(mocks.noteList).not.toHaveBeenCalled();
+    },
+  );
   it("opens an exact owner-scoped task regardless of list pagination", async () => {
     mocks.taskGet.mockResolvedValue(task);
     expect(await loadDashboardItem("task", task.id)).toEqual({ ok: true, task });

@@ -2,6 +2,8 @@
 
 import {
   useDeferredValue,
+  createContext,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -24,6 +26,7 @@ import {
   Lightbulb,
   ListChecks,
   LogOut,
+  MessageCircle,
   NotebookText,
   Pencil,
   Plus,
@@ -110,6 +113,9 @@ import styles from "./workspace.module.css";
 
 const LIVE_REFRESH_MS = 30_000;
 
+type ChatTopic = { kind: "task" | "note" | "event"; id: string; label: string; title: string };
+const TopicContext = createContext<((topic: ChatTopic) => void) | null>(null);
+
 const headings: Record<DashboardView, string> = {
   assistant: "Ask Epi",
   today: "Calendar",
@@ -151,12 +157,14 @@ export function DashboardShell({
     budgetNote: null,
   });
   const nextMessageId = useRef(1);
+  const [chatTopic, setChatTopic] = useState<ChatTopic | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
-  const [focusedItem, setFocusedItem] = useState<{ id: string; kind: "task" | "event" } | null>(
-    null,
-  );
+  const [focusedItem, setFocusedItem] = useState<{
+    id: string;
+    kind: "task" | "event" | "note";
+  } | null>(null);
   const [linkedEvent, setLinkedEvent] = useState<ScheduleEvent | null>(null);
   const deferredSearch = useDeferredValue(search);
   const [composer, setComposer] = useState<"task" | "note" | null>(null);
@@ -289,16 +297,18 @@ export function DashboardShell({
       : null;
 
   useEffect(() => {
-    if (!focusedItem || view !== "tasks") return;
+    if (!focusedItem || (view !== "tasks" && view !== "notes")) return;
     const item = document.getElementById(`${focusedItem.kind}-${focusedItem.id}`);
     item?.scrollIntoView({ block: "center", behavior: "smooth" });
     item?.focus({ preventScroll: true });
   }, [focusedItem, view]);
-  const notes = visibleNotes(
-    data.notes,
-    deferredSearch,
-    view === "category" ? categoryFilter : null,
-  );
+  const focusedNote =
+    focusedItem?.kind === "note" && view === "notes"
+      ? data.notes.find((note) => note.id === focusedItem.id)
+      : null;
+  const notes = focusedNote
+    ? [focusedNote]
+    : visibleNotes(data.notes, deferredSearch, view === "category" ? categoryFilter : null);
   const history = visibleHistoryTasks(historyTasks, historyFilters, data.categories, data.timezone);
   const estimatedMinutes = open.reduce((total, task) => total + (task.estimatedMinutes ?? 0), 0);
 
@@ -514,10 +524,37 @@ export function DashboardShell({
     }
   }
 
+  function startTopic(topic: ChatTopic) {
+    if (chat.asking) return;
+    setChatTopic(topic);
+    setChat((current) => ({
+      ...current,
+      messages: [],
+      conversation: {
+        turns: [],
+        listed: [],
+        pending: null,
+        focus: { kind: topic.kind, id: topic.id },
+      },
+    }));
+    setView("assistant");
+    setComposer(null);
+  }
+
+  function clearTopic() {
+    if (chat.asking) return;
+    setChatTopic(null);
+    setChat((current) => ({
+      ...current,
+      messages: [],
+      conversation: { turns: [], listed: [], pending: null },
+    }));
+  }
+
   function openSavedItem(href: string) {
-    const match = /^#(task|event)-(.+)$/.exec(href);
+    const match = /^#(task|event|note)-(.+)$/.exec(href);
     if (!match) return;
-    const kind = match[1] as "task" | "event";
+    const kind = match[1] as "task" | "event" | "note";
     const id = decodeURIComponent(match[2]!);
     startTransition(async () => {
       try {
@@ -532,6 +569,11 @@ export function DashboardShell({
             tasks: [result.task, ...current.tasks.filter((task) => task.id !== id)],
           }));
           setTaskFilter(result.task.taskType === "todo" ? "todo" : "planned");
+        } else if ("note" in result) {
+          setData((current) => ({
+            ...current,
+            notes: [result.note, ...current.notes.filter((note) => note.id !== id)],
+          }));
         } else {
           setLinkedEvent(result.event);
           setTaskFilter("events");
@@ -539,7 +581,7 @@ export function DashboardShell({
         setSearch("");
         setCategoryFilter(null);
         setComposer(null);
-        setView("tasks");
+        setView(kind === "note" ? "notes" : "tasks");
         setFocusedItem({ kind, id });
       } catch {
         setNotice({ text: "Could not open this saved item. Please try again.", error: true });
@@ -563,6 +605,7 @@ export function DashboardShell({
       const result = await askEpi(text, chat.conversation);
       if (result.ok) {
         conversation = result.state;
+        if (result.reply.topic) setChatTopic(result.reply.topic);
         budgetNote = result.budgetNote;
         changed = result.reply.changed;
         reply = {
@@ -885,7 +928,7 @@ export function DashboardShell({
     });
   }
 
-  return (
+  const workspace = (
     <div className={styles.workspace}>
       {confirmation ? (
         <ConfirmationDialog confirmation={confirmation} onClose={() => setConfirmation(null)} />
@@ -1465,7 +1508,7 @@ export function DashboardShell({
                 </span>
               </div>
             ) : null}
-            {view === "tasks" && focusedItem ? (
+            {(view === "tasks" || view === "notes") && focusedItem ? (
               <div className={styles.selectionToolbar}>
                 <span>Viewing the item Epi saved.</span>
                 <button
@@ -1476,7 +1519,7 @@ export function DashboardShell({
                     setTaskFilter("all");
                   }}
                 >
-                  Show all tasks
+                  {view === "notes" ? "Show all notes & ideas" : "Show all tasks"}
                 </button>
               </div>
             ) : null}
@@ -1500,6 +1543,8 @@ export function DashboardShell({
                 budgetNote={chat.budgetNote}
                 timezone={data.timezone}
                 voice={voice}
+                topic={chatTopic}
+                onClearTopic={clearTopic}
                 onSend={(text) => void sendToEpi(text)}
               />
             ) : null}
@@ -1576,7 +1621,10 @@ export function DashboardShell({
                       type="search"
                       value={historyFilters.search}
                       onChange={(event) =>
-                        setHistoryFilters((current) => ({ ...current, search: event.target.value }))
+                        setHistoryFilters((current) => ({
+                          ...current,
+                          search: event.target.value,
+                        }))
                       }
                       placeholder="Title, details, course, or category"
                     />
@@ -1840,6 +1888,11 @@ export function DashboardShell({
       </div>
     </div>
   );
+  return (
+    <TopicContext.Provider value={chat.asking ? null : startTopic}>
+      {workspace}
+    </TopicContext.Provider>
+  );
 }
 
 export function EventRepeatFields({
@@ -1996,6 +2049,7 @@ export function EventList({
   onEdit: (id: string, fields: FormData) => void;
   clearSearch: () => void;
 }) {
+  const startTopic = useContext(TopicContext);
   if (!result) {
     return <p role="status">Loading upcoming events...</p>;
   }
@@ -2071,6 +2125,23 @@ export function EventList({
                 />
               ) : null}
               <div className={styles.rowActions}>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  aria-label={`Ask Epi about: ${event.title}`}
+                  title="Ask Epi about this event"
+                  disabled={!startTopic}
+                  onClick={() =>
+                    startTopic?.({
+                      kind: "event",
+                      id: event.id,
+                      title: event.title,
+                      label: "event",
+                    })
+                  }
+                >
+                  <MessageCircle size={16} aria-hidden="true" />
+                </button>
                 <button
                   type="button"
                   className={styles.iconButton}
@@ -2306,6 +2377,7 @@ export function TaskRow({
   selected: boolean;
   onSelect: (id: string, checked: boolean) => void;
 }) {
+  const startTopic = useContext(TopicContext);
   const [editing, setEditing] = useState(false);
   const [editType, setEditType] = useState<"task" | "todo">(task.taskType);
   const countdown =
@@ -2527,6 +2599,18 @@ export function TaskRow({
         <button
           type="button"
           className={styles.iconButton}
+          aria-label={`Ask Epi about: ${task.title}`}
+          title={`Ask Epi about this ${task.taskType}`}
+          disabled={!startTopic}
+          onClick={() =>
+            startTopic?.({ kind: "task", id: task.id, title: task.title, label: task.taskType })
+          }
+        >
+          <MessageCircle size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={styles.iconButton}
           aria-label={`Edit: ${task.title}`}
           title="Edit"
           disabled={pending}
@@ -2626,10 +2710,11 @@ function NoteCard({
   onSave: (id: string, form: HTMLFormElement, done: () => void) => void;
   onDelete: (id: string) => void;
 }) {
+  const startTopic = useContext(TopicContext);
   const [editing, setEditing] = useState(false);
   if (editing)
     return (
-      <li className={styles.note} data-kind={note.kind}>
+      <li id={`note-${note.id}`} tabIndex={-1} className={styles.note} data-kind={note.kind}>
         <form
           className={styles.inlineEditor}
           onSubmit={(event) => {
@@ -2682,7 +2767,7 @@ function NoteCard({
       </li>
     );
   return (
-    <li className={styles.note} data-kind={note.kind}>
+    <li id={`note-${note.id}`} tabIndex={-1} className={styles.note} data-kind={note.kind}>
       <div className={styles.noteMeta}>
         <span className={note.kind === "idea" ? styles.ideaTag : styles.noteTag}>
           {note.kind === "idea" ? (
@@ -2719,6 +2804,21 @@ function NoteCard({
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}
         </span>
         <div className={styles.rowActions}>
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={!startTopic}
+            onClick={() =>
+              startTopic?.({
+                kind: "note",
+                id: note.id,
+                title: note.title ?? note.body.slice(0, 60),
+                label: note.kind,
+              })
+            }
+          >
+            <MessageCircle size={13} aria-hidden="true" /> Ask Epi
+          </button>
           <button
             type="button"
             className={styles.textButton}

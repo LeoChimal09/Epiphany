@@ -7,6 +7,7 @@ type Field = Exclude<keyof typeof intentWireSchema.shape, "kind" | "text">;
 // Only action-specific arguments travel over the wire. The legacy envelope remains internal
 // so scripted providers and the existing semantic validation/dispatch stay unchanged.
 const fields = {
+  find_records: ["search", "record_type", "event_date"],
   list_tasks: ["status", "from_date", "through_date", "search", "task_type"],
   create_task: [
     "title",
@@ -21,6 +22,7 @@ const fields = {
     "reference",
     "target_id",
     "title",
+    "details",
     "due_date",
     "due_time",
     "estimated_minutes",
@@ -36,6 +38,7 @@ const fields = {
   create_note: ["title", "details", "note_kind"],
   develop_idea: ["reference", "target_id", "details"],
   resume_idea: ["reference", "target_id"],
+  append_note: ["reference", "target_id", "details"],
   website_link: [],
   capture: ["items"],
   recategorize: ["reference", "target_id", "category"],
@@ -71,6 +74,7 @@ const required: Partial<Record<Action, Field[]>> = {
   cancel_event: ["scope"],
   create_note: ["details"],
   develop_idea: ["details"],
+  append_note: ["details"],
   capture: ["items"],
   recategorize: ["category"],
   start_activity: ["title", "estimated_minutes"],
@@ -108,12 +112,26 @@ const schemas = new Map(
   ]),
 );
 
+function compactSchema(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach(compactSchema);
+    return;
+  }
+  const object = value as Record<string, unknown>;
+  delete object.maxLength;
+  delete object.minimum;
+  delete object.maximum;
+  Object.values(object).forEach(compactSchema);
+}
+
 export const ACTION_TOOLS = [...schemas].map(([name, schema]) => {
   const parameters = z.toJSONSchema(schema);
   delete parameters.$schema;
+  compactSchema(parameters);
   return {
     type: "function" as const,
-    function: { name, description: `Request ${name.replaceAll("_", " ")}.`, parameters },
+    function: { name, parameters },
   };
 });
 

@@ -6,6 +6,26 @@ const text = (max: number) => z.string().max(max);
 
 const conversationStateSchema = z
   .object({
+    focus: z
+      .object({ kind: z.enum(["task", "note", "event"]), id: text(64).min(1) })
+      .strict()
+      .nullable()
+      .optional(),
+    searchResults: z
+      .object({
+        ownerId: text(64),
+        items: z
+          .array(
+            z
+              .object({ kind: z.enum(["task", "note", "event"]), id: text(64), title: text(300) })
+              .strict(),
+          )
+          .min(1)
+          .max(10),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     eventFocus: z
       .object({
         ownerId: text(64),

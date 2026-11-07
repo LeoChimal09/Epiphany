@@ -119,6 +119,8 @@ export function AssistantChat({
   budgetNote,
   timezone,
   voice,
+  topic,
+  onClearTopic,
   onSend,
   onOpenItem,
 }: {
@@ -128,6 +130,8 @@ export function AssistantChat({
   budgetNote: string | null;
   timezone: string;
   voice: { listen: boolean; speak: boolean };
+  topic?: { label: string; title: string } | null;
+  onClearTopic?: () => void;
   onSend: (text: string) => void;
   onOpenItem: (href: string) => void;
 }) {
@@ -173,6 +177,21 @@ export function AssistantChat({
 
   return (
     <section className={styles.chat} aria-label="Ask Epi">
+      {topic ? (
+        <div className={styles.selectionToolbar} role="status">
+          <span>
+            Talking about {topic.label}: <strong>{topic.title}</strong>
+          </span>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={asking}
+            onClick={onClearTopic}
+          >
+            Clear topic
+          </button>
+        </div>
+      ) : null}
       {ready ? null : <SetupHelp setup={setup} />}
       {budgetNote ? (
         <p className={styles.chatBudget} role="status">
