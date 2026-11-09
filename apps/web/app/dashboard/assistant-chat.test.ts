@@ -25,6 +25,37 @@ function render(message: ChatMessage) {
 }
 
 describe("assistant review messages", () => {
+  it("shows saved-session controls and blocks sending into a restored in-flight turn", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssistantChat, {
+        setup: "ready",
+        messages: [],
+        asking: false,
+        budgetNote: null,
+        voice: { listen: false, speak: false },
+        timezone: "America/Chicago",
+        topic: { label: "note", title: "Gift list" },
+        sessions: [{ id: "saved", title: "Gift list", updatedAt: "2026-11-09T15:00:00Z" }],
+        sessionId: "saved",
+        sessionBusy: true,
+        onNewSession: () => {},
+        onSwitchSession: () => {},
+        onReloadSession: () => {},
+        onDeleteSession: () => {},
+        onClearTopic: () => {},
+        onSend: () => {},
+        onOpenItem: () => {},
+      }),
+    );
+    expect(html).toContain("Talking about note");
+    expect(html).toContain("New conversation");
+    expect(html).toContain("Reload conversation");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-label="Delete conversation"/);
+    expect(html).toContain("90 days");
+    expect(html).toContain("request is in progress");
+    expect(html).toMatch(/<textarea[^>]*disabled/);
+    expect(html).not.toContain("Epi&#x27;s language model is not connected");
+  });
   it.each(["note", "idea"])("offers an exact saved %s link in the existing dashboard", (kind) => {
     const html = render({
       id: 1,

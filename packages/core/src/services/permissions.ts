@@ -22,6 +22,8 @@ export const ACTIONS = {
   "event.read": { kind: "read" },
   "work_block.read": { kind: "read" },
   "note.read": { kind: "read" },
+  "conversation.read": { kind: "read" },
+  "conversation.write": { kind: "apply" },
   "preference.read": { kind: "read" },
   "preference.write": { kind: "apply" },
   "preference.delete": { kind: "destructive" },
@@ -41,6 +43,7 @@ export const ACTIONS = {
   "event.cancel_series": { kind: "destructive" },
   "event.reschedule": { kind: "external" },
   "category.create": { kind: "apply" },
+  "category.delete": { kind: "destructive" }, // moves its items to the Inbox, then removes it
   "reminder.snooze": { kind: "apply" },
   "reminder.create": { kind: "apply" },
   "insight.read": { kind: "read" },

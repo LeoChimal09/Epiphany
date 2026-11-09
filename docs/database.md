@@ -35,6 +35,18 @@ retires planned blocks and unsent reminders atomically while retaining deadlines
 Event acknowledgement stops check-ins without erasing appointments. Imported external
 appointments remain read-only. Reopening never resurrects old reminders or retired blocks.
 
+Dashboard conversations use the additive `0002_fair_sleepwalker` migration. Run
+`bun run db:migrate` before using saved chats. `createServices().conversations` owns
+all transcript access, with owner/private-audience checks, optimistic turn claims,
+and server-stored context rather than client-supplied state. Refresh never resends
+a request. Interrupted requests require checking the record before deliberately retrying.
+Only metadata, not transcript text, is copied into action history.
+
+Chats expire 90 days after creation, keep at most 100 messages, and are physically
+purged on the owner's next conversation access. The dashboard lists the 50 most recently
+updated chats. Saved planning records have independent retention and are not deleted
+when chats expire.
+
 ## Commands
 
 | Command | Purpose |
@@ -58,8 +70,10 @@ The full source import preserves IDs, UTC values, JSON, encrypted calendar crede
 and record relationships. Use the same calendar encryption key after moving.
 Do not point old MySQL application builds at SQLite or vice versa.
 
-The owner JSON export deliberately excludes sessions, pending confirmations, and
-credential fields. It is not a full disaster-recovery backup. For a live full SQLite
+The owner JSON export deliberately excludes sign-in sessions, pending confirmation rows,
+and credential fields. Unexpired chat transcripts are included, but active execution
+leases are not restored and interrupted turns are never automatically replayed.
+It is not a full disaster-recovery backup. For a live full SQLite
 backup use SQLite's online backup API/tooling or stop writers and checkpoint before
 copying; copying just the main file during WAL writes can lose committed data.
 Keep encrypted, off-host backups and test recovery. A persistent volume alone is not

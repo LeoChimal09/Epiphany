@@ -18,12 +18,11 @@ import {
   Check,
   CircleCheck,
   FileText,
-  Folder,
   Globe2,
   History,
-  Inbox,
   Info,
   Lightbulb,
+  Tag,
   ListChecks,
   LogOut,
   MessageCircle,
@@ -35,6 +34,7 @@ import {
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Settings2,
   Sparkles,
   Timer,
   Trash2,
@@ -45,7 +45,12 @@ import {
 import { AccountMenu } from "./account-menu";
 import { ConfirmationDialog, type DashboardConfirmation } from "./confirmation-dialog";
 import { AssistantChat, type AssistantSetup, type ChatMessage } from "./assistant-chat";
-import type { ConversationState } from "@epiphany/core/assistant";
+import type {
+  ConversationState,
+  ChatTopic,
+  ChatSession,
+  ChatSessionSummary,
+} from "@epiphany/core/assistant";
 import type { OwnerProfile } from "@epiphany/core/services";
 import type { VoiceStatus } from "./voice-status";
 import {
@@ -53,7 +58,11 @@ import {
   addDashboardEvent,
   addDashboardNote,
   addDashboardTask,
-  askEpi,
+  sendDashboardChat,
+  loadDashboardChats,
+  createDashboardChat,
+  deleteDashboardChat,
+  openDashboardChat,
   proposeDashboardEventCancellation,
   confirmDashboardEventCancellation,
   cancelDashboardEventCancellation,
@@ -68,6 +77,9 @@ import {
   proposeDashboardNoteDeletion,
   confirmDashboardNoteDeletion,
   cancelDashboardNoteDeletion,
+  proposeDashboardCategoryDeletion,
+  confirmDashboardCategoryDeletion,
+  cancelDashboardCategoryDeletion,
   loadDashboardEvents,
   loadDashboardItem,
   loadDashboardHistory,
@@ -95,12 +107,13 @@ import {
   type DashboardTask,
   type DashboardView,
   type HistoryFilters,
+  type NoteFilter,
   type TaskFilter,
 } from "./model";
 import { CalendarView } from "./calendar-view";
 import { DeadlineNotifications } from "./deadline-notifications";
 import { SplitReminderFields } from "./reminders/settings";
-import { IdeaBody } from "./idea-body";
+import { IdeaBody, recordPreview } from "./idea-body";
 import {
   formatDayLabel,
   todayKey,
@@ -113,7 +126,6 @@ import styles from "./workspace.module.css";
 
 const LIVE_REFRESH_MS = 30_000;
 
-type ChatTopic = { kind: "task" | "note" | "event"; id: string; label: string; title: string };
 const TopicContext = createContext<((topic: ChatTopic) => void) | null>(null);
 
 const headings: Record<DashboardView, string> = {
@@ -123,7 +135,6 @@ const headings: Record<DashboardView, string> = {
   tasks: "Tasks & Todos",
   completed: "Completed tasks",
   notes: "Notes & ideas",
-  category: "Category",
   history: "Task history",
 };
 
@@ -157,10 +168,16 @@ export function DashboardShell({
     budgetNote: null,
   });
   const nextMessageId = useRef(1);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSessionSummary[]>([]);
+  const [chatsReady, setChatsReady] = useState(false);
   const [chatTopic, setChatTopic] = useState<ChatTopic | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatWork = useRef(false);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [noteFilter, setNoteFilter] = useState<NoteFilter>("all");
   const [focusedItem, setFocusedItem] = useState<{
     id: string;
     kind: "task" | "event" | "note";
@@ -172,7 +189,7 @@ export function DashboardShell({
   const [eventAllDay, setEventAllDay] = useState(false);
   const [eventTimingMode, setEventTimingMode] = useState<"end" | "duration">("end");
   const [eventRepeat, setEventRepeat] = useState<"none" | "daily" | "weekly">("none");
-  const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({
@@ -240,11 +257,13 @@ export function DashboardShell({
   // every half minute and when the tab regains focus. It waits while an action or a chat turn is
   // in flight, and drops a result that arrives after one started, so it never overwrites an edit.
   const live = useRef({ busy: false, week: neededWeek, skipSchedule: false });
-  live.current = {
-    busy: pending || chat.asking,
-    week: neededWeek,
-    skipSchedule: view === "history",
-  };
+  useEffect(() => {
+    live.current = {
+      busy: pending || chat.asking,
+      week: neededWeek,
+      skipSchedule: view === "history",
+    };
+  }, [pending, chat.asking, neededWeek, view]);
   useEffect(() => {
     let cancelled = false;
     async function poll() {
@@ -277,13 +296,12 @@ export function DashboardShell({
   const open = data.tasks.filter((task) => task.status === "open");
   const completed = data.tasks.filter((task) => task.status === "completed");
   const inbox = data.categories.find((category) => category.systemKey === "inbox");
-  const selectedCategory = data.categories.find((category) => category.id === categoryFilter);
-  const title = view === "category" ? (selectedCategory?.name ?? "Category") : headings[view];
+  const title = headings[view];
   const visibleTaskRows = visibleTasks(
     data.tasks,
     view,
     isAssistant ? "" : deferredSearch,
-    view === "category" ? categoryFilter : null,
+    categoryFilter,
     view === "tasks" ? taskFilter : "all",
   );
   const focusedTask =
@@ -308,7 +326,7 @@ export function DashboardShell({
       : null;
   const notes = focusedNote
     ? [focusedNote]
-    : visibleNotes(data.notes, deferredSearch, view === "category" ? categoryFilter : null);
+    : visibleNotes(data.notes, deferredSearch, categoryFilter, noteFilter);
   const history = visibleHistoryTasks(historyTasks, historyFilters, data.categories, data.timezone);
   const estimatedMinutes = open.reduce((total, task) => total + (task.estimatedMinutes ?? 0), 0);
 
@@ -496,9 +514,8 @@ export function DashboardShell({
       () => addDashboardCategory(fields),
       (result) => {
         form.reset();
-        setShowCategoryForm(false);
         if (result.category) {
-          setView("category");
+          setFocusedItem(null);
           setCategoryFilter(result.category.id);
         }
       },
@@ -524,31 +541,170 @@ export function DashboardShell({
     }
   }
 
-  function startTopic(topic: ChatTopic) {
-    if (chat.asking) return;
-    setChatTopic(topic);
+  function applyChat(session: ChatSession) {
+    try {
+      window.sessionStorage.setItem("epiphany.active-chat", session.id);
+    } catch {
+      /* Storage may be disabled. */
+    }
+    setChatSessionId(session.id);
+    setChatTopic(session.data.topic);
+    setChatBusy(session.busy);
+    nextMessageId.current = (session.data.messages.at(-1)?.id ?? 0) + 1;
     setChat((current) => ({
       ...current,
-      messages: [],
-      conversation: {
-        turns: [],
-        listed: [],
-        pending: null,
-        focus: { kind: topic.kind, id: topic.id },
-      },
+      messages: session.data.messages,
+      conversation: session.data.conversation,
+      asking: false,
     }));
-    setView("assistant");
-    setComposer(null);
+    setChatSessions((current) =>
+      [
+        { id: session.id, title: session.title, updatedAt: session.updatedAt },
+        ...current.filter((item) => item.id !== session.id),
+      ].slice(0, 50),
+    );
+    if (session.busy)
+      setNotice({
+        text: "A request is still in progress in this conversation. Reload the conversation to retrieve its result; don't resend it.",
+        error: false,
+      });
+  }
+
+  useEffect(() => {
+    let active = true;
+    void loadDashboardChats()
+      .then(async (result) => {
+        if (!active) return;
+        if (result.ok) {
+          setChatSessions(result.sessions);
+          let session = result.session;
+          let savedId: string | null = null;
+          try {
+            savedId = window.sessionStorage.getItem("epiphany.active-chat");
+          } catch {
+            /* Storage may be disabled. */
+          }
+          if (
+            savedId &&
+            savedId !== session?.id &&
+            result.sessions.some((item) => item.id === savedId)
+          ) {
+            const saved = await openDashboardChat(savedId);
+            if (saved.ok) session = saved.session;
+          }
+          if (!active) return;
+          if (session) applyChat(session);
+        } else setNotice({ text: result.error, error: true });
+        setChatsReady(true);
+      })
+      .catch(() => {
+        if (active) {
+          setNotice({ text: "Conversations could not be loaded. Try reloading.", error: true });
+          setChatsReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function startTopic(topic: ChatTopic | null) {
+    if (chatWork.current || chat.asking || pending || !chatsReady) return;
+    chatWork.current = true;
+    startTransition(async () => {
+      try {
+        const existing = topic
+          ? chatSessions.find(
+              (item) =>
+                item.id === chatSessionId &&
+                chatTopic?.id === topic.id &&
+                chatTopic.kind === topic.kind,
+            )
+          : undefined;
+        const result = existing
+          ? await openDashboardChat(existing.id)
+          : await createDashboardChat(topic);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        applyChat(result.session);
+        setView("assistant");
+        setComposer(null);
+      } catch {
+        setNotice({ text: "The conversation could not be opened. Try again.", error: true });
+      } finally {
+        chatWork.current = false;
+      }
+    });
   }
 
   function clearTopic() {
-    if (chat.asking) return;
-    setChatTopic(null);
-    setChat((current) => ({
-      ...current,
-      messages: [],
-      conversation: { turns: [], listed: [], pending: null },
-    }));
+    startTopic(null);
+  }
+
+  function switchChat(id: string) {
+    if (chatWork.current || chat.asking || pending) return;
+    chatWork.current = true;
+    startTransition(async () => {
+      try {
+        const result = await openDashboardChat(id);
+        if (result.ok) applyChat(result.session);
+        else setNotice({ text: result.error, error: true });
+      } catch {
+        setNotice({ text: "The conversation could not be loaded. Try again.", error: true });
+      } finally {
+        chatWork.current = false;
+      }
+    });
+  }
+
+  function deleteChat() {
+    const id = chatSessionId;
+    if (!id || chatWork.current || chat.asking || pending) return;
+    const title = chatSessions.find((item) => item.id === id)?.title ?? "this conversation";
+    setConfirmation({
+      title: "Delete this conversation?",
+      description: `"${title}" and its saved messages will be removed. Your tasks, events, notes, and ideas are not affected.`,
+      confirmLabel: "Delete conversation",
+      onConfirm: () => {
+        chatWork.current = true;
+        startTransition(async () => {
+          try {
+            const result = await deleteDashboardChat(id);
+            if (!result.ok) {
+              setNotice({ text: result.error, error: true });
+              return;
+            }
+            try {
+              if (window.sessionStorage.getItem("epiphany.active-chat") === id)
+                window.sessionStorage.removeItem("epiphany.active-chat");
+            } catch {
+              /* Storage may be disabled. */
+            }
+            setChatSessions(result.sessions);
+            if (result.session) applyChat(result.session);
+            else {
+              setChatSessionId(null);
+              setChatTopic(null);
+              setChatBusy(false);
+              nextMessageId.current = 1;
+              setChat((current) => ({
+                ...current,
+                messages: [],
+                conversation: { turns: [], listed: [], pending: null },
+                asking: false,
+              }));
+            }
+            setNotice({ text: "Conversation deleted.", error: false });
+          } catch {
+            setNotice({ text: "The conversation could not be deleted. Try again.", error: true });
+          } finally {
+            chatWork.current = false;
+          }
+        });
+      },
+    });
   }
 
   function openSavedItem(href: string) {
@@ -590,7 +746,8 @@ export function DashboardShell({
   }
 
   async function sendToEpi(text: string) {
-    if (chat.asking) return;
+    if (chatWork.current || chatBusy || chat.asking || pending || !chatsReady) return;
+    chatWork.current = true;
     const userMessage: ChatMessage = { id: nextMessageId.current++, role: "user", text };
     setChat((current) => ({
       ...current,
@@ -601,39 +758,67 @@ export function DashboardShell({
     let budgetNote = chat.budgetNote;
     let reply: ChatMessage;
     let changed = false;
+    let savedMessages: ChatMessage[] | null = null;
     try {
-      const result = await askEpi(text, chat.conversation);
+      let id = chatSessionId;
+      if (!id) {
+        const created = await createDashboardChat();
+        if (!created.ok) throw new Error("conversation_unavailable");
+        id = created.session.id;
+        setChatSessionId(id);
+      }
+      const result = await sendDashboardChat(text, id);
       if (result.ok) {
-        conversation = result.state;
-        if (result.reply.topic) setChatTopic(result.reply.topic);
+        setChatBusy(result.session.busy);
+        savedMessages = result.session.data.messages;
+        try {
+          window.sessionStorage.setItem("epiphany.active-chat", result.session.id);
+        } catch {
+          /* Storage may be disabled. */
+        }
+        conversation = result.session.data.conversation;
+        setChatTopic(result.session.data.topic);
         budgetNote = result.budgetNote;
-        changed = result.reply.changed;
+        changed = result.changed;
+        const last = result.session.data.messages.at(-1)!;
+        reply = {
+          ...last,
+        };
+        nextMessageId.current = last.id + 1;
+        setChatSessions((current) =>
+          [
+            {
+              id: result.session.id,
+              title: result.session.title,
+              updatedAt: result.session.updatedAt,
+            },
+            ...current.filter((item) => item.id !== result.session.id),
+          ].slice(0, 50),
+        );
+      } else {
         reply = {
           id: nextMessageId.current++,
           role: "epi",
-          text: result.reply.text,
-          outcome: result.reply.outcome,
-          changed: result.reply.changed,
-          links: result.reply.links,
+          text: result.error,
+          outcome: "uncertain",
         };
-      } else {
-        reply = { id: nextMessageId.current++, role: "epi", text: result.error, outcome: "failed" };
       }
     } catch {
       reply = {
         id: nextMessageId.current++,
         role: "epi",
         text: "The request did not finish. Refresh to check your records.",
-        outcome: "failed",
+        outcome: "uncertain",
       };
     }
     setChat((current) => ({
       ...current,
-      messages: [...current.messages, reply],
+      messages: savedMessages ?? [...current.messages, reply],
       conversation,
       asking: false,
       budgetNote,
     }));
+    chatWork.current = false;
     if (changed) {
       const [fresh, week] = await Promise.all([
         refreshDashboard(),
@@ -645,11 +830,12 @@ export function DashboardShell({
     }
   }
 
-  function selectCategory(category: DashboardCategory) {
-    setView("category");
-    setCategoryFilter(category.id);
-    setSearch("");
-    setComposer(null);
+  // What the filter would show in the current view and type, so counts match the list.
+  function viewCategoryCount(categoryId: string): number {
+    return view === "notes"
+      ? visibleNotes(data.notes, "", categoryId, noteFilter).length
+      : visibleTasks(data.tasks, view, "", categoryId, view === "tasks" ? taskFilter : "all")
+          .length;
   }
 
   function createCategoryCount(categoryId: string): number {
@@ -872,7 +1058,7 @@ export function DashboardShell({
     });
   }
 
-  const addCategoryId = view === "category" ? categoryFilter : inbox?.id;
+  const addCategoryId = categoryFilter ?? inbox?.id;
 
   function requestTaskCompletion(ids: string[]) {
     const selected = ids
@@ -913,6 +1099,45 @@ export function DashboardShell({
             startTransition(async () => {
               try {
                 await cancelDashboardNoteDeletion(proposal.confirmationId);
+              } catch {
+                setNotice({
+                  text: "The deletion was not confirmed, but its pending request could not be canceled. It will expire automatically.",
+                  error: true,
+                });
+              }
+            });
+          },
+        });
+      } catch {
+        setNotice({ text: "Could not prepare deletion. Nothing was deleted.", error: true });
+      }
+    });
+  }
+
+  function requestCategoryDeletion(category: DashboardCategory) {
+    startTransition(async () => {
+      try {
+        const result = await proposeDashboardCategoryDeletion(category.id);
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        const { proposal } = result;
+        setConfirmation({
+          title: "Delete this category?",
+          description: `${proposal.summary}. ${proposal.consequences.join(" ")} Tasks and notes are kept.`,
+          confirmLabel: "Delete category",
+          onConfirm: () =>
+            perform(
+              () => confirmDashboardCategoryDeletion(proposal),
+              () => {
+                if (categoryFilter === category.id) setCategoryFilter(null);
+              },
+            ),
+          onCancel: () => {
+            startTransition(async () => {
+              try {
+                await cancelDashboardCategoryDeletion(proposal.confirmationId);
               } catch {
                 setNotice({
                   text: "The deletion was not confirmed, but its pending request could not be canceled. It will expire automatically.",
@@ -1001,61 +1226,6 @@ export function DashboardShell({
               <span>History</span>
             </button>
           </nav>
-          <div className={styles.categoryNavigation}>
-            <div className={styles.categoryHeading}>
-              <span>Categories</span>
-              <button
-                type="button"
-                className={styles.textButton}
-                disabled={pending}
-                onClick={() => setShowCategoryForm((value) => !value)}
-                aria-label="Create category"
-              >
-                <Plus size={16} aria-hidden="true" />
-              </button>
-            </div>
-            <nav className={styles.navigation} aria-label="Task categories">
-              {data.categories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  aria-current={
-                    view === "category" && categoryFilter === category.id ? "page" : undefined
-                  }
-                  onClick={() => selectCategory(category)}
-                >
-                  {category.systemKey === "inbox" ? (
-                    <Inbox size={17} aria-hidden="true" />
-                  ) : (
-                    <Folder size={17} aria-hidden="true" />
-                  )}
-                  <span>{category.name}</span>
-                  <span className={styles.count}>{createCategoryCount(category.id)}</span>
-                </button>
-              ))}
-            </nav>
-            {showCategoryForm ? (
-              <form className={styles.categoryForm} onSubmit={submitCategory}>
-                <label>
-                  New category
-                  <input name="name" required maxLength={100} autoFocus />
-                </label>
-                <div>
-                  <button className={styles.primaryButton} disabled={pending} type="submit">
-                    Create
-                  </button>
-                  <button
-                    className={styles.textButton}
-                    disabled={pending}
-                    type="button"
-                    onClick={() => setShowCategoryForm(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </div>
           <div className={styles.sidebarFooter}>
             <Link href="/dashboard/planning" className={styles.sidebarLink}>
               <SlidersHorizontal size={15} aria-hidden="true" />
@@ -1102,9 +1272,7 @@ export function DashboardShell({
                       ? "A home for the thoughts you want to come back to."
                       : view === "completed" || view === "history"
                         ? "Look at how far you've come. Your past work lives here."
-                        : view === "category"
-                          ? "Your tasks and thoughts, together in one place."
-                          : "Big plans or small wins. Take it one thing at a time."}
+                        : "Big plans or small wins. Take it one thing at a time."}
               </p>
             </div>
             <div className={styles.headerActions}>
@@ -1137,27 +1305,6 @@ export function DashboardShell({
                   <Plus size={16} aria-hidden="true" />
                   Add task
                 </button>
-              ) : view === "category" ? (
-                <>
-                  <button
-                    type="button"
-                    className={styles.primaryButton}
-                    disabled={pending}
-                    onClick={openTaskComposer}
-                  >
-                    <Plus size={16} aria-hidden="true" />
-                    Add task
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    disabled={pending}
-                    onClick={() => setComposer("note")}
-                  >
-                    <FileText size={16} aria-hidden="true" />
-                    Add note
-                  </button>
-                </>
               ) : (
                 <button
                   type="button"
@@ -1447,41 +1594,107 @@ export function DashboardShell({
           <section className={styles.records} aria-label={title} aria-busy={pending}>
             {view !== "history" && !isSchedule && !isAssistant ? (
               <div className={styles.listToolbar}>
-                {view === "tasks" ? (
-                  <div className={styles.rowActions} role="group" aria-label="Item filters">
-                    {(
-                      [
-                        ["all", "All tasks"],
-                        ["planned", "Deadline tasks"],
-                        ["todo", "Todos"],
-                        ["events", "Events"],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={`${styles.secondaryButton} ${styles.typeFilter}`}
-                        data-kind={value}
-                        aria-pressed={taskFilter === value}
-                        onClick={() => {
-                          setFocusedItem(null);
-                          setTaskFilter(value);
-                        }}
-                      >
-                        {value === "all" ? (
-                          <ListChecks size={15} aria-hidden="true" />
-                        ) : value === "planned" ? (
-                          <CalendarClock size={15} aria-hidden="true" />
-                        ) : value === "todo" ? (
-                          <CircleCheck size={15} aria-hidden="true" />
-                        ) : (
-                          <CalendarDays size={15} aria-hidden="true" />
-                        )}
-                        {label}
-                      </button>
-                    ))}
+                <div className={styles.listFilters}>
+                  {view === "tasks" ? (
+                    <div className={styles.rowActions} role="group" aria-label="Item filters">
+                      {(
+                        [
+                          ["all", "All tasks"],
+                          ["planned", "Deadline tasks"],
+                          ["todo", "Todos"],
+                          ["events", "Events"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`${styles.secondaryButton} ${styles.typeFilter}`}
+                          data-kind={value}
+                          aria-pressed={taskFilter === value}
+                          onClick={() => {
+                            setFocusedItem(null);
+                            setTaskFilter(value);
+                          }}
+                        >
+                          {value === "all" ? (
+                            <ListChecks size={15} aria-hidden="true" />
+                          ) : value === "planned" ? (
+                            <CalendarClock size={15} aria-hidden="true" />
+                          ) : value === "todo" ? (
+                            <CircleCheck size={15} aria-hidden="true" />
+                          ) : (
+                            <CalendarDays size={15} aria-hidden="true" />
+                          )}
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : view === "notes" ? (
+                    <div className={styles.rowActions} role="group" aria-label="Note filters">
+                      {(
+                        [
+                          ["all", "All notes & ideas"],
+                          ["note", "Notes"],
+                          ["idea", "Ideas"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`${styles.secondaryButton} ${styles.typeFilter}`}
+                          data-kind={value}
+                          aria-pressed={noteFilter === value}
+                          onClick={() => {
+                            setFocusedItem(null);
+                            setNoteFilter(value);
+                          }}
+                        >
+                          {value === "all" ? (
+                            <ListChecks size={15} aria-hidden="true" />
+                          ) : value === "note" ? (
+                            <FileText size={15} aria-hidden="true" />
+                          ) : (
+                            <Lightbulb size={15} aria-hidden="true" />
+                          )}
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className={styles.categoryControls}>
+                    {view !== "tasks" || taskFilter !== "events" ? (
+                      <label className={styles.categoryFilter}>
+                        Category
+                        <select
+                          aria-label="Category"
+                          value={categoryFilter ?? ""}
+                          onChange={(event) => {
+                            setFocusedItem(null);
+                            setCategoryFilter(event.target.value || null);
+                          }}
+                        >
+                          <option value="">All categories</option>
+                          {data.categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name} ({viewCategoryCount(category.id)})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={pending}
+                      aria-expanded={showCategoryManager}
+                      aria-controls="category-manager"
+                      onClick={() => setShowCategoryManager((value) => !value)}
+                    >
+                      <Settings2 size={15} aria-hidden="true" />
+                      Categories
+                    </button>
                   </div>
-                ) : null}
+                </div>
                 <label className={styles.searchLabel}>
                   Search
                   <span className={styles.searchField}>
@@ -1506,6 +1719,48 @@ export function DashboardShell({
                 <span className={styles.updated}>
                   Updated {formatDate(data.capturedAt, data.timezone)}
                 </span>
+                {showCategoryManager ? (
+                  <div className={styles.categoryManager} id="category-manager">
+                    <div className={styles.categoryRows} role="list" aria-label="Category list">
+                      {data.categories.map((category) => (
+                        <div className={styles.categoryRow} key={category.id} role="listitem">
+                          <div className={styles.categoryRowInfo}>
+                            <strong>{category.name}</strong>
+                            <span>
+                              {createCategoryCount(category.id)}{" "}
+                              {createCategoryCount(category.id) === 1 ? "item" : "items"}
+                            </span>
+                          </div>
+                          {category.systemKey === "inbox" ? (
+                            <span className={styles.categoryDefault}>Default</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className={`${styles.secondaryButton} ${styles.categoryDeleteButton}`}
+                              aria-label={`Delete category ${category.name}`}
+                              disabled={pending}
+                              onClick={() => requestCategoryDeletion(category)}
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <form className={styles.categoryForm} onSubmit={submitCategory}>
+                      <label>
+                        New category
+                        <input name="name" required maxLength={100} />
+                      </label>
+                      <div>
+                        <button className={styles.primaryButton} disabled={pending} type="submit">
+                          Create
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {(view === "tasks" || view === "notes") && focusedItem ? (
@@ -1517,6 +1772,7 @@ export function DashboardShell({
                   onClick={() => {
                     setFocusedItem(null);
                     setTaskFilter("all");
+                    setNoteFilter("all");
                   }}
                 >
                   {view === "notes" ? "Show all notes & ideas" : "Show all tasks"}
@@ -1536,6 +1792,7 @@ export function DashboardShell({
             ) : null}
             {isAssistant ? (
               <AssistantChat
+                key={chatSessionId ?? "new-chat"}
                 onOpenItem={openSavedItem}
                 setup={assistantSetup}
                 messages={chat.messages}
@@ -1545,6 +1802,16 @@ export function DashboardShell({
                 voice={voice}
                 topic={chatTopic}
                 onClearTopic={clearTopic}
+                sessions={chatSessions}
+                sessionId={chatSessionId}
+                sessionLoading={!chatsReady || pending}
+                sessionBusy={chatBusy}
+                onNewSession={() => startTopic(null)}
+                onSwitchSession={switchChat}
+                onReloadSession={() => {
+                  if (chatSessionId) switchChat(chatSessionId);
+                }}
+                onDeleteSession={deleteChat}
                 onSend={(text) => void sendToEpi(text)}
               />
             ) : null}
@@ -1745,51 +2012,6 @@ export function DashboardShell({
                   </div>
                 ) : null}
               </div>
-            ) : view === "category" ? (
-              <div className={styles.categoryContents}>
-                <section>
-                  <h2 className={styles.sectionHeading}>Tasks</h2>
-                  <TaskList
-                    key={`${view}:${categoryFilter}:${deferredSearch}`}
-                    tasks={tasks}
-                    categories={data.categories}
-                    timezone={data.timezone}
-                    now={now}
-                    pending={pending}
-                    onComplete={(id) => requestTaskCompletion([id])}
-                    onCompleteMany={requestTaskCompletion}
-                    onReopen={(id) => perform(() => reopenDashboardTask(id))}
-                    onCancel={cancelListedTask}
-                    onSave={editTask}
-                    emptySearch={search}
-                    emptyLabel="No active tasks in this category"
-                    clearSearch={() => setSearch("")}
-                  />
-                </section>
-                <section>
-                  <h2 className={styles.sectionHeading}>Notes & ideas</h2>
-                  <NoteList
-                    notes={notes}
-                    categories={data.categories}
-                    timezone={data.timezone}
-                    pending={pending}
-                    onSave={editNote}
-                    onDelete={requestNoteDeletion}
-                  />
-                  {data.notesTruncated ? (
-                    <div className={styles.historyMore}>
-                      <button
-                        type="button"
-                        className={styles.secondaryButton}
-                        disabled={pending}
-                        onClick={loadMoreNotes}
-                      >
-                        {pending ? "Loading..." : "Load older notes"}
-                      </button>
-                    </div>
-                  ) : null}
-                </section>
-              </div>
             ) : isAssistant ? (
               <div className={styles.historyView}>
                 <h2 className={styles.sectionHeading}>Next up</h2>
@@ -1889,7 +2111,7 @@ export function DashboardShell({
     </div>
   );
   return (
-    <TopicContext.Provider value={chat.asking ? null : startTopic}>
+    <TopicContext.Provider value={chat.asking || pending || !chatsReady ? null : startTopic}>
       {workspace}
     </TopicContext.Provider>
   );
@@ -2777,32 +2999,24 @@ function NoteCard({
           )}
           {note.kind === "idea" ? "Idea" : "Note"}
         </span>
-        <time dateTime={note.createdAt}>{formatDate(note.createdAt, timezone)}</time>
-      </div>
-      {note.title ? <h2>{note.title}</h2> : null}
-      {note.kind === "idea" ? (
-        <>
-          <p className={styles.notePreview}>
-            {note.body
-              .split("\n")
-              .filter((line) => line.trim() && !line.startsWith("## "))
-              .join(" ")}
-          </p>
-          <IdeaBody body={note.body} />
-        </>
-      ) : (
-        <>
-          <p className={styles.notePreview}>{note.body}</p>
-          <details className={styles.recordDetails}>
-            <summary>Read full note</summary>
-            <p>{note.body}</p>
-          </details>
-        </>
-      )}
-      <div className={styles.noteFooter}>
-        <span>
+        <span className={styles.categoryChip}>
+          <Tag size={11} aria-hidden="true" />
           {categories.find((category) => category.id === note.categoryId)?.name ?? "Inbox"}
         </span>
+        <time dateTime={note.createdAt}>{formatDate(note.createdAt, timezone)}</time>
+      </div>
+      <h2>
+        {note.title ||
+          note.body
+            .split("\n")
+            .find((line) => line.trim())
+            ?.replace(/^#+\s*/, "")
+            .slice(0, 80) ||
+          "Untitled note"}
+      </h2>
+      <p className={styles.notePreview}>{recordPreview(note.body)}</p>
+      <IdeaBody body={note.body} {...(note.kind === "idea" ? {} : { label: "Note details" })} />
+      <div className={styles.noteFooter}>
         <div className={styles.rowActions}>
           <button
             type="button"

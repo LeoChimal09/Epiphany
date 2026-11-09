@@ -126,11 +126,22 @@ describe("dashboard views", () => {
         version: 1,
       },
     ];
-    expect(visibleTasks(tasks, "category", "", "inbox").map((item) => item.id)).toEqual([
-      "task-one",
-    ]);
+    expect(visibleTasks(tasks, "tasks", "", "inbox").map((item) => item.id)).toEqual(["task-one"]);
+    expect(
+      visibleTasks(
+        [
+          task({ id: "completed-inbox", status: "completed" }),
+          task({ id: "completed-school", status: "completed", categoryId: "school" }),
+        ],
+        "completed",
+        "",
+        "inbox",
+      ).map((item) => item.id),
+    ).toEqual(["completed-inbox"]);
     expect(visibleNotes(notes, "", "school")).toEqual([]);
     expect(visibleNotes(notes, "", "inbox")).toHaveLength(1);
+    expect(visibleNotes(notes, "", null, "idea")).toHaveLength(1);
+    expect(visibleNotes(notes, "", null, "note")).toEqual([]);
   });
 
   it("filters history by text, category, status, and date in the owner's timezone", () => {

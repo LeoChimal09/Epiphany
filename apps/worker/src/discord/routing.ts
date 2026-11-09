@@ -15,7 +15,7 @@ export type Route =
   // Not for Epi: other people, bots, and chatter in channels Epi was not addressed in.
   { action: "ignore" } | { action: "handle"; audience: "private" | "shared" };
 
-// Only the owner is ever answered. In a DM or the unseen Epiphany #assistant/#check-ins channels
+// Only the owner is ever answered. In a DM or the unseen Epiphany #assistant/#check-ins/#well-being channels
 // every message is for Epi; anywhere else Epi only answers when mentioned, as a shared audience.
 export function routeMessage(facts: MessageFacts): Route {
   if (facts.authorIsBot || facts.authorId !== facts.ownerId) return { action: "ignore" };
@@ -79,7 +79,7 @@ export function channelAnswerNotice(view: AnswerView, channelId: string, jumpUrl
 
 // Said when the owner mentions Epi somewhere other people could read. No model call, no records.
 export const SHARED_CHANNEL_REPLY =
-  "I keep your tasks private, so I only talk about them in a DM with me or in your private #assistant/#check-ins channels. Send me a DM and tell me you'd like your workspace set up, and I'll create it in this server.";
+  "I keep your tasks private, so I only talk about them in a DM with me or in your private #assistant/#check-ins/#well-being channels. Send me a DM and tell me you'd like your workspace set up, and I'll create it in this server.";
 
 // The one-time DM that tells the owner Epi joined a server and what happens next.
 export function workspaceOffer(serverName: string): string {
@@ -89,7 +89,7 @@ export function workspaceOffer(serverName: string): string {
 // DM sent after Epi sets up a server the owner owns on its own.
 export function workspaceCreatedMessage(serverName: string, created: readonly string[]): string {
   const list = created.map((name) => `#${name}`).join(", ");
-  return `Hi, it's Epi. I set up your private workspace in "${serverName}" (${list || "it was already mostly there"}). Only you and I can see it. You can talk to me in #assistant or #check-ins, or right here in this DM.`;
+  return `Hi, it's Epi. I set up your private workspace in "${serverName}" (${list || "it was already mostly there"}). Only you and I can see it. You can talk to me in #assistant, #check-ins, or #well-being, or right here in this DM.`;
 }
 
 // DM sent when automatic setup stopped. Says what Epi needs, never anything it did not do.

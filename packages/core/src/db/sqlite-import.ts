@@ -29,32 +29,37 @@ const SQLITE_INTEGER_MAX = (1n << 63n) - 1n;
 const SQLITE_MIGRATION_TABLE = "__epiphany_sqlite_migrations";
 
 function getTableMappings(): TableMapping[] {
-  return Object.entries(sqliteSchema).map(([schemaKey, targetTable]) => {
-    const sourceTable = (mysqlSchema as Record<string, unknown>)[schemaKey];
-    if (!sourceTable || typeof sourceTable !== "object") {
-      throw new Error(`The legacy MySQL schema is missing the ${schemaKey} table.`);
-    }
+  // Conversations were introduced after the MySQL cutover and have no legacy source.
+  return Object.entries(sqliteSchema)
+    .filter(([key]) => key !== "chatSessions")
+    .map(([schemaKey, targetTable]) => {
+      const sourceTable = (mysqlSchema as Record<string, unknown>)[schemaKey];
+      if (!sourceTable || typeof sourceTable !== "object") {
+        throw new Error(`The legacy MySQL schema is missing the ${schemaKey} table.`);
+      }
 
-    const sourceColumnDefinitions = Object.values(getTableColumns(sourceTable as DrizzleTable));
-    const sourceColumns = sourceColumnDefinitions.map((column) => column.name);
-    const sourceTypes = new Map(
-      sourceColumnDefinitions.map((column) => [
-        column.name,
-        column.getSQLType().toLowerCase() === "boolean"
-          ? "tinyint(1)"
-          : column.getSQLType().toLowerCase(),
-      ]),
-    );
-    const targetColumns = Object.values(getTableColumns(targetTable)).map((column) => column.name);
-    const name = getTableName(targetTable);
-    if (
-      sourceColumns.length !== targetColumns.length ||
-      sourceColumns.some((column, index) => column !== targetColumns[index])
-    ) {
-      throw new Error(`The SQLite and legacy MySQL schemas disagree for the ${name} table.`);
-    }
-    return { name, columns: targetColumns, sourceTypes };
-  });
+      const sourceColumnDefinitions = Object.values(getTableColumns(sourceTable as DrizzleTable));
+      const sourceColumns = sourceColumnDefinitions.map((column) => column.name);
+      const sourceTypes = new Map(
+        sourceColumnDefinitions.map((column) => [
+          column.name,
+          column.getSQLType().toLowerCase() === "boolean"
+            ? "tinyint(1)"
+            : column.getSQLType().toLowerCase(),
+        ]),
+      );
+      const targetColumns = Object.values(getTableColumns(targetTable)).map(
+        (column) => column.name,
+      );
+      const name = getTableName(targetTable);
+      if (
+        sourceColumns.length !== targetColumns.length ||
+        sourceColumns.some((column, index) => column !== targetColumns[index])
+      ) {
+        throw new Error(`The SQLite and legacy MySQL schemas disagree for the ${name} table.`);
+      }
+      return { name, columns: targetColumns, sourceTypes };
+    });
 }
 
 export function validateImportUrls(sourceUrl: string, destinationUrl: string): void {
@@ -195,20 +200,20 @@ async function validateCurrentSourceMigrations(
 }
 
 export async function assertFreshSqliteDestination(transaction: Transaction): Promise<void> {
-  const mappings = getTableMappings();
+  const tables = Object.values(sqliteSchema).map(getTableName);
   const objects = await transaction.execute(
     "SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'",
   );
   const names = new Set(objects.rows.map((row) => String(row.name)));
-  const expected = new Set([...mappings.map((table) => table.name), SQLITE_MIGRATION_TABLE]);
+  const expected = new Set([...tables, SQLITE_MIGRATION_TABLE]);
   const unexpected = [...names].filter((name) => !expected.has(name));
   if (unexpected.length > 0) {
     throw new Error(
       `The SQLite destination contains unrecognized objects (${unexpected.join(", ")}); refusing to import.`,
     );
   }
-  for (const table of mappings) {
-    if (!names.has(table.name)) {
+  for (const table of tables) {
+    if (!names.has(table)) {
       throw new Error(
         "The SQLite destination schema is not installed; run SQLite migrations first.",
       );
@@ -218,8 +223,8 @@ export async function assertFreshSqliteDestination(transaction: Transaction): Pr
     throw new Error("The SQLite destination schema is not installed; run SQLite migrations first.");
   }
 
-  for (const table of mappings) {
-    const result = await transaction.execute(`SELECT COUNT(*) AS count FROM "${table.name}"`);
+  for (const table of tables) {
+    const result = await transaction.execute(`SELECT COUNT(*) AS count FROM "${table}"`);
     if (Number(result.rows[0]?.count) !== 0) {
       throw new Error("The SQLite destination is not empty; refusing to import.");
     }

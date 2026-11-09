@@ -35,6 +35,12 @@ const SCHEMAS = {
   "tracking.paused": z.boolean(),
   "tracking.check_ins": z.boolean(),
   "voice.replies": z.boolean(),
+  "voice.check_ins": z
+    .object({ wellBeing: z.boolean(), reminders: z.boolean(), briefing: z.boolean().optional() })
+    .strict(),
+  "briefing.greeting": z
+    .object({ enabled: z.boolean(), address: z.string().trim().max(40).nullable() })
+    .strict(),
 } as const;
 
 export type SettableKey = keyof typeof SCHEMAS;

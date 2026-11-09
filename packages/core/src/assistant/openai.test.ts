@@ -38,6 +38,45 @@ const provider = (fetchImpl: () => Promise<Response>, caps = {}) =>
   });
 
 describe("OpenAI conversational adapter", () => {
+  it("fits a substantial selected-note list inside the default input cap without dropping entries", async () => {
+    const details = Array.from(
+      { length: 25 },
+      (_, index) => `- Item ${index + 1}: ${"details ".repeat(20)}`,
+    ).join("\n");
+    const fetchImpl = vi.fn(async () =>
+      completion({ tool_calls: [tool("append_note", { details })] }),
+    );
+    const result = await provider(fetchImpl, { maxInputTokens: 8000 }).interpret({
+      ...request,
+      message: details,
+      focusedRecord: { kind: "note", id: "note-1", title: "Gift list", details: "Original list" },
+    });
+    expect(result.intent).toMatchObject({ kind: "append_note", details: details.trim() });
+    const body = JSON.parse(
+      String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body),
+    );
+    expect(body.messages[0].content).toContain("editing conversation");
+    expect(body.messages[1].content).toContain("Item 25:");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a rewrite of a selected record whose details were truncated to fit", async () => {
+    const fetchImpl = vi.fn(async () =>
+      completion({ tool_calls: [tool("revise_note", { details: "### Short", log: "Organized" })] }),
+    );
+    const args = {
+      ...request,
+      focusedRecord: {
+        kind: "idea" as const,
+        id: "idea-1",
+        title: "Gift list",
+        details: "- Gift: details\n".repeat(3000),
+      },
+    };
+    const truncated = await provider(fetchImpl, { maxInputTokens: 8000 }).interpret(args);
+    expect(truncated).toMatchObject({ invalidAction: true });
+    const whole = await provider(fetchImpl).interpret(args);
+    expect(whole.intent).toMatchObject({ kind: "revise_note", details: "### Short" });
+  });
   it("returns free text without an action envelope and makes exactly one call", async () => {
     const text =
       "A neighborhood tool library could help people share equipment. How would returns work?";
@@ -144,7 +183,7 @@ describe("OpenAI conversational adapter", () => {
 
   it.each([
     tool("develop_idea", {}),
-    tool("develop_idea", { details: "x".repeat(501) }),
+    tool("develop_idea", { details: "x".repeat(10_001) }),
     tool("unknown_action", {}),
     tool("create_task", { title: "Return drill", due_date: "2026-02-30" }),
     tool("create_task", { title: "Return drill", ownerId: "other-owner" }),
@@ -200,7 +239,7 @@ describe("OpenAI conversational adapter", () => {
     expect(JSON.parse(String(cappedInit.body)).max_completion_tokens).toBe(321);
   });
 
-  it("fits accumulated context under the default cap without changing the current request or state", async () => {
+  it("fits accumulated context under a tight cap without changing the current request or state", async () => {
     const fetchImpl = vi.fn(async () => completion({ content: "Which workout do you mean?" }));
     const crowded: InterpretRequest = {
       ...request,
@@ -227,13 +266,13 @@ describe("OpenAI conversational adapter", () => {
       pending: "Confirm the current setting",
     };
     const before = structuredClone(crowded);
-    await provider(fetchImpl, { maxInputTokens: 8000 }).interpret(crowded);
+    await provider(fetchImpl, { maxInputTokens: 9000 }).interpret(crowded);
     const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     const content = body.messages[1].content;
     expect(
       Math.ceil((SYSTEM_PROMPT.length + JSON.stringify(body.tools).length + content.length) / 4),
-    ).toBeLessThanOrEqual(8000);
+    ).toBeLessThanOrEqual(9000);
     expect(JSON.parse(content)).toMatchObject({
       message: crowded.message,
       lastReminder: crowded.lastReminder,
@@ -246,7 +285,7 @@ describe("OpenAI conversational adapter", () => {
 
   it("rejects a truly oversized current message before dispatch and accepts the next short one", async () => {
     const fetchImpl = vi.fn(async () => completion({ content: "What should the note say?" }));
-    const capped = provider(fetchImpl, { maxInputTokens: 8000 });
+    const capped = provider(fetchImpl, { maxInputTokens: 9000 });
     await expect(
       capped.interpret({ ...request, message: "x".repeat(32_000) }),
     ).rejects.toMatchObject({ tooLarge: true });

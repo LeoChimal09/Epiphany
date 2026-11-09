@@ -812,6 +812,57 @@ describe.skipIf(!dbTestsEnabled)("secured services against SQLite", () => {
       await expect(confirmWith(proposal)).rejects.toMatchObject({ failure: "already_resolved" });
     });
 
+    it("deletes a category only after confirmation, moving its items to the Inbox", async () => {
+      const chem = await services.categories.create(owner, "Chemistry");
+      const task = await services.tasks.create(owner, { title: "Lab report", categoryId: chem.id });
+      const note = await services.notes.create(owner, {
+        body: "Titration notes",
+        kind: "note",
+        categoryId: chem.id,
+      });
+      const inbox = (await services.categories.list(owner)).find((c) => c.systemKey === "inbox")!;
+      await expect(
+        services.confirmations.propose(owner, {
+          action: "category.delete",
+          payload: { categoryId: inbox.id },
+        }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      await expect(
+        services.confirmations.propose(strangerOwner, {
+          action: "category.delete",
+          payload: { categoryId: chem.id },
+        }),
+      ).rejects.toThrow();
+      const proposal = await services.confirmations.propose(owner, {
+        action: "category.delete",
+        payload: { categoryId: chem.id },
+      });
+      expect(proposal.preview).toMatchObject({
+        summary: 'Delete the category "Chemistry"',
+        consequences: ["1 task and 1 note move to the Inbox.", "The category is removed."],
+      });
+      expect((await services.categories.list(owner)).map((c) => c.name)).toContain("Chemistry");
+      await confirmWith(proposal);
+      expect((await services.categories.list(owner)).map((c) => c.name)).toEqual(["Inbox"]);
+      expect((await services.tasks.get(owner, task.id)).categoryId).toBe(inbox.id);
+      expect((await services.notes.get(owner, note.id)).categoryId).toBe(inbox.id);
+      const history = (await handle.db.select().from(actionHistory)).filter(
+        (h) => h.entityId === chem.id,
+      );
+      expect(history.map((h) => h.action).sort()).toEqual(["category.create", "category.delete"]);
+    });
+
+    it("refuses a category deletion when its items changed after the preview", async () => {
+      const chem = await services.categories.create(owner, "Chemistry");
+      const proposal = await services.confirmations.propose(owner, {
+        action: "category.delete",
+        payload: { categoryId: chem.id },
+      });
+      await services.tasks.create(owner, { title: "Late addition", categoryId: chem.id });
+      await expect(confirmWith(proposal)).rejects.toBeInstanceOf(ConfirmationError);
+      expect((await services.categories.list(owner)).map((c) => c.name)).toContain("Chemistry");
+    });
+
     it("is valid until exactly ten minutes after it was proposed, then expires and executes nothing", async () => {
       const first = await noteAndProposal();
       const second = await noteAndProposal();

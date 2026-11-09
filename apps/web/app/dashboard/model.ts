@@ -36,7 +36,7 @@ export interface DashboardCategory {
 }
 
 export type DashboardView =
-  "assistant" | "today" | "week" | "tasks" | "completed" | "notes" | "category" | "history";
+  "assistant" | "today" | "week" | "tasks" | "completed" | "notes" | "history";
 
 export interface HistoryFilters {
   status: "all" | "open" | "completed";
@@ -47,6 +47,7 @@ export interface HistoryFilters {
 }
 
 export type TaskFilter = "all" | "planned" | "todo" | "events";
+export type NoteFilter = "all" | "note" | "idea";
 
 export interface DashboardData {
   tasks: DashboardTask[];
@@ -236,11 +237,13 @@ export function visibleNotes(
   notes: DashboardNote[],
   search: string,
   categoryId?: string | null,
+  kind: NoteFilter = "all",
 ): DashboardNote[] {
   const query = search.trim().toLocaleLowerCase();
   return notes.filter(
     (note) =>
       (!categoryId || note.categoryId === categoryId) &&
+      (kind === "all" || note.kind === kind) &&
       `${note.title ?? ""} ${note.body}`.toLocaleLowerCase().includes(query),
   );
 }

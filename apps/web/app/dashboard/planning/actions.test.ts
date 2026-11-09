@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VersionConflictError } from "@epiphany/core/services";
-import { saveLearningAllowance, saveLearningSetting, savePlanningSetting } from "./actions";
+import {
+  saveLearningAllowance,
+  saveLearningSetting,
+  savePlanningSetting,
+  saveGreetingSetting,
+  saveVoiceSettings,
+} from "./actions";
 
 const mocks = vi.hoisted(() => ({ context: vi.fn(), set: vi.fn(), revalidate: vi.fn() }));
 vi.mock("../server-data", () => ({ dashboardContext: mocks.context }));
@@ -134,5 +140,41 @@ describe("planning settings action", () => {
     } finally {
       log.mockRestore();
     }
+  });
+  it("saves the spoken-message checkboxes as voice.replies and voice.check_ins", async () => {
+    expect(
+      await saveVoiceSettings(
+        { replies: false, wellBeing: true, reminders: false, briefing: true },
+        { replies: 1, checkIns: undefined },
+      ),
+    ).toEqual({ ok: true, versions: { replies: 3, checkIns: 3 } });
+    expect(mocks.set.mock.calls).toEqual([
+      [principal, { key: "voice.replies", value: false, expectedVersion: 1, status: "confirmed" }],
+      [
+        principal,
+        {
+          key: "voice.check_ins",
+          value: { wellBeing: true, reminders: false, briefing: true },
+          expectedVersion: undefined,
+          status: "confirmed",
+        },
+      ],
+    ]);
+    expect(await saveVoiceSettings({ replies: "yes" } as never, {})).toMatchObject({ ok: false });
+  });
+  it("saves the morning greeting with a trimmed form of address", async () => {
+    expect(await saveGreetingSetting({ enabled: true, address: "  sir " }, 2)).toEqual({
+      ok: true,
+      version: 3,
+    });
+    expect(mocks.set).toHaveBeenCalledWith(principal, {
+      key: "briefing.greeting",
+      value: { enabled: true, address: "sir" },
+      expectedVersion: 2,
+      status: "confirmed",
+    });
+    expect(await saveGreetingSetting({ enabled: true, address: "x".repeat(41) }, 2)).toMatchObject({
+      ok: false,
+    });
   });
 });

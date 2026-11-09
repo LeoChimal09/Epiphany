@@ -10,9 +10,18 @@ instead of maintaining separate lists or memorizing commands.
 
 - **Capture and organize:** tasks, simple to-dos, notes, ideas, categories, and reviewable
   imports from pasted assignment lists.
+- **Categories:** filter Tasks, Done, and Notes by category from the toolbar, and create
+  or delete categories in the Categories panel (deleting asks first and moves its items
+  to the Inbox). Ask Epi files new items into a matching category, or saves them to the
+  Inbox and asks whether a close match fits, whether to make a new category, or to leave
+  them there. You can also ask Epi to create or delete a category.
 - **Discuss a record:** choose Ask Epi on a task, to-do, note, idea, or listed event to
   start a conversation with that item selected. Epi can also search saved records by
-  title or creation date and asks when matches are ambiguous.
+  title or creation date and asks when matches are ambiguous. Lists and new details
+  added while discussing a note or idea update that record without creating tasks.
+- **Keep conversations:** dashboard chats survive refresh. Switch recent conversations,
+  start a new one (an unused blank chat is reused), or delete ones you no longer need,
+  without opening another tab.
 - **Plan visually:** day, week, and month calendars with deadlines, appointments,
   work blocks, and availability based on routines and existing commitments.
 - **Keep plans current:** complete or cancel work without deleting history, move existing
@@ -84,8 +93,11 @@ Implemented code is not a claim that every hosted/provider integration has passe
 acceptance. Microsoft Calendar and broader adaptive planning remain unfinished;
 voice capabilities are optional and have separate setup and verification requirements.
 Record searches scan up to 1,000 records of each requested type and ask you to select
-an item in the dashboard if that limit is reached. Archived tasks are not searched. Conversations
-and selected topics are temporary and reset on refresh. Natural-language understanding
+an item in the dashboard if that limit is reached. Archived tasks are not searched.
+Dashboard chats keep the last 100 messages and selected topic for 90 days from creation;
+the selector shows the 50 most recently updated conversations. Expired transcripts are
+removed on the next conversation access. Discord's temporary context is unchanged.
+Natural-language understanding
 depends on the configured AI provider and may still require clarification.
 
 ```sh

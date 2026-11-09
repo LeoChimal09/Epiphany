@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectDatabase } from "./client";
 import { createTestDatabase } from "./test-support";
@@ -28,6 +29,56 @@ describe("SQLite migrations", () => {
     clients.push(client);
     return client;
   }
+
+  it("upgrades the preceding schema without changing existing tasks, notes, or preferences", async () => {
+    const folder = fs.mkdtempSync(path.join(tmpdir(), "epiphany-upgrade-"));
+    const source = fileURLToPath(new URL("../../drizzle-sqlite", import.meta.url));
+    const client = memoryClient();
+    try {
+      const journal = JSON.parse(
+        fs.readFileSync(path.join(source, "meta", "_journal.json"), "utf8"),
+      );
+      journal.entries = journal.entries.filter(
+        (entry: { tag: string }) => entry.tag !== "0002_fair_sleepwalker",
+      );
+      fs.mkdirSync(path.join(folder, "meta"));
+      fs.writeFileSync(path.join(folder, "meta", "_journal.json"), JSON.stringify(journal));
+      for (const entry of journal.entries)
+        fs.copyFileSync(
+          path.join(source, `${entry.tag}.sql`),
+          path.join(folder, `${entry.tag}.sql`),
+        );
+      await runSqliteMigrations(client, folder);
+      await client.execute("INSERT INTO owners (id, display_name) VALUES ('owner', 'Fixture')");
+      await client.execute(
+        "INSERT INTO categories (id, owner_id, name) VALUES ('inbox', 'owner', 'Inbox')",
+      );
+      await client.execute(
+        "INSERT INTO tasks (id, owner_id, category_id, title, task_type) VALUES ('task', 'owner', 'inbox', 'Keep task', 'todo')",
+      );
+      await client.execute(
+        "INSERT INTO notes (id, owner_id, category_id, body, kind) VALUES ('note', 'owner', 'inbox', 'Keep full note', 'note')",
+      );
+      await client.execute(
+        "INSERT INTO preferences (id, owner_id, pref_key, value) VALUES ('preference', 'owner', 'fixture', 'true')",
+      );
+      const tables = ["tasks", "notes", "preferences"];
+      const before = await Promise.all(
+        tables.map(async (table) => (await client.execute(`SELECT * FROM ${table}`)).rows),
+      );
+      expect(await runSqliteMigrations(client)).toEqual({ applied: ["0002_fair_sleepwalker"] });
+      expect(
+        await Promise.all(
+          tables.map(async (table) => (await client.execute(`SELECT * FROM ${table}`)).rows),
+        ),
+      ).toEqual(before);
+      expect((await client.execute("SELECT * FROM chat_sessions")).rows).toEqual([]);
+      expect(await runSqliteMigrations(client)).toEqual({ applied: [] });
+      expect((await getSqliteMigrationStatus(client)).pending).toEqual([]);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
 
   it("installs the generated schema once and reports a clean, idempotent status", async () => {
     const client = memoryClient();

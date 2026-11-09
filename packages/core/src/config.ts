@@ -320,7 +320,7 @@ const aiSchema = z.object({
     .min(1, "must be a number between 1 and 100")
     .max(100, "must be a number between 1 and 100")
     .default(80),
-  AI_MAX_INPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(8000),
+  AI_MAX_INPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(24000),
   AI_MAX_OUTPUT_TOKENS: positive("above zero").pipe(z.number().int()).default(4000),
   APP_TIMEZONE: sharedSchema.shape.APP_TIMEZONE,
 });

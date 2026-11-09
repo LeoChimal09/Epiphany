@@ -11,6 +11,8 @@ import {
   Timer,
   Footprints,
   BellRing,
+  Sun,
+  Volume2,
   type LucideIcon,
 } from "lucide-react";
 import type {
@@ -19,7 +21,14 @@ import type {
   TimeWindow,
   Weekday,
 } from "@epiphany/core/planning";
-import { saveLearningAllowance, saveLearningSetting, savePlanningSetting } from "./actions";
+import {
+  saveLearningAllowance,
+  saveLearningSetting,
+  savePlanningSetting,
+  saveGreetingSetting,
+  saveVoiceSettings,
+  type VoiceChoices,
+} from "./actions";
 import { clockSummary, DefaultEditor } from "./default-editor";
 import styles from "./settings.module.css";
 
@@ -118,16 +127,128 @@ function Section<T>({
   );
 }
 
+function voiceSummary(saved: VoiceChoices): string {
+  const parts = [
+    saved.replies && "replies",
+    saved.wellBeing && "well-being questions",
+    saved.reminders && "reminders",
+    saved.briefing && "briefing",
+  ].filter(Boolean);
+  return parts.length ? `Spoken · ${parts.join(", ")}` : "Text only";
+}
+
+function VoiceSettings({
+  value,
+  versions,
+}: {
+  value: VoiceChoices;
+  versions: { replies?: number; checkIns?: number };
+}) {
+  const [choices, setChoices] = useState(value);
+  const [saved, setSaved] = useState(versions);
+  const box = (key: keyof VoiceChoices, label: string) => (
+    <label>
+      <input
+        type="checkbox"
+        checked={choices[key]}
+        onChange={(event) => setChoices({ ...choices, [key]: event.target.checked })}
+      />{" "}
+      {label}
+    </label>
+  );
+  return (
+    <DefaultEditor
+      title="Spoken messages"
+      icon={Volume2}
+      value={choices}
+      summary={voiceSummary}
+      onReset={setChoices}
+      onSave={async (draft) => {
+        const result = await saveVoiceSettings(draft, saved);
+        if (result.ok) setSaved(result.versions);
+        return result;
+      }}
+    >
+      <p>Text is always sent first; ticked messages also get an audio clip in Discord.</p>
+      {box("replies", "Replies when I talk to Epi")}
+      {box("wellBeing", "Well-being questions")}
+      {box("reminders", "Reminders and check-ins")}
+      {box("briefing", "Morning briefing")}
+      <p>
+        Uses the voice budget. When it runs out, or voice is not set up, messages stay text only.
+      </p>
+    </DefaultEditor>
+  );
+}
+
+export function GreetingSettings({
+  value,
+  version,
+}: {
+  value: { enabled: boolean; address: string | null };
+  version?: number;
+}) {
+  const [enabled, setEnabled] = useState(value.enabled);
+  const [address, setAddress] = useState(value.address ?? "");
+  const [savedVersion, setSavedVersion] = useState(version);
+  return (
+    <DefaultEditor
+      title="Morning greeting"
+      icon={Sun}
+      value={{ enabled, address: address.trim() || null }}
+      summary={(saved) =>
+        saved.enabled
+          ? `On${saved.address ? ` · calls you "${saved.address}"` : ""}`
+          : "Off · briefing only"
+      }
+      onReset={(saved) => {
+        setEnabled(saved.enabled);
+        setAddress(saved.address ?? "");
+      }}
+      onSave={async (draft) => {
+        const result = await saveGreetingSetting(draft, savedVersion);
+        if (result.ok) setSavedVersion(result.version);
+        return result;
+      }}
+    >
+      <label>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />{" "}
+        Open the briefing with a personal &quot;how are we doing&quot; greeting
+      </label>
+      <label>
+        Call me{" "}
+        <input
+          value={address}
+          maxLength={40}
+          placeholder="sir"
+          onChange={(event) => setAddress(event.target.value)}
+        />
+      </label>
+      <p>
+        Epi writes it from your day and what it remembers about you; without AI it uses a simple
+        greeting. With learning allowed, your reply can teach Epi about you, and anything lasting is
+        kept only after you approve it.
+      </p>
+    </DefaultEditor>
+  );
+}
+
 export function PlanningSettings({
   preferences,
   versions,
   learning = { enabled: false, paused: false, insights: [] },
   notifications,
+  voice = { replies: false, wellBeing: false, reminders: false, briefing: false },
 }: {
   preferences: PlanningPreferences;
   versions: Record<string, number>;
   learning?: { enabled: boolean; paused: boolean; insights: string[]; checkIns?: boolean };
   notifications?: ReactNode;
+  voice?: VoiceChoices;
 }) {
   const [tab, setTab] = useState("routine");
   const tabsId = useId();
@@ -159,6 +280,7 @@ export function PlanningSettings({
             ["routine", "Routine", CalendarClock],
             ["notifications", "Notifications", BellRing],
             ["learning", "Learning", Brain],
+            ["voice", "Voice", Volume2],
           ] as const
         ).map(([key, label, Icon]) => (
           <button
@@ -179,6 +301,12 @@ export function PlanningSettings({
         aria-label="Notification defaults"
       >
         {notifications}
+      </section>
+      <section hidden={tab !== "voice"} id={`${tabsId}-voice`} aria-label="Voice defaults">
+        <VoiceSettings
+          value={voice}
+          versions={{ replies: versions["voice.replies"], checkIns: versions["voice.check_ins"] }}
+        />
       </section>
       <section hidden={tab !== "learning"} id={`${tabsId}-learning`} aria-label="Learning defaults">
         <Section

@@ -90,3 +90,84 @@ export async function savePlanningSetting(
     return { ok: false, error: "Settings could not be saved. Try again." };
   }
 }
+
+export interface VoiceChoices {
+  replies: boolean;
+  wellBeing: boolean;
+  reminders: boolean;
+  briefing: boolean;
+}
+
+// Saves which messages Epi also speaks: replies, well-being questions, and reminders/check-ins.
+export async function saveVoiceSettings(
+  choices: VoiceChoices,
+  versions: { replies?: number; checkIns?: number },
+): Promise<
+  { ok: true; versions: { replies: number; checkIns: number } } | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  if (
+    typeof choices?.replies !== "boolean" ||
+    typeof choices.wellBeing !== "boolean" ||
+    typeof choices.reminders !== "boolean" ||
+    typeof choices.briefing !== "boolean"
+  )
+    return { ok: false, error: "Invalid voice setting." };
+  try {
+    const replies = await services.preferences.set(principal, {
+      key: "voice.replies",
+      value: choices.replies,
+      status: "confirmed",
+      expectedVersion: versions.replies,
+    });
+    const checkIns = await services.preferences.set(principal, {
+      key: "voice.check_ins",
+      value: {
+        wellBeing: choices.wellBeing,
+        reminders: choices.reminders,
+        briefing: choices.briefing,
+      },
+      status: "confirmed",
+      expectedVersion: versions.checkIns,
+    });
+    revalidatePath("/dashboard/planning");
+    return { ok: true, versions: { replies: replies.version, checkIns: checkIns.version } };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof VersionConflictError
+          ? "Voice settings changed elsewhere. Reload before saving."
+          : "Voice settings could not be saved.",
+    };
+  }
+}
+
+// The morning briefing's Jarvis-style opener and how Epi addresses the owner in it ("sir").
+export async function saveGreetingSetting(
+  value: { enabled: boolean; address: string | null },
+  expectedVersion: number | undefined,
+): Promise<{ ok: true; version: number } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  const address = typeof value?.address === "string" ? value.address.trim() : null;
+  if (typeof value?.enabled !== "boolean" || (address !== null && address.length > 40))
+    return { ok: false, error: "Use a form of address up to 40 characters." };
+  try {
+    const saved = await services.preferences.set(principal, {
+      key: "briefing.greeting",
+      value: { enabled: value.enabled, address: address || null },
+      status: "confirmed",
+      expectedVersion,
+    });
+    revalidatePath("/dashboard/planning");
+    return { ok: true, version: saved.version };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof VersionConflictError
+          ? "Greeting settings changed elsewhere. Reload before saving."
+          : "Greeting settings could not be saved.",
+    };
+  }
+}

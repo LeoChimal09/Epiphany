@@ -6,6 +6,7 @@ const examples = {
   website_link: {},
   find_records: { search: "Garden", record_type: "note", event_date: "2026-10-23" },
   append_note: { reference: "Garden", details: "Grow herbs" },
+  revise_note: { details: "### Herbs\n- Basil", log: "Organized by plant" },
   list_tasks: { status: "completed", search: "library" },
   create_task: { title: "Return drill", due_date: "2026-10-23", due_time: "17:00" },
   create_event: {
@@ -19,6 +20,8 @@ const examples = {
   resume_idea: { reference: "Tool library" },
   capture: { items: [{ type: "idea", title: "Tool library", details: "Share tools" }] },
   recategorize: { target_id: "task-1", category: "Home" },
+  create_category: { category: "Fitness" },
+  delete_category: { category: "Fitness" },
   complete_task: { target_id: "task-1" },
   cancel_task: { reference: "Return drill" },
   update_task: { reference: "Return drill", task_type: "task", due_date: "2026-10-24" },
@@ -95,6 +98,12 @@ describe("minimal action tools", () => {
     const names = INTENT_KINDS.filter((kind) => !["respond", "clarify"].includes(kind)).sort();
     expect(Object.keys(examples).sort()).toEqual(names);
     expect(ACTION_TOOLS.map((entry) => entry.function.name).sort()).toEqual(names);
+  });
+
+  it("drops stray dated log headings from rewritten details", () => {
+    expect(
+      toolToIntent("revise_note", { details: "## 2026-11-06\n\n### Leo\n- OLED monitor" }),
+    ).toMatchObject({ kind: "revise_note", details: "### Leo\n- OLED monitor" });
   });
 
   it.each(Object.entries(examples))(

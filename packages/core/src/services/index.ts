@@ -72,6 +72,7 @@ import { assertPrincipal } from "./principal";
 import { createCalendarService, type CalendarServiceOptions } from "./calendar";
 import { z } from "zod";
 import { createEventSeries } from "./event-series";
+import { createChatSessions } from "./chat-sessions";
 
 export {
   AccessDeniedError,
@@ -131,6 +132,7 @@ export function createServices(db: Database, options: ServiceOptions = {}) {
 
   return {
     confirmations,
+    conversations: createChatSessions(db, clock),
 
     preferences: {
       async list(principal: unknown): Promise<Preference[]> {
