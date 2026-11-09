@@ -50,6 +50,8 @@ export type Intent =
       estimatedMinutes?: number;
       priority?: "minor" | "major";
       taskType?: "task" | "todo";
+      // A suggested category name; Epi files it only after an exact match or the owner's yes.
+      category?: string;
     }
   | {
       kind: "update_task";
@@ -101,7 +103,9 @@ export type Intent =
       title?: string;
       body: string;
       noteKind: "note" | "idea";
+      separate?: boolean;
       feedback?: string;
+      category?: string;
     }
   | {
       kind: "resume_idea";
@@ -109,6 +113,8 @@ export type Intent =
       targetId?: string;
     }
   | { kind: "append_note"; reference: string; targetId?: string; details: string }
+  // Rewrites the kept details of a note or idea; the dated update log is preserved.
+  | { kind: "revise_note"; reference: string; targetId?: string; details: string; log?: string }
   | {
       kind: "develop_idea";
       reference: string;
@@ -121,6 +127,9 @@ export type Intent =
   | { kind: "capture"; items: CaptureItem[]; omitted?: number }
   // Move an existing task or note to another category ("that's a chem thing", "put it in Work").
   | { kind: "recategorize"; reference: string; targetId?: string; category: string }
+  | { kind: "create_category"; category: string }
+  // Removing a category moves its items to the Inbox, after the owner confirms.
+  | { kind: "delete_category"; category: string }
   | { kind: "complete_task"; reference: string; targetId?: string }
   | { kind: "cancel_task"; reference: string; targetId?: string }
   | { kind: "delete_note"; reference: string; targetId?: string }
@@ -178,8 +187,11 @@ export const INTENT_KINDS = [
   "develop_idea",
   "resume_idea",
   "append_note",
+  "revise_note",
   "capture",
   "recategorize",
+  "create_category",
+  "delete_category",
   "complete_task",
   "cancel_task",
   "update_task",
@@ -257,6 +269,7 @@ export const intentWireSchema = z
     category: z.string().max(100).nullable(),
     explicit: z.boolean().nullable(),
     items: z.array(captureItemWireSchema).max(200).nullable(),
+    log: z.string().max(500).nullable().default(null),
   })
   .strict();
 
@@ -283,6 +296,19 @@ function date(value: string | null, label: string): DateKey | undefined {
     throw new IntentError(`${label} is not a valid date`);
   }
   return text;
+}
+
+// The application maintains the dated log; stray date headings copied into rewritten details are
+// dropped so the details never split into a second log. The log itself is always preserved.
+function revisedDetails(value: string): string {
+  const details = value
+    .split("\n")
+    .filter((line) => !/^\s*## \d{4}-\d{2}-\d{2}\s*$/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!details) throw new IntentError("details is required");
+  return details;
 }
 
 function need(value: string | null, label: string): string {
@@ -393,7 +419,13 @@ export function toIntent(raw: unknown): Intent {
           ...fields,
         };
       }
-      return { kind: "create_task", ...fields, title: need(wire.title, "title") };
+      const category = present(wire.category);
+      return {
+        kind: "create_task",
+        ...fields,
+        title: need(wire.title, "title"),
+        ...(category ? { category } : {}),
+      };
     }
     case "reschedule_event":
     case "move_work": {
@@ -476,9 +508,11 @@ export function toIntent(raw: unknown): Intent {
         ...(present(wire.title) ? { title: present(wire.title) } : {}),
         body: need(wire.details, "details"),
         noteKind: wire.note_kind ?? "note",
+        ...(wire.explicit ? { separate: true } : {}),
         ...(wire.note_kind === "idea" && present(wire.text)
           ? { feedback: present(wire.text) }
           : {}),
+        ...(present(wire.category) ? { category: present(wire.category) } : {}),
       };
     case "resume_idea":
       return {
@@ -493,6 +527,14 @@ export function toIntent(raw: unknown): Intent {
         ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
         details: need(wire.details, "details"),
       };
+    case "revise_note":
+      return {
+        kind: "revise_note",
+        reference: present(wire.reference) ?? "",
+        ...(present(wire.target_id) ? { targetId: present(wire.target_id) } : {}),
+        details: revisedDetails(need(wire.details, "details")),
+        ...(present(wire.log) ? { log: present(wire.log) } : {}),
+      };
     case "develop_idea": {
       const points = need(wire.details, "details")
         .split("\n")
@@ -503,9 +545,7 @@ export function toIntent(raw: unknown): Intent {
             .trim(),
         )
         .filter(Boolean);
-      if (points.length === 0 || points.length > 12 || points.some((point) => point.length > 500)) {
-        throw new IntentError("idea additions must be at most 12 points of 500 characters each");
-      }
+      if (points.length === 0) throw new IntentError("idea additions must not be empty");
       return {
         kind: "develop_idea",
         reference: present(wire.reference) ?? "",
@@ -533,6 +573,9 @@ export function toIntent(raw: unknown): Intent {
         category: need(wire.category, "category"),
       };
     }
+    case "create_category":
+    case "delete_category":
+      return { kind: wire.kind, category: need(wire.category, "category") };
     case "cancel_task":
     case "complete_task":
     case "reopen_task":

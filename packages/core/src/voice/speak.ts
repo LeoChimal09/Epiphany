@@ -13,6 +13,23 @@ export type SpeakResult =
       reason: "disabled" | "not_configured" | "budget" | "provider_error" | "empty";
     };
 
+// Which messages Epi starts are also spoken: well-being questions, reminders, the morning briefing.
+// Off by default.
+export interface SpokenCheckIns {
+  wellBeing: boolean;
+  reminders: boolean;
+  briefing: boolean;
+}
+
+export function parseSpokenCheckIns(value: unknown): SpokenCheckIns {
+  const v = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    wellBeing: v.wellBeing === true,
+    reminders: v.reminders === true,
+    briefing: v.briefing === true,
+  };
+}
+
 // Turns reply text into something worth saying aloud: formatting and links removed, capped.
 export function spokenText(text: string): string {
   const plain = text

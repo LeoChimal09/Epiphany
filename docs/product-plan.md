@@ -45,6 +45,7 @@ specific phrases to memorize.
 | `#priorities` | Deadlines, countdowns, preparation dates, and next actions. |
 | `#notes-and-ideas` | Epiphanies, notes, saved conversations, and transcripts. |
 | `#check-ins` | Reminders, acknowledgment requests, and response buttons. |
+| `#well-being` | Optional, occasional learning questions written from the owner's own records. |
 | `#activity-log` | Completions, cancellations, rescheduling, and undo information. |
 
 Keep overview messages updated rather than repeatedly posting full schedules.
@@ -194,9 +195,14 @@ automatically appended. This check uses owner-scoped retrieved ideas (including
 the active idea fetched fresh), not ordinary notes, and makes no success claim.
 Existing duplicate cards are not automatically merged or deleted.
 
-Idea details are collapsed by default in an accessible accordion, leaving the
-title, creation timestamp, and Edit control visible. Expand "Idea details" to
-read all dated sections and labeled bullets.
+A note or idea body has kept details (text before the first `## YYYY-MM-DD`
+heading) followed by a dated update log. The card shows two collapsed accordions,
+"Idea details" (or "Note details") and "Update log", leaving the title, creation
+timestamp, and Edit control visible. Additions go to today's log section; existing
+undated text stays as kept details. When the owner asks to organize or rewrite a
+selected record, Epi replaces only the kept details and logs the change; the
+dated log is always preserved. A rewrite much shorter than the details it replaces,
+or of a record whose text was truncated to fit the model request, is not saved.
 
 The active idea reference is owner-bound, and the body is re-read through shared services
 for each interpreted turn. Only a bounded excerpt is sent to the model. Duplicate

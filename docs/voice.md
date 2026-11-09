@@ -38,6 +38,12 @@ next to the text, which is always sent first. This does not need a voice channel
 then OpenAI speech, and only while the voice budget allows; any failure leaves the text reply as it is.
 Discord's native voice-message format is **not** promised: ordinary audio attachments are used.
 
+**Spoken check-ins.** Dashboard → Planning defaults → **Voice** has four checkboxes: replies
+(`voice.replies`), well-being questions, reminders/check-ins, and the morning briefing
+(`voice.check_ins`, all off by default). Ticked messages Epi starts are delivered as text first, then an mp3 clip in the same private
+channel, using the same providers and voice budget; any failure leaves the text alone. ElevenLabs is used
+only when both `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are set; otherwise OpenAI speech.
+
 ## Live voice in a server voice channel (Goal 22)
 
 Design reference: DiscordNPC's voice handler (join/leave, per-speaker buffers, silence-triggered

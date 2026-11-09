@@ -3,8 +3,10 @@ import { ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { parsePlanningPreferences } from "@epiphany/core/planning";
 import { parseReminderSettings } from "@epiphany/core/reminders";
 import { buildInsights } from "@epiphany/core/insights";
+import { parseMorningGreeting } from "@epiphany/core/assistant";
+import { parseSpokenCheckIns } from "@epiphany/core/voice";
 import { dashboardContext } from "../server-data";
-import { PlanningSettings } from "./settings";
+import { GreetingSettings, PlanningSettings } from "./settings";
 import { BriefingSettings, SplitReminderSettings } from "../reminders/settings";
 import styles from "./settings.module.css";
 
@@ -22,6 +24,9 @@ export default async function PlanningPage() {
   const paused = rows.some(
     (row) => row.key === "tracking.paused" && row.status === "confirmed" && row.value === true,
   );
+  const confirmed = (key: string) =>
+    rows.find((row) => row.key === key && row.status === "confirmed")?.value;
+  const spoken = parseSpokenCheckIns(confirmed("voice.check_ins"));
   const insights =
     enabled && !paused
       ? buildInsights(await services.insights.list(principal)).map((insight) => insight.text)
@@ -49,6 +54,7 @@ export default async function PlanningPage() {
               row.key === "tracking.check_ins" && row.status === "confirmed" && row.value === true,
           ),
         }}
+        voice={{ replies: confirmed("voice.replies") === true, ...spoken }}
         notifications={
           <>
             <p className={styles.groupNote}>
@@ -58,6 +64,10 @@ export default async function PlanningPage() {
               briefingTime={reminderSettings.briefingTime}
               timezone={timezone}
               version={versions["reminders.briefing_time"]}
+            />
+            <GreetingSettings
+              value={parseMorningGreeting(confirmed("briefing.greeting"))}
+              version={versions["briefing.greeting"]}
             />
             <SplitReminderSettings
               value={reminderSettings.splitReminders}

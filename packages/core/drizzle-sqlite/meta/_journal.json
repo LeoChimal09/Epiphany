@@ -15,6 +15,13 @@
       "when": 1793908509900,
       "tag": "0001_volatile_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794249854719,
+      "tag": "0002_fair_sleepwalker",
+      "breakpoints": true
     }
   ]
 }

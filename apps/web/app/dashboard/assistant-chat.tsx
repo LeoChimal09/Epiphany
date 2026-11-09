@@ -10,22 +10,17 @@ import {
   Lightbulb,
   ListChecks,
   Plus,
+  RotateCw,
   SendHorizontal,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
-import type { AssistantReply } from "@epiphany/core/assistant";
+import type { ChatMessage, ChatSessionSummary } from "@epiphany/core/assistant";
 import { PushToTalk, StopSpeaking, useSpokenReplies } from "./voice-controls";
 import styles from "./workspace.module.css";
 
-export interface ChatMessage {
-  id: number;
-  role: "user" | "epi";
-  text: string;
-  outcome?: AssistantReply["outcome"];
-  changed?: boolean;
-  links?: { label: string; href: string }[];
-}
+export type { ChatMessage } from "@epiphany/core/assistant";
 
 export type AssistantSetup = "ready" | "needs_key" | "misconfigured";
 
@@ -36,6 +31,16 @@ const SUGGESTIONS = [
   { text: "Idea: an app that tracks workouts against free time", icon: Lightbulb },
 ];
 const MAX_LENGTH = 8000;
+
+function shortDate(iso: string, timeZone: string) {
+  try {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone }).format(
+      new Date(iso),
+    );
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
 
 function SetupHelp({ setup }: { setup: Exclude<AssistantSetup, "ready"> }) {
   return (
@@ -123,6 +128,14 @@ export function AssistantChat({
   onClearTopic,
   onSend,
   onOpenItem,
+  sessions = [],
+  sessionId,
+  sessionLoading = false,
+  sessionBusy = false,
+  onNewSession,
+  onSwitchSession,
+  onReloadSession,
+  onDeleteSession,
 }: {
   setup: AssistantSetup;
   messages: ChatMessage[];
@@ -134,18 +147,31 @@ export function AssistantChat({
   onClearTopic?: () => void;
   onSend: (text: string) => void;
   onOpenItem: (href: string) => void;
+  sessions?: ChatSessionSummary[];
+  sessionId?: string | null;
+  sessionLoading?: boolean;
+  sessionBusy?: boolean;
+  onNewSession?: () => void;
+  onSwitchSession?: (id: string) => void;
+  onReloadSession?: () => void;
+  onDeleteSession?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const ready = setup === "ready";
+  const ready = setup === "ready" && !sessionLoading && !sessionBusy;
   const last = messages.at(-1);
   const awaitingConfirmation =
     !asking && last?.role === "epi" && last.outcome === "confirmation_needed";
 
   const lastEpi = messages.findLast((message) => message.role === "epi");
-  const speech = useSpokenReplies(voice.speak, lastEpi?.text ?? null, lastEpi?.id ?? 0);
+  const [restoredReplyId] = useState(lastEpi?.id ?? 0);
+  const speech = useSpokenReplies(
+    voice.speak && (lastEpi?.id ?? 0) > restoredReplyId,
+    lastEpi?.text ?? null,
+    lastEpi?.id ?? 0,
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -177,11 +203,80 @@ export function AssistantChat({
 
   return (
     <section className={styles.chat} aria-label="Ask Epi">
+      {onNewSession ? (
+        <div className={styles.chatSessions}>
+          <select
+            aria-label="Conversation"
+            value={sessionId ?? ""}
+            disabled={asking || sessionLoading}
+            onChange={(event) => onSwitchSession?.(event.target.value)}
+          >
+            {!sessionId ? <option value="">Start a conversation</option> : null}
+            {sessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                {session.title} · {shortDate(session.updatedAt, timezone)}
+              </option>
+            ))}
+          </select>
+          <div className={styles.chatSessionActions}>
+            <button
+              type="button"
+              className={styles.iconButton}
+              disabled={asking || sessionLoading}
+              onClick={onNewSession}
+              aria-label="New conversation"
+              title="New conversation"
+            >
+              <Plus size={16} aria-hidden="true" />
+            </button>
+            {sessionId ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  disabled={asking || sessionLoading}
+                  onClick={onReloadSession}
+                  aria-label="Reload conversation"
+                  title="Reload conversation"
+                >
+                  <RotateCw size={15} aria-hidden="true" />
+                </button>
+                {onDeleteSession ? (
+                  <button
+                    type="button"
+                    className={`${styles.iconButton} ${styles.iconButtonDanger}`}
+                    disabled={asking || sessionLoading || sessionBusy}
+                    onClick={onDeleteSession}
+                    aria-label="Delete conversation"
+                    title="Delete conversation"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+          <p>Saved privately for 90 days.</p>
+        </div>
+      ) : null}
+      {sessionBusy ? (
+        <p role="status">
+          A request is in progress. Reload the conversation to retrieve its result; don&apos;t
+          resend it.
+        </p>
+      ) : null}
       {topic ? (
-        <div className={styles.selectionToolbar} role="status">
-          <span>
-            Talking about {topic.label}: <strong>{topic.title}</strong>
-          </span>
+        <div className={styles.chatTopic} role="status">
+          <div>
+            <span>Talking about {topic.label === "todo" ? "to-do" : topic.label}</span>
+            <strong>{topic.title}</strong>
+            {topic.label === "note" || topic.label === "idea" ? (
+              <p>
+                Send additions or a list to update this {topic.label}. Questions won&apos;t change
+                it.
+              </p>
+            ) : null}
+          </div>
           <button
             type="button"
             className={styles.secondaryButton}
@@ -192,7 +287,7 @@ export function AssistantChat({
           </button>
         </div>
       ) : null}
-      {ready ? null : <SetupHelp setup={setup} />}
+      {setup === "ready" ? null : <SetupHelp setup={setup} />}
       {budgetNote ? (
         <p className={styles.chatBudget} role="status">
           <CircleAlert size={14} aria-hidden="true" /> {budgetNote}
@@ -207,12 +302,14 @@ export function AssistantChat({
           <span className={styles.chatEmptyIcon} aria-hidden="true">
             <Sparkles size={26} />
           </span>
-          <h2>Just tell me what&apos;s on your mind</h2>
+          <h2>
+            {topic ? `What would you like to add or change?` : "Just tell me what's on your mind"}
+          </h2>
           <p>
             Write it the way you&apos;d say it. Epi uses your timezone ({timezone}) and tells you
             exactly what was saved.
           </p>
-          {ready ? (
+          {ready && !topic ? (
             <ul className={styles.suggestions} aria-label="Examples">
               {SUGGESTIONS.map(({ text, icon: Icon }) => (
                 <li key={text}>
@@ -266,7 +363,13 @@ export function AssistantChat({
           rows={2}
           disabled={!ready}
           placeholder={
-            ready ? "Write anything: a task, a note, or a question" : "Epi is not set up yet"
+            sessionLoading
+              ? "Loading conversation..."
+              : ready
+                ? topic
+                  ? `Add to this ${topic.label}, or ask a question`
+                  : "Write anything: a task, a note, or a question"
+                : "Epi is not set up yet"
           }
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={keyDown}

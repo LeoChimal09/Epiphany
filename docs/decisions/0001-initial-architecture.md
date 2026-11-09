@@ -144,7 +144,10 @@ packages/core Schema, migrations, repositories, domain services
 
 - Text AI: **$10/month**, warning at **80%**, new optional AI calls stopped at
   **100%**, resetting on the 1st of each month in America/Chicago.
-- Per-request caps: **8,000 input tokens and 1,000 output tokens**.
+- Per-request caps: **8,000 input tokens and 1,000 output tokens**. Amended
+  2026-11-09 (owner): the input default is **24,000**, because the fixed
+  instructions and action definitions alone use about 7,800 tokens, leaving almost
+  no room for records, history, or memories. The monthly cap still bounds spending.
 - Reserve estimated cost before dispatch, count retries, and also set a
   provider-side limit where OpenAI offers one. Never silently switch providers
   to bypass the cap. The cap does not cover hosting, database, or storage costs.

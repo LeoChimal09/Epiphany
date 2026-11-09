@@ -51,7 +51,8 @@ only when **confirmed** with that ID and hash, and only if all of these hold:
 - Confirming and executing happen in one transaction.
 
 A newer proposal for the same payload supersedes the older one, so a stale "yes" cannot approve
-it. Confirmable handlers include `note.delete`, `preference.delete`, `memory.clear`,
+it. Confirmable handlers include `note.delete`, `category.delete` (moves the category's
+tasks and notes to the Inbox; the Inbox itself can't be deleted), `preference.delete`, `memory.clear`,
 `event.reschedule` (one local timed occurrence), and `event.cancel_series`
 (one local occurrence or all scheduled occurrences).
 Recurring cancellation binds every affected event's ID/version and owner, retains

@@ -95,9 +95,20 @@ describe("intent parsing", () => {
       points: ["Track return dates", "Suggestion: start with a small trusted group"],
       feedback: "A return date would help. Would reminders be optional?",
     });
-    for (const details of [null, "", "x".repeat(501), Array(13).fill("point").join("\n")]) {
+    for (const details of [null, "", "x".repeat(10_001)]) {
       expect(() => toIntent(wire({ kind: "develop_idea", details }))).toThrow(IntentError);
     }
+    const points = Array.from(
+      { length: 30 },
+      (_, index) => `Gift ${index + 1}: ${"context ".repeat(80)}`,
+    );
+    const parsed = toIntent(
+      wire({ kind: "develop_idea", details: points.slice(0, 15).join("\n") }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "develop_idea",
+      points: points.slice(0, 15).map((point) => point.trim()),
+    });
   });
 
   it("parses each kind into a typed intent and drops unused fields", () => {

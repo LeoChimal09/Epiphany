@@ -3,11 +3,15 @@ import type { Database, Reminder } from "@epiphany/core/db";
 import { runReminderCycle, syncReminders } from "@epiphany/core/reminders";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReminderRunner, serverChannelDelivery } from "./reminders-discord";
-import { availableForLearningCheckIn, scheduleLearningCheckIn } from "./learning-check-ins";
+import { learningCheckInBlocker, scheduleLearningCheckIn } from "./learning-check-ins";
 
 const mocks = vi.hoisted(() => ({
   principal: vi.fn(),
   preferences: vi.fn(),
+}));
+vi.mock("@epiphany/core/overview", () => ({
+  loadOverviewData: vi.fn(async () => ({})),
+  renderBriefing: () => "Today: essay due.",
 }));
 vi.mock("@epiphany/core/services", () => ({
   resolveDiscordPrincipal: mocks.principal,
@@ -19,7 +23,7 @@ vi.mock("@epiphany/core/reminders", async (original) => ({
   runReminderCycle: vi.fn(),
 }));
 vi.mock("./learning-check-ins", () => ({
-  availableForLearningCheckIn: vi.fn(),
+  learningCheckInBlocker: vi.fn(),
   scheduleLearningCheckIn: vi.fn(),
 }));
 
@@ -80,11 +84,43 @@ describe("Discord reminder worker wiring (offline)", () => {
       }),
     );
     const cycle = vi.mocked(runReminderCycle).mock.calls[0]![0];
-    expect(cycle.onDelivered).toBe(onDelivered);
+    await cycle.onDelivered?.([{ id: "r1" } as Reminder], { channelId: "c1" });
+    expect(onDelivered).toHaveBeenCalledWith([{ id: "r1" }], { channelId: "c1" });
     expect(cycle.now).toBe(now);
     expect(await cycle.compose?.({ kind: "task_deadline" } as Reminder)).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
     runner.stop();
+  });
+
+  it("opens the briefing with the greeting and hands it on as a learning question", async () => {
+    mocks.preferences.mockResolvedValue([
+      { key: "briefing.greeting", value: { enabled: true, address: "sir" }, status: "confirmed" },
+      { key: "tracking.enabled", value: true, status: "confirmed" },
+    ]);
+    const onDelivered = vi.fn();
+    const composeMorningGreeting = vi.fn().mockResolvedValue(null);
+    await createReminderRunner({
+      client,
+      db,
+      ownerUserId: "fixture-owner-discord",
+      timezone: "America/Chicago",
+      clock: () => now,
+      composeMorningGreeting,
+      onDelivered,
+    }).run();
+    const cycle = vi.mocked(runReminderCycle).mock.calls[0]![0];
+    const briefing = { id: "b1", kind: "briefing" } as Reminder;
+    expect(await cycle.compose?.(briefing)).toBe(
+      "Good morning, sir. How are we doing today?\n\nToday: essay due.",
+    );
+    expect(composeMorningGreeting).toHaveBeenCalledWith(
+      expect.objectContaining({ address: "sir" }),
+    );
+    await cycle.onDelivered?.([briefing], { channelId: "c1" });
+    expect(onDelivered).toHaveBeenCalledWith([briefing], {
+      channelId: "c1",
+      learningQuestion: "Good morning, sir. How are we doing today?",
+    });
   });
 
   it("uses that same clock to honor a confirmed timed pause rather than the machine clock", async () => {
@@ -110,7 +146,7 @@ describe("Discord reminder worker wiring (offline)", () => {
   });
 
   it("rechecks proactive eligibility at delivery without restricting ordinary reminders", async () => {
-    vi.mocked(availableForLearningCheckIn).mockResolvedValue(false);
+    vi.mocked(learningCheckInBlocker).mockResolvedValue("no_free_30_minutes");
     const runner = createReminderRunner({
       client,
       db,
@@ -126,7 +162,7 @@ describe("Discord reminder worker wiring (offline)", () => {
     expect(
       await eligible({ message: "Optional Epi check-in: Question", dueAt: now } as Reminder),
     ).toBe(false);
-    vi.mocked(availableForLearningCheckIn).mockResolvedValue(true);
+    vi.mocked(learningCheckInBlocker).mockResolvedValue(null);
     expect(
       await eligible({ message: "Optional Epi check-in: Question", dueAt: now } as Reminder),
     ).toBe(true);
@@ -180,7 +216,9 @@ describe("Discord reminder worker wiring (offline)", () => {
 
     await runner.run();
 
-    expect(JSON.parse(output.mock.calls[0]![0] as string)).toMatchObject({
+    const lines = output.mock.calls.map((call) => JSON.parse(call[0] as string));
+    expect(lines[0]).toMatchObject({ event: "learning_check_in", status: "ai_not_configured" });
+    expect(lines.find((line) => line.event === "reminder_cycle_failed")).toMatchObject({
       event: "reminder_cycle_failed",
       errorName: "Error",
       errorCode: "ECONNREFUSED",
@@ -223,7 +261,7 @@ describe("Discord reminder worker wiring (offline)", () => {
 
     expect(
       await serverChannelDelivery(serverClient, "fixture-owner-discord").send("Reminder", [
-        { id: "00000000-0000-4000-8000-000000000001" } as Reminder,
+        { id: "00000000-0000-4000-8000-000000000001", message: "Reminder" } as Reminder,
       ]),
     ).toEqual({
       ok: true,
@@ -236,6 +274,81 @@ describe("Discord reminder worker wiring (offline)", () => {
       allowedMentions: { parse: [], users: ["fixture-owner-discord"] },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("sends learning questions to #well-being, or #check-ins when that channel does not exist yet", async () => {
+    const everyone = { id: "everyone" };
+    const bot = { id: "fixture-bot" };
+    const privateChannel = (name: string) => ({
+      id: `private-${name}`,
+      name,
+      type: ChannelType.GuildText,
+      parent: { name: "epiphany" },
+      permissionsFor: (subject: unknown) => ({
+        has: (permission: bigint) =>
+          subject === everyone
+            ? false
+            : subject === bot && permission === PermissionFlagsBits.SendMessages,
+      }),
+      send: vi.fn().mockResolvedValue({ channelId: `private-${name}` }),
+    });
+    const owner = { permissionsIn: () => ({ has: () => true }) };
+    const client = (channels: unknown[]) =>
+      ({
+        user: bot,
+        guilds: {
+          cache: {
+            values: () => [
+              {
+                channels: { fetch: vi.fn().mockResolvedValue(channels) },
+                members: { fetch: vi.fn().mockResolvedValue(owner) },
+                roles: { everyone },
+              },
+            ],
+          },
+        },
+      }) as unknown as Client;
+    const question = {
+      id: "00000000-0000-4000-8000-000000000002",
+      message: "Optional Epi check-in: How is the week feeling?",
+    } as Reminder;
+    const checkIns = privateChannel("check-ins");
+    const wellBeing = privateChannel("well-being");
+    const both = client([checkIns, wellBeing]);
+    expect(await serverChannelDelivery(both, "owner").send("Q", [question])).toEqual({
+      ok: true,
+      channelId: "private-well-being",
+    });
+    expect(
+      await serverChannelDelivery(both, "owner").send("Due", [
+        { id: question.id, message: "Heads up" } as Reminder,
+      ]),
+    ).toEqual({ ok: true, channelId: "private-check-ins" });
+    expect(await serverChannelDelivery(client([checkIns]), "owner").send("Q", [question])).toEqual({
+      ok: true,
+      channelId: "private-check-ins",
+    });
+
+    // Spoken check-ins: text first, then the clip; no clip or a failing voice keeps the text.
+    wellBeing.send.mockClear();
+    const speak = vi
+      .fn()
+      .mockResolvedValueOnce(new Uint8Array([1, 2]))
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("voice down"));
+    const spoken = serverChannelDelivery(both, "owner", speak);
+    expect(await spoken.send(question.message, [question])).toMatchObject({ ok: true });
+    expect(speak).toHaveBeenLastCalledWith("How is the week feeling?", "well-being");
+    expect(wellBeing.send).toHaveBeenCalledTimes(2);
+    expect(wellBeing.send.mock.calls[1]![0]).toMatchObject({
+      files: [{ name: "epi-check-in.mp3" }],
+    });
+    checkIns.send.mockClear();
+    const due = [{ id: question.id, message: "Heads up" } as Reminder];
+    expect(await spoken.send("Due", due)).toMatchObject({ ok: true });
+    expect(speak).toHaveBeenLastCalledWith("Due", "reminder");
+    expect(await spoken.send("Due", due)).toMatchObject({ ok: true });
+    expect(checkIns.send).toHaveBeenCalledTimes(2);
   });
 
   it("does not send reminders to a public or look-alike channel", async () => {

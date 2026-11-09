@@ -22,6 +22,7 @@ export const WORKSPACE_TEXT_CHANNELS = [
   "priorities",
   "notes-and-ideas",
   "check-ins",
+  "well-being",
   "activity-log",
 ] as const;
 
@@ -175,7 +176,7 @@ async function runPlan(guild: WorkspaceGuildPort): Promise<WorkspaceApplyResult>
   return result;
 }
 
-// Personal conversation is private only in a DM or an owner-only assistant/check-ins channel under
+// Personal conversation is private only in a DM or an owner-only assistant/check-ins/well-being channel under
 // Epiphany. Anything else, including a look-alike channel in a public category, is shared.
 export function workspaceAudience(channel: {
   isDm: boolean;
@@ -185,7 +186,7 @@ export function workspaceAudience(channel: {
 }): "private" | "shared" {
   if (channel.isDm) return "private";
   const inWorkspace =
-    ["assistant", "check-ins"].includes(normalizedName(channel.name ?? "")) &&
+    ["assistant", "check-ins", "well-being"].includes(normalizedName(channel.name ?? "")) &&
     normalizedName(channel.parentName ?? "") === WORKSPACE_CATEGORY_NAME;
   return inWorkspace && channel.everyoneCanView === false ? "private" : "shared";
 }

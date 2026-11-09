@@ -69,6 +69,27 @@ export const categories = sqliteTable(
   ],
 );
 
+export const chatSessions = sqliteTable(
+  "chat_sessions",
+  {
+    id: id(),
+    ownerId: ownerId(),
+    title: text("title").notNull(),
+    data: text("data", { mode: "json" }).notNull(),
+    turnToken: text("turn_token"),
+    busyUntil: utc("busy_until"),
+    version: version(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    expiresAt: utc("expires_at").notNull(),
+  },
+  (t) => [
+    index("chat_sessions_owner_updated_idx").on(t.ownerId, t.updatedAt),
+    index("chat_sessions_expires_idx").on(t.expiresAt),
+    check("chat_sessions_data_json", sql`json_valid(${t.data})`),
+  ],
+);
+
 export const tasks = sqliteTable(
   "tasks",
   {
@@ -580,6 +601,7 @@ export const sqliteSchema = {
   actionHistory,
   confirmations,
   sessions,
+  chatSessions,
   aiUsage,
   reminders,
   discordOverviews,

@@ -53,7 +53,7 @@ const conversationStateSchema = z
       .nullable()
       .optional(),
     turns: z
-      .array(z.object({ role: z.enum(["user", "assistant"]), text: text(1000) }).strict())
+      .array(z.object({ role: z.enum(["user", "assistant"]), text: text(8000) }).strict())
       .max(8),
     listed: z
       .array(
@@ -115,6 +115,34 @@ const conversationStateSchema = z
               .strict(),
           )
           .max(6),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    pendingCategory: z
+      .object({
+        ownerId: text(64),
+        expiresAt: z.iso.datetime(),
+        groups: z
+          .array(
+            z
+              .object({
+                name: text(100).min(1),
+                matchId: text(64).optional(),
+                matchName: text(100).optional(),
+                items: z
+                  .array(
+                    z
+                      .object({ kind: z.enum(["task", "note"]), id: text(64), title: text(300) })
+                      .strict(),
+                  )
+                  .min(1)
+                  .max(MAX_CAPTURE_ITEMS),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(MAX_CAPTURE_ITEMS),
       })
       .strict()
       .nullable()

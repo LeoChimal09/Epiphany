@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../db/client";
-import { newId, NotFoundError, recordAction } from "../db/domain";
+import { ensureInbox, newId, NotFoundError, recordAction } from "../db/domain";
 import {
+  categories,
+  tasks,
   confirmations,
   calendarEventRefs,
   events,
@@ -96,6 +98,72 @@ const noteDelete: Executor<{ noteId: string }> = {
     return { deleted: "note", id: noteId };
   },
   scrub: () => ({ summary: "Deleted note (content removed)" }),
+};
+
+async function categoryForDelete(tx: Tx, ownerId: string, categoryId: string) {
+  const [row] = await tx
+    .select({ id: categories.id, name: categories.name, systemKey: categories.systemKey })
+    .from(categories)
+    .where(and(eq(categories.id, categoryId), eq(categories.ownerId, ownerId)));
+  if (!row) throw new NotFoundError("Category");
+  if (row.systemKey) throw new ValidationError(["The Inbox can't be deleted."]);
+  const [taskCount] = await tx
+    .select({ count: sql<number>`count(*)` })
+    .from(tasks)
+    .where(and(eq(tasks.ownerId, ownerId), eq(tasks.categoryId, categoryId)));
+  const [noteCount] = await tx
+    .select({ count: sql<number>`count(*)` })
+    .from(notes)
+    .where(and(eq(notes.ownerId, ownerId), eq(notes.categoryId, categoryId)));
+  return { ...row, tasks: Number(taskCount?.count ?? 0), notes: Number(noteCount?.count ?? 0) };
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+// Items are never deleted with their category: they move to the Inbox first.
+const categoryDelete: Executor<{ categoryId: string }> = {
+  schema: z.object({ categoryId: z.uuid() }).strict(),
+  async targets(tx, ownerId, { categoryId }) {
+    const row = await categoryForDelete(tx, ownerId, categoryId);
+    // Categories have no version; the item count changes if anything moves in or out.
+    return [{ entityType: "category", entityId: row.id, version: row.tasks + row.notes }];
+  },
+  async preview(tx, ownerId, { categoryId }) {
+    const row = await categoryForDelete(tx, ownerId, categoryId);
+    return {
+      summary: `Delete the category "${row.name}"`,
+      consequences: [
+        row.tasks + row.notes
+          ? `${plural(row.tasks, "task")} and ${plural(row.notes, "note")} move to the Inbox.`
+          : "It has no tasks or notes.",
+        "The category is removed.",
+      ],
+    };
+  },
+  async execute(tx, principal, { categoryId }, confirmationId, now) {
+    const row = await categoryForDelete(tx, principal.ownerId, categoryId);
+    const inbox = await ensureInbox(tx, principal.ownerId);
+    await tx
+      .update(tasks)
+      .set({ categoryId: inbox.id, updatedAt: now, version: sql`${tasks.version} + 1` })
+      .where(and(eq(tasks.ownerId, principal.ownerId), eq(tasks.categoryId, categoryId)));
+    await tx
+      .update(notes)
+      .set({ categoryId: inbox.id, updatedAt: now, version: sql`${notes.version} + 1` })
+      .where(and(eq(notes.ownerId, principal.ownerId), eq(notes.categoryId, categoryId)));
+    await tx
+      .delete(categories)
+      .where(and(eq(categories.id, categoryId), eq(categories.ownerId, principal.ownerId)));
+    await recordAction(tx, principal, {
+      action: "category.delete",
+      entityType: "category",
+      entityId: categoryId,
+      before: { name: row.name },
+      after: { movedTasks: row.tasks, movedNotes: row.notes, confirmationId },
+    });
+    return { deleted: "category", name: row.name, moved: row.tasks + row.notes };
+  },
+  scrub: (preview) => preview,
 };
 
 const preferenceDelete: Executor<{ key: string }> = {
@@ -384,6 +452,7 @@ const EXECUTORS: Partial<Record<ActionName, Executor<never>>> = {
   "event.cancel_series": eventCancellation as unknown as Executor<never>,
   "memory.clear": memoryClear as unknown as Executor<never>,
   "note.delete": noteDelete as unknown as Executor<never>,
+  "category.delete": categoryDelete as unknown as Executor<never>,
   "preference.delete": preferenceDelete as unknown as Executor<never>,
 };
 

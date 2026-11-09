@@ -158,14 +158,22 @@ updates remain pending until synchronization succeeds.
 
 Under **Planning defaults → Learning**, allow **Personal learning**, then separately enable
 **Discord check-ins → Allow Epi to message me first**. Both default off. Epi can then send
-an occasional question with an owner mention in private **#check-ins**, even when you
-have not started a conversation. These are not DMs; Discord/device notification settings
+an occasional well-being question with an owner mention in private **#well-being**
+(or **#check-ins** in a workspace set up before `#well-being` existed; ask Epi to set up
+your workspace again to add it), even when you have not started a conversation. These are not DMs; Discord/device notification settings
 still determine whether you receive a push.
 
 Questions have a shared minimum three-day gap across Discord and dashboard conversations.
-Twelve predefined topics cover things such as reply length, tone, focus, and helpful
-encouragement. Asked topics persist across restarts and are not repeated; when the set
-is exhausted, general questions stop. Completion-duration questions can still accompany
+When AI is configured, Epi writes each Discord question from your own current records (open
+tasks and due dates, the next week's events, recent note and idea titles, and approved
+memories). The goal is for Epi to get to know you as a person, so questions can be about
+anything: how you are really doing, people you care about, hobbies, tastes, values, habits,
+memories, or how you like to talk. It prefers things it does not already remember, never
+diagnoses or assumes, and avoids its last five questions. Every question can be skipped.
+That one call is checked against and recorded in the monthly AI budget, and only happens
+after the availability checks below pass. If the budget is spent, the call fails, or the
+output is not a plain question, Epi uses the next of twelve predefined topics (reply length,
+tone, focus, encouragement, and similar); asked topics persist and are not repeated. Completion-duration questions can still accompany
 work you explicitly finish, subject to the same cooldown. You can ignore any question.
 
 Before queuing and again before sending, Epi checks your saved routines and calendar
@@ -174,21 +182,29 @@ It avoids the hour after another delivered reminder and does not interrupt a pen
 conversation approval/question. This is a conservative availability estimate, **not**
 Discord presence monitoring or proof you are actually free. Stale questions are skipped,
 and ordinary daily reminder caps still apply. A reserved topic/cooldown is consumed even
-if delivery fails, avoiding repeated attempts to ask you the same thing. Outgoing questions
-need no extra AI call; interpreting an answer uses the normal configured, budgeted assistant.
+if delivery fails, avoiding repeated attempts to ask you the same thing. Interpreting an
+answer uses the normal configured, budgeted assistant.
 
 Reply directly to the marked question to recover its context after a restart. Its
 owner-bound answer context lasts 24 hours; questions appended to an active conversation
 last ten minutes. Duration reports feed estimates after at least three similar reports.
 Preference answers are proposed for your approval before becoming remembered facts.
-Approved communication preferences guide AI-generated replies toward your preferred
-tone and length, not an imitation of your identity, wording, or typos. Fixed greetings
+Epi mirrors your tone, slang, and phrasing from approved memories and your recent messages
+so it feels familiar, but never claims to be you. Sensitive details are kept only after you
+approve them. Fixed greetings
 and reminder templates remain fixed. Epi does not retrain a model or silently change
 planning hours from a remembered answer.
 
 Disable **Discord check-ins** to stop proactive questions; disabling personal learning
 stops both forms of learning questions and report use/collection. Existing reports and
 memories remain until explicitly forgotten. Silence never becomes an answer.
+
+**Morning greeting.** With the morning briefing on, Planning defaults → Notifications →
+**Morning greeting** opens it with a short, Jarvis-style "how are we doing" line, addressed the
+way you choose (for example "sir"). It is written from your day and approved memories with the
+normal AI budget, or falls back to "Good morning, sir. How are we doing today?". With personal
+learning allowed, a reply within 12 hours is treated as an answer to it, so anything lasting is
+still kept only after approval.
 
 ## If the bot is silent
 
@@ -203,6 +219,12 @@ The worker's logs say what is happening (Railway > `worker` > Deploy Logs):
   permission on Epi's role). `not_member`: Epi cannot see you in that server. `dm_failed`: your DMs
   from server members are off, so allow them. `not_owner` is followed by a `workspace_offer` line.
 - Replies like "its OpenAI key is not configured yet" mean the `worker` has no `OPENAI_API_KEY`.
+- No learning questions: the `learning_check_in` line's `status` says why, logged when it changes.
+  `not_allowed` (both Learning settings are not saved as allowed), `ai_not_configured`, `paused`,
+  `quiet_hours`, `recent_reminder` (another reminder within the hour), `no_free_30_minutes`,
+  `calendar_too_full`, `conversation_waiting` (Epi is waiting on your answer), `asked_recently` (the
+  three-day gap), `all_topics_asked`, or `queued`. `learning_check_in_dropped` means a queued question
+  was no longer a good moment at send time.
 - In a server channel Epi only answers a mention, and then only to point you to a DM. Setup is asked
   for in a DM.
 
@@ -226,7 +248,7 @@ is no command). Epi then:
 - looks only at servers it shares with you, so a stranger adding Epi to their server gets nothing;
 - asks which server if there is more than one, and tells you to invite it if there are none;
 - creates a private `epiphany` category with `assistant`, `today`, `schedule`, `priorities`,
-  `notes-and-ideas`, `check-ins` and `activity-log`, each hidden from `@everyone` and open only to you
+  `notes-and-ideas`, `check-ins`, `well-being` and `activity-log`, each hidden from `@everyone` and open only to you
   and Epi;
 - reuses what exists. Asking again creates nothing, and a deleted channel is recreated without touching
   the others. It never renames, moves, or deletes anything;

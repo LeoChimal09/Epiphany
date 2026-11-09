@@ -2,6 +2,12 @@ import { z } from "zod";
 import { ValidationError } from "./errors";
 import { recurrenceInput } from "../planning/recurrence";
 
+// Browsers submit textarea text with CRLF; store plain LF so dated log headings match.
+const noteBody = z
+  .string()
+  .transform((value) => value.replace(/\r\n?/g, "\n"))
+  .pipe(z.string().trim().min(1, "must not be empty").max(50_000));
+
 const id = z.uuid();
 const title = z.string().trim().min(1, "must not be empty").max(300);
 const optionalText = (max: number) => z.string().max(max).optional();
@@ -42,7 +48,7 @@ export const createTaskInput = z
 
 export const createNoteInput = z
   .object({
-    body: z.string().trim().min(1, "must not be empty").max(50_000),
+    body: noteBody,
     title: z.string().trim().max(300).optional(),
     kind: z.enum(["note", "idea"]).optional(),
     categoryId: id.optional(),
@@ -147,7 +153,7 @@ export const updateNoteInput = z
   .object({
     expectedVersion: version.optional(),
     title: clearableText(300).optional(),
-    body: z.string().trim().min(1, "must not be empty").max(50_000).optional(),
+    body: noteBody.optional(),
     kind: z.enum(["note", "idea"]).optional(),
     categoryId: id.optional(),
   })

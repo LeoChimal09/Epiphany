@@ -7,6 +7,9 @@ import {
   parseConversationState,
   type AssistantReply,
   type ConversationState,
+  type ChatSession,
+  type ChatSessionSummary,
+  type ChatTopic,
 } from "@epiphany/core/assistant";
 import {
   addDays,
@@ -38,6 +41,124 @@ import { askAssistant, assistantAvailability } from "./assistant-server";
 export type AskEpiResult =
   | { ok: true; reply: AssistantReply; state: ConversationState; budgetNote: string | null }
   | { ok: false; error: string };
+
+export async function loadDashboardChats(): Promise<
+  | { ok: true; sessions: ChatSessionSummary[]; session: ChatSession | null }
+  | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const sessions = await services.conversations.list(principal);
+    const session = sessions[0]
+      ? await services.conversations.get(principal, sessions[0].id)
+      : null;
+    return { ok: true, sessions, session };
+  } catch {
+    return {
+      ok: false,
+      error: "Conversations could not be loaded. Check database migrations and try again.",
+    };
+  }
+}
+
+export async function openDashboardChat(
+  id: string,
+): Promise<{ ok: true; session: ChatSession } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    return { ok: true, session: await services.conversations.get(principal, id) };
+  } catch {
+    return { ok: false, error: "This conversation is unavailable." };
+  }
+}
+
+export async function createDashboardChat(
+  topic: ChatTopic | null = null,
+): Promise<{ ok: true; session: ChatSession } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    return { ok: true, session: await services.conversations.create(principal, topic) };
+  } catch {
+    return {
+      ok: false,
+      error: "A conversation could not be started. Check database migrations and try again.",
+    };
+  }
+}
+
+export async function deleteDashboardChat(
+  id: string,
+): Promise<
+  | { ok: true; sessions: ChatSessionSummary[]; session: ChatSession | null }
+  | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  try {
+    await services.conversations.remove(principal, id);
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof VersionConflictError
+          ? "This conversation is busy. Wait for the reply, then delete it."
+          : "This conversation could not be deleted. Reload and try again.",
+    };
+  }
+  return loadDashboardChats();
+}
+
+export async function sendDashboardChat(
+  message: string,
+  id: string,
+): Promise<
+  | { ok: true; session: ChatSession; changed: boolean; budgetNote: string | null }
+  | { ok: false; error: string }
+> {
+  const { principal, services } = await dashboardContext();
+  let turn;
+  try {
+    turn = await services.conversations.claim(principal, id, message);
+  } catch {
+    return {
+      ok: false,
+      error: "This conversation is busy or unavailable. Reload it before sending again.",
+    };
+  }
+  try {
+    const result = await askEpi(message, turn.session.data.conversation);
+    const reply: AssistantReply = result.ok
+      ? result.reply
+      : { text: result.error, outcome: "uncertain", changed: false };
+    const messages = turn.session.data.messages;
+    const session = await services.conversations.finish(principal, id, turn.token, {
+      conversation: result.ok ? result.state : turn.session.data.conversation,
+      topic: reply.topic ?? turn.session.data.topic,
+      messages: [
+        ...messages.slice(-99),
+        {
+          id: (messages.at(-1)?.id ?? 0) + 1,
+          role: "epi",
+          text: reply.text,
+          outcome: reply.outcome,
+          changed: reply.changed,
+          links: reply.links,
+        },
+      ],
+    });
+    return {
+      ok: true,
+      session,
+      changed: reply.changed,
+      budgetNote: result.ok ? result.budgetNote : null,
+    };
+  } catch {
+    return {
+      ok: false,
+      error:
+        "The request could not be verified. Reload the conversation and check the saved record before retrying.",
+    };
+  }
+}
 
 export type DashboardResult =
   | {
@@ -132,7 +253,10 @@ export async function askEpi(message: string, state: unknown): Promise<AskEpiRes
       : { ok: false, error: "Epi is unavailable right now. Nothing was changed." };
   } catch {
     console.error(JSON.stringify({ service: "dashboard", event: "assistant_failed" }));
-    return { ok: false, error: "Epi couldn't answer just now. Nothing was changed." };
+    return {
+      ok: false,
+      error: "Epi couldn't verify the result. Check the saved record before retrying.",
+    };
   }
 }
 
@@ -340,6 +464,13 @@ export type NoteDeleteProposal = {
   summary: string;
 };
 
+export type CategoryDeleteProposal = {
+  confirmationId: string;
+  payloadHash: string;
+  summary: string;
+  consequences: string[];
+};
+
 export async function proposeDashboardNoteDeletion(
   noteId: string,
 ): Promise<{ ok: true; proposal: NoteDeleteProposal } | { ok: false; error: string }> {
@@ -389,6 +520,62 @@ export async function confirmDashboardNoteDeletion(
 }
 
 export async function cancelDashboardNoteDeletion(confirmationId: string): Promise<void> {
+  const { principal, services } = await dashboardContext();
+  await services.confirmations.cancel(principal, confirmationId);
+}
+
+export async function proposeDashboardCategoryDeletion(
+  categoryId: string,
+): Promise<{ ok: true; proposal: CategoryDeleteProposal } | { ok: false; error: string }> {
+  const { principal, services } = await dashboardContext();
+  try {
+    const proposal = await services.confirmations.propose(principal, {
+      action: "category.delete",
+      payload: { categoryId },
+    });
+    return {
+      ok: true,
+      proposal: {
+        confirmationId: proposal.confirmationId,
+        payloadHash: proposal.payloadHash,
+        summary: String(proposal.preview.summary),
+        consequences: Array.isArray(proposal.preview.consequences)
+          ? proposal.preview.consequences.map(String)
+          : [],
+      },
+    };
+  } catch (error) {
+    const result = failure(error);
+    return { ok: false, error: result.error };
+  }
+}
+
+export async function confirmDashboardCategoryDeletion(
+  proposal: CategoryDeleteProposal,
+): Promise<DashboardResult> {
+  const { principal, services } = await dashboardContext();
+  try {
+    await services.confirmations.confirm(principal, {
+      confirmationId: proposal.confirmationId,
+      payloadHash: proposal.payloadHash,
+    });
+    return {
+      ok: true,
+      message: "Category deleted. Its items moved to the Inbox.",
+      data: await loadDashboardData(),
+    };
+  } catch (error) {
+    if (error instanceof ConfirmationError)
+      return {
+        ok: false,
+        error:
+          "Deletion could not be confirmed. It may have expired or the category changed. Refresh and try again.",
+      };
+    return failure(error);
+  }
+}
+
+export async function cancelDashboardCategoryDeletion(confirmationId: string): Promise<void> {
   const { principal, services } = await dashboardContext();
   await services.confirmations.cancel(principal, confirmationId);
 }

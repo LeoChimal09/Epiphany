@@ -10,6 +10,8 @@ import {
 import { ConfigError, loadAiConfig, type AiConfig, type Env } from "@epiphany/core";
 import {
   createAssistant,
+  composeMorningGreeting,
+  composeWellBeingQuestion,
   createBudget,
   createDbUsageStore,
   createOpenAiProvider,
@@ -28,6 +30,7 @@ import {
   createProviderUsageStore,
   intakeMessage,
   loadVoiceConfig,
+  parseSpokenCheckIns,
   speakReply,
   transcribeAudio,
   type VoiceConfig,
@@ -241,6 +244,30 @@ export async function startDiscordGateway(
     });
   }
 
+  // Provider and budget for lines Epi writes on its own (well-being questions, morning greeting).
+  function scheduledAi(ownerId: string) {
+    if (!aiConfig?.enabled || !aiConfig.apiKey) return null;
+    return {
+      provider: createOpenAiProvider({
+        apiKey: aiConfig.apiKey,
+        model: aiConfig.model,
+        pricing: aiConfig.pricing,
+        maxInputTokens: aiConfig.maxInputTokens,
+        maxOutputTokens: aiConfig.maxOutputTokens,
+        ...(aiConfig.baseUrl ? { baseUrl: aiConfig.baseUrl } : {}),
+      }),
+      budget: createBudget(
+        {
+          monthlyLimitUsd: aiConfig.monthlyBudgetUsd,
+          warnPercent: aiConfig.warnPercent,
+          timezone: aiConfig.timezone,
+        },
+        createDbUsageStore(database.db, ownerId),
+        clock,
+      ),
+    };
+  }
+
   // Persistent reminders: independent of the model, safe to restart, delivered in private #check-ins.
   const reminderRunner = createReminderRunner({
     client,
@@ -249,6 +276,30 @@ export async function startDiscordGateway(
     timezone: options.timezone,
     clock,
     learningCheckIns: !!(aiConfig?.enabled && aiConfig.apiKey),
+    composeLearningQuestion: async ({ services, principal, now, recentQuestions }) => {
+      const ai = scheduledAi(principal.ownerId);
+      if (!ai) return null;
+      return composeWellBeingQuestion({
+        ...ai,
+        services,
+        principal,
+        now,
+        timezone: options.timezone,
+        recentQuestions,
+      });
+    },
+    composeMorningGreeting: async ({ services, principal, now, address }) => {
+      const ai = scheduledAi(principal.ownerId);
+      if (!ai) return null;
+      return composeMorningGreeting({
+        ...ai,
+        services,
+        principal,
+        now,
+        timezone: options.timezone,
+        address,
+      });
+    },
     canAskLearning: () =>
       ![...conversations.values()].some(
         (state) =>
@@ -257,15 +308,48 @@ export async function startDiscordGateway(
           state.pendingSetting ||
           state.pendingPlan ||
           state.pendingCapture ||
+          state.pendingCategory ||
           (state.learningQuestion &&
             Date.parse(state.learningQuestion.expiresAt) > clock().getTime()),
       ),
+    // Check-ins and well-being questions are spoken only when the owner ticked them in settings.
+    speakCheckIn: async (text, kind) => {
+      if (!voice) return null;
+      const principal = await resolveDiscordPrincipal(database.db, ownerUserId, {
+        audience: "private",
+        initiator: "assistant",
+      });
+      if (!principal) return null;
+      const chosen = parseSpokenCheckIns(
+        (await createServices(database.db, { clock }).preferences.get(principal, "voice.check_ins"))
+          ?.value,
+      );
+      const spoken = await speakReply({
+        text,
+        enabled:
+          kind === "well-being"
+            ? chosen.wellBeing
+            : kind === "briefing"
+              ? chosen.briefing
+              : chosen.reminders,
+        providers: [createElevenLabsSpeech(voice.speech), createOpenAiSpeech(voice.speech)],
+        budget: createBudget(
+          { ...voice.budget, timezone: options.timezone },
+          createProviderUsageStore(database.db, principal.ownerId, "voice"),
+          clock,
+        ),
+      });
+      return spoken.status === "audio" ? spoken.audio : null;
+    },
     // Replies to a reminder ("done", "snooze", "not going") are understood in its context: the
     // The private-channel conversation remembers which reminder and which task or event it was about.
-    onDelivered: (delivered, { channelId }) => {
+    onDelivered: (delivered, { channelId, learningQuestion }) => {
       if (!channelId) return;
       const state = conversations.get(channelId) ?? emptyConversation();
-      conversations.set(channelId, withDeliveredReminders(state, delivered, clock()));
+      conversations.set(
+        channelId,
+        withDeliveredReminders(state, delivered, clock(), learningQuestion),
+      );
     },
   });
   // Keeps the overview channels in step with the records, whichever side changed them.

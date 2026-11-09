@@ -69,11 +69,12 @@ export async function exportOwnerData(
   const tables: OwnerExport["tables"] = {};
   for (const { table, key } of await ownedTables(pool)) {
     const columns = (await tableColumns(pool, table)).filter(
-      (column) => !SECRET_COLUMN.test(column),
+      (column) =>
+        !SECRET_COLUMN.test(column) && !(table === "chat_sessions" && column === "busy_until"),
     );
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT ${columns.map((column) => `\`${column}\``).join(", ")} FROM \`${table}\` WHERE \`${key}\` = ?`,
-      [ownerId],
+      `SELECT ${columns.map((column) => `\`${column}\``).join(", ")} FROM \`${table}\` WHERE \`${key}\` = ?${table === "chat_sessions" ? " AND expires_at > ?" : ""}`,
+      table === "chat_sessions" ? [ownerId, now.getTime()] : [ownerId],
     );
     tables[table] = rows.map((row) =>
       Object.fromEntries(columns.map((column) => [column, encode(row[column])])),

@@ -1212,3 +1212,77 @@ after the current goal's completion criteria pass.
   and no live Discord/model acceptance, commit, push, or deployment was performed.
   Actual cost savings require the documented backed-up cutover and retiring old
   database/duplicate services only after verification; keep MySQL until then.
+
+- 2026-11-09, focused record editing and saved dashboard conversations
+  (owner-requested; local only): selected notes/ideas accept complete organized
+  lists, retain their actual type and existing content, and use concise save receipts
+  rather than automatic brainstorming or task/reminder questions. Removed the
+  twelve-point/500-character idea-addition limits while retaining validated message
+  and record bounds. Distinct labeled entries with the same value no longer disappear
+  during idea deduplication. Previous long messages remain available for follow-up
+  additions. Notes and ideas render safe headings/lists in collapsed details; expanded
+  bodies hide duplicate previews, and topic headers wrap long titles.
+  Added owner-only SQLite chat sessions with stored focus/context, recent-session
+  switching, New conversation, refresh restoration, and explicit reload of in-flight
+  turns. Claims serialize overlapping sends; interrupted actions are never replayed
+  automatically or reported as definitely unchanged. Chats expire after ninety days
+  from creation and are purged at next access; transcripts retain the last hundred
+  messages and the selector lists fifty recent chats. Backup exports preserve unexpired
+  transcripts without restoring execution leases. Discord context is unchanged.
+  Verification: `bun run check`, `bun run db:check`, isolated production Next build,
+  and all 1,332 enabled tests passed; ten optional integration cases were skipped.
+  Disposable SQLite verified clean installation, upgrade preservation, restart
+  restoration, owner isolation, turn conflicts/interruption, expiry cleanup, and
+  backup/restore. The verified repository-local database was privately backed up
+  using SQLite's snapshot operation, then additive migration `0002_fair_sleepwalker`
+  was applied; `db:status` reports no pending migrations. No existing planning
+  records were rewritten. No live-model/Discord or browser-interaction acceptance,
+  production migration, commit, push, deployment, or goal completion.
+
+- 2026-11-09, kept details and update log (owner-requested; local only): note and
+  idea cards separate kept details from the dated update log in two collapsed
+  dropdowns. New `revise_note` action rewrites only the kept details of a selected
+  record and logs the change; the log is always preserved, stray date headings are
+  stripped, and rewrites of truncated records or that shrink existing details below
+  40% are refused. A selected record is no longer refused when the model's reference
+  merely describes the change; only a reference naming a different saved record is.
+  Additions no longer wrap existing undated text under the creation date. Transient
+  provider failures (network, timeout, 429, 5xx) are retried once before reporting
+  unavailability. Verification: `bun run check` and the full test suite passed.
+  Read-only live-model probes against the local Black Friday idea confirmed
+  `revise_note` for "organize by sets" and for additions to an organized record;
+  nothing was saved by the probes. No commit, push, deployment, or goal completion.
+- 2026-11-09, conversation cleanup and record panels (owner-requested; local only):
+  the conversation bar is one compact row (selector with last-updated date, plus New,
+  Reload, and Delete icon buttons). Delete asks for confirmation, removes only the
+  owner's idle conversation (busy turns are refused), writes a `conversation.delete`
+  history entry, and opens the next recent chat. Starting a conversation reuses an
+  unused blank one instead of adding duplicate "New conversation" entries. Note and
+  idea "details" and "Update log" dropdowns render as bordered panels with chevrons,
+  a day-count badge, and tighter spacing. Verification: `bun run check` and the full
+  test suite. No browser screenshot (headless Chromium lacks system libraries here),
+  commit, push, deployment, or goal completion.
+- 2026-11-09, categories as filters and Epi-managed filing (owner-requested; local
+  only): categories moved out of the sidebar into a toolbar filter for Tasks, Done,
+  and Notes plus a Categories panel to create and delete them. New confirmable
+  `category.delete` (destructive permission) moves the category's tasks and notes to
+  the Inbox and refuses the Inbox or changes since the preview. Ask Epi accepts an
+  optional category on `create_task`, `create_note`, and capture items: a normalized
+  exact match files directly; a close or new name saves to the Inbox and asks
+  (yes, name another or new category, or no). New `create_category` and
+  `delete_category` actions; `recategorize` to an unknown category now offers it
+  instead of refusing. Verification: `bun run check` and the full test suite. No
+  browser check, live-model probe, commit, push, deployment, or goal completion.
+- 2026-11-09, #well-being questions from owner data (owner-requested; local only):
+  workspace setup adds a private `#well-being` channel (also a private conversation
+  channel); proactive learning questions go there, falling back to `#check-ins` for
+  older workspaces. When AI is configured, each question is written from the owner's
+  open tasks, next week's events, recent note/idea titles, and approved memories
+  after availability checks pass, budget-checked and recorded, avoiding the last five
+  questions; any failure falls back to the fixed topics. Per the owner, questions may be
+  personal (any part of their life) so Epi gets to know them, and replies mirror the
+  owner's tone, slang, and phrasing without claiming to be them; sensitive details are
+  still kept only with approval. The
+  worker logs `learning_check_in` status changes and `learning_check_in_dropped`.
+  Verification: `bun run check` and the full test suite. No live Discord or model
+  probe, commit, push, or deployment.

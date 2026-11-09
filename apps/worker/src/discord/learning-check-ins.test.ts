@@ -56,7 +56,12 @@ describe("private proactive learning questions", () => {
       principal,
       expect.objectContaining({
         key: "learning.last_question",
-        value: { day: "2026-11-04", at: now.toISOString(), asked: ["focus-time"] },
+        value: {
+          day: "2026-11-04",
+          at: now.toISOString(),
+          asked: ["focus-time"],
+          recent: ["When do you usually feel most ready for focused work?"],
+        },
       }),
     );
     expect(mocks.create).toHaveBeenCalledWith(
@@ -233,6 +238,64 @@ describe("private proactive learning questions", () => {
     expect(await availableForLearningCheckIn(services, principal, now, "America/Chicago")).toBe(
       false,
     );
+  });
+  it("reports why a question was not queued", async () => {
+    const tz = "America/Chicago";
+    expect(await scheduleLearningCheckIn(fixture().services, principal, now, tz)).toBe("queued");
+    const notAllowed = fixture();
+    notAllowed.rows.splice(1, 1);
+    expect(await scheduleLearningCheckIn(notAllowed.services, principal, now, tz)).toBe(
+      "not_allowed",
+    );
+    const recent = fixture();
+    recent.mocks.recent.mockResolvedValue([{ sentAt: new Date("2026-11-04T19:30:00Z") }]);
+    expect(await scheduleLearningCheckIn(recent.services, principal, now, tz)).toBe(
+      "recent_reminder",
+    );
+    const asked = fixture();
+    asked.mocks.get.mockResolvedValue({
+      version: 1,
+      value: { day: "2026-11-03", at: "2026-11-03T20:00:00Z", asked: [] },
+    });
+    expect(await scheduleLearningCheckIn(asked.services, principal, now, tz)).toBe(
+      "asked_recently",
+    );
+  });
+  it("asks a question written from the owner's records, falling back to a fixed topic", async () => {
+    const tz = "America/Chicago";
+    const written = fixture();
+    written.mocks.get.mockResolvedValue({
+      version: 2,
+      value: { asked: ["focus-time"], recent: ["Earlier question?"] },
+    });
+    const compose = vi.fn(async () => "With the Black Friday list growing, want help budgeting?");
+    expect(await scheduleLearningCheckIn(written.services, principal, now, tz, compose)).toBe(
+      "queued",
+    );
+    expect(compose).toHaveBeenCalledWith(["Earlier question?"]);
+    expect(written.mocks.set.mock.calls[0]![1].value).toMatchObject({
+      asked: ["focus-time"],
+      recent: ["Earlier question?", "With the Black Friday list growing, want help budgeting?"],
+    });
+    expect(written.mocks.create).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({
+        message: expect.stringContaining("With the Black Friday list growing"),
+      }),
+    );
+    const fallback = fixture();
+    await scheduleLearningCheckIn(fallback.services, principal, now, tz, async () => {
+      throw new Error("AI down");
+    });
+    expect(fallback.mocks.create).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({ message: expect.stringContaining("focused work") }),
+    );
+    const busy = fixture();
+    busy.mocks.recent.mockResolvedValue([{ sentAt: new Date("2026-11-04T19:30:00Z") }]);
+    const unused = vi.fn(async () => "Unused?");
+    await scheduleLearningCheckIn(busy.services, principal, now, tz, unused);
+    expect(unused).not.toHaveBeenCalled();
   });
   it("does not enqueue anything if reserving the topic conflicts", async () => {
     const { services, mocks } = fixture();

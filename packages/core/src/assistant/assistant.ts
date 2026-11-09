@@ -48,9 +48,10 @@ import {
 import { asksNotToSave } from "./nosave";
 import { routineIntent } from "./routine";
 import { listedEntryCount, parseCourseList } from "./intake";
-import { appendIdeaPoints } from "./idea-journal";
+import { appendIdeaPoints, reviseRecordBody, splitRecordBody } from "./idea-journal";
 import { ProviderOutputError, ProviderUnavailableError } from "./provider";
 import { plain } from "../overview";
+import { matchCategory } from "./category-match";
 import type { VoiceCapability, WorkspaceCapability, WorkspaceSetupResult } from "./workspace";
 import type {
   InterpretRequest,
@@ -119,6 +120,18 @@ export interface PendingCapture {
   expiresAt: string;
 }
 
+// Items Epi saved to the Inbox while asking which category they belong in.
+export interface PendingCategory {
+  ownerId: string;
+  expiresAt: string;
+  groups: {
+    name: string;
+    matchId?: string;
+    matchName?: string;
+    items: { kind: "task" | "note"; id: string; title: string }[];
+  }[];
+}
+
 export interface EventFocus {
   ownerId: string;
   ids: string[];
@@ -148,6 +161,7 @@ export interface ConversationState {
   pendingMemory?: PendingMemory | null;
   pendingSetting?: PendingSetting | null;
   pendingPlan?: PendingPlan | null;
+  pendingCategory?: PendingCategory | null;
   lastReminder?: LastReminder | null;
   listed: OpenTaskContext[];
   pending: PendingAction | null;
@@ -202,6 +216,8 @@ export interface AssistantOptions {
   // Only the Discord runtime can join a voice channel.
   voice?: VoiceCapability;
   clock?: () => Date;
+  // Pause before the single retry of a transient provider failure.
+  retryDelayMs?: number;
 }
 
 const dayLabel = (key: DateKey) => {
@@ -252,7 +268,13 @@ const taskContext = (task: Task, timezone: string): OpenTaskContext => ({
   estimatedMinutes: task.estimatedMinutes,
 });
 
-const noteTitle = (note: Note) => note.title?.trim() || note.body.trim().slice(0, 60);
+const noteTitle = (note: Note) =>
+  note.title?.trim() ||
+  note.body
+    .trim()
+    .split("\n")[0]!
+    .replace(/^#+\s*/, "")
+    .slice(0, 80);
 
 function numbered(items: string[]): string {
   return items.map((line, index) => `${index + 1}. ${line}`).join("\n");
@@ -331,6 +353,7 @@ function clearPending(state: ConversationState): ConversationState {
     pendingSetting: null,
     pendingPlan: null,
     pendingCapture: null,
+    pendingCategory: null,
   };
 }
 
@@ -372,6 +395,22 @@ export function createAssistant(options: AssistantOptions) {
   const { services, provider, budget, timezone, workspace, voice } = options;
   const websiteUrl = options.appUrl ? new URL("/dashboard", options.appUrl).href : null;
   const clock = options.clock ?? (() => new Date());
+  const retryDelayMs = options.retryDelayMs ?? 750;
+
+  // Interpreting has no side effects, so one retry after a network blip, timeout, rate limit, or
+  // server error is safe. Non-retryable and too-large failures are reported immediately.
+  async function interpretWithRetry(request: InterpretRequest) {
+    try {
+      return await provider.interpret(request);
+    } catch (error) {
+      if (!(error instanceof ProviderUnavailableError) || !error.retryable || error.tooLarge) {
+        throw error;
+      }
+      logFailure("interpret_retry", error);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      return provider.interpret(request);
+    }
+  }
 
   function finish(
     state: ConversationState,
@@ -381,8 +420,8 @@ export function createAssistant(options: AssistantOptions) {
   ) {
     const turns: Turn[] = [
       ...state.turns,
-      { role: "user" as const, text: userText.slice(0, 500) },
-      { role: "assistant" as const, text: reply.text.slice(0, 500) },
+      { role: "user" as const, text: userText.slice(0, MAX_MESSAGE_LENGTH) },
+      { role: "assistant" as const, text: reply.text.slice(0, 2000) },
     ].slice(-MAX_TURNS);
     // Only the change just made can be undone; anything said since forgets the older one.
     return { reply, state: { ...state, lastChange: null, ...patch, turns } };
@@ -450,11 +489,19 @@ export function createAssistant(options: AssistantOptions) {
         };
       }
 
-      const localIntent = routineIntent(userText);
+      const editingNote = state.focus?.kind === "note" || Boolean(state.activeIdea);
+      // A bare yes/no still answers Epi's category question while a note is open.
+      const answering = Boolean(state.pendingCategory) && !state.pending;
+      const routine = routineIntent(userText);
+      const localIntent =
+        editingNote && !(answering && (routine?.kind === "confirm" || routine?.kind === "decline"))
+          ? null
+          : routine;
       if (localIntent) return execute(principal, localIntent, [], []);
-      const courseList = asksNotToSave(userText)
-        ? null
-        : parseCourseList(userText, dateKeyOf(clock(), timezone));
+      const courseList =
+        editingNote || asksNotToSave(userText)
+          ? null
+          : parseCourseList(userText, dateKeyOf(clock(), timezone));
       if (courseList) return execute(principal, courseList, [], []);
 
       const status = await budget.check();
@@ -601,7 +648,11 @@ export function createAssistant(options: AssistantOptions) {
             });
           }
         }
-        if (state.activeIdea?.ownerId === principal.ownerId) {
+        if (
+          state.activeIdea?.ownerId === principal.ownerId &&
+          state.focus?.kind !== "task" &&
+          state.focus?.kind !== "event"
+        ) {
           try {
             const note = await services.notes.get(principal, state.activeIdea.noteId);
             if (note.kind === "idea") activeIdea = note;
@@ -673,7 +724,9 @@ export function createAssistant(options: AssistantOptions) {
               ? `Remember: ${state.pendingMemory.text}`
               : state.pendingPlan
                 ? "Schedule the proposed work blocks"
-                : null),
+                : state.pendingCategory
+                  ? pendingCategorySummary(state.pendingCategory)
+                  : null),
         memories,
         categories,
         activeIdea: activeIdea
@@ -690,7 +743,7 @@ export function createAssistant(options: AssistantOptions) {
 
       let intent: Intent;
       try {
-        const result = await provider.interpret(request);
+        const result = await interpretWithRetry(request);
         await budget.record(result.costUsd);
         if (result.invalidAction) {
           const warning =
@@ -747,7 +800,9 @@ export function createAssistant(options: AssistantOptions) {
         const base: ConversationState =
           intent.kind === "confirm" || intent.kind === "decline"
             ? { ...state }
-            : clearPending(state);
+            : intent.kind === "recategorize" || intent.kind === "create_category"
+              ? { ...clearPending(state), pendingCategory: state.pendingCategory ?? null }
+              : clearPending(state);
         if (intent.kind !== "find_records") base.searchResults = null;
         if (
           ![
@@ -758,6 +813,7 @@ export function createAssistant(options: AssistantOptions) {
             "respond",
             "clarify",
             "append_note",
+            "revise_note",
           ].includes(intent.kind)
         ) {
           base.activeIdea = null;
@@ -767,8 +823,7 @@ export function createAssistant(options: AssistantOptions) {
           const extracted =
             intent.kind === "capture"
               ? intent.items.length + (intent.omitted ?? 0)
-              : intent.kind === "create_task" ||
-                  (intent.kind === "create_note" && intent.noteKind !== "idea")
+              : intent.kind === "create_task"
                 ? 1
                 : undefined;
           if (count && extracted !== undefined && extracted < count && !asksNotToSave(userText)) {
@@ -1336,6 +1391,153 @@ export function createAssistant(options: AssistantOptions) {
     return due.getTime() - clock().getTime() >= 24 * 3_600_000;
   }
 
+  type CategoryRow = Awaited<ReturnType<Services["categories"]["list"]>>[number];
+  type CategoryItem = PendingCategory["groups"][number]["items"][number];
+
+  // An exact (or plural/case/punctuation) match files directly; anything else waits for the
+  // owner, so a guessed category never appears without their yes.
+  function pickCategory(categories: CategoryRow[], wanted: string | undefined) {
+    if (!wanted?.trim()) return { category: undefined, ask: undefined };
+    const found = matchCategory(wanted, categories);
+    if (found.kind === "exact") return { category: found.category, ask: undefined };
+    const ask: Omit<PendingCategory["groups"][number], "items"> =
+      found.kind === "similar"
+        ? { name: found.name, matchId: found.category.id, matchName: found.category.name }
+        : { name: found.name };
+    return { category: undefined, ask };
+  }
+
+  function categoryPending(
+    principal: Principal,
+    asks: { ask: Omit<PendingCategory["groups"][number], "items">; item: CategoryItem }[],
+  ): PendingCategory | null {
+    const groups: PendingCategory["groups"] = [];
+    for (const { ask, item } of asks) {
+      const same = groups.find((group) => group.name.toLowerCase() === ask.name.toLowerCase());
+      if (same) same.items.push(item);
+      else groups.push({ ...ask, items: [item] });
+    }
+    if (groups.length === 0) return null;
+    return {
+      ownerId: principal.ownerId,
+      expiresAt: new Date(clock().getTime() + CONFIRMATION_TTL_MS).toISOString(),
+      groups,
+    };
+  }
+
+  function categoryQuestion(pending: PendingCategory, where: "inbox" | "unchanged"): string {
+    const titles = (items: CategoryItem[]) =>
+      items.map((item) => `"${plain(item.title)}"`).join(", ");
+    const lines = pending.groups.map((group) =>
+      group.matchName
+        ? `${titles(group.items)} looks like your "${plain(group.matchName)}" category.`
+        : `${titles(group.items)} could go in a new "${plain(group.name)}" category.`,
+    );
+    const status =
+      where === "inbox" ? "For now it's in your Inbox." : "I haven't moved anything yet.";
+    const yes = pending.groups.every((group) => group.matchName)
+      ? "Say yes to use that category"
+      : pending.groups.some((group) => group.matchName)
+        ? "Say yes to use those categories"
+        : "Say yes to create it";
+    return `${lines.join(" ")} ${status} ${yes}, name a different or new category, or say no to ${where === "inbox" ? "keep it in the Inbox" : "leave it where it is"}.`;
+  }
+
+  function pendingCategorySummary(pending: PendingCategory): string {
+    return pending.groups
+      .map((group) =>
+        group.matchName
+          ? `Category choice: put ${group.items.map((item) => `"${item.title}"`).join(", ")} in the existing "${group.matchName}" category? yes = confirm; a category name = recategorize with that name; "make a new one" = create_category "${group.name}"; no = decline.`
+          : `Category choice: create a new "${group.name}" category for ${group.items.map((item) => `"${item.title}"`).join(", ")}? yes = confirm; another name = recategorize with that name; no = decline.`,
+      )
+      .join(" ")
+      .slice(0, 400);
+  }
+
+  function livePendingCategory(principal: Principal, state: ConversationState) {
+    const pending = state.pendingCategory;
+    if (!pending) return null;
+    if (pending.ownerId !== principal.ownerId) return null;
+    if (Date.parse(pending.expiresAt) <= clock().getTime()) return null;
+    return pending;
+  }
+
+  // Moves exact records, re-reading each one so a concurrent edit is never overwritten.
+  async function fileItems(
+    principal: Principal,
+    items: CategoryItem[],
+    category: { id: string; name: string },
+  ) {
+    const moved: CategoryItem[] = [];
+    for (const item of items) {
+      try {
+        if (item.kind === "task") {
+          const task = await services.tasks.get(principal, item.id);
+          if (task.categoryId !== category.id) {
+            await services.tasks.update(principal, task.id, {
+              categoryId: category.id,
+              expectedVersion: task.version,
+            });
+          }
+        } else {
+          const note = await services.notes.get(principal, item.id);
+          if (note.categoryId !== category.id) {
+            await services.notes.update(principal, note.id, {
+              categoryId: category.id,
+              expectedVersion: note.version,
+            });
+          }
+        }
+        moved.push(item);
+      } catch (error) {
+        logFailure("category_file_failed", error);
+      }
+    }
+    return moved;
+  }
+
+  async function findOrCreateCategory(principal: Principal, name: string) {
+    const categories = await services.categories.list(principal);
+    const found = matchCategory(name, categories);
+    if (found.kind === "exact") return { category: found.category, created: false };
+    return { category: await services.categories.create(principal, found.name), created: true };
+  }
+
+  async function settleCategory(
+    principal: Principal,
+    userText: string,
+    state: ConversationState,
+    pending: PendingCategory,
+    chosen: string | null,
+  ) {
+    const results: string[] = [];
+    let changed = false;
+    for (const group of pending.groups) {
+      let target: { category: { id: string; name: string }; created: boolean };
+      if (chosen) target = await findOrCreateCategory(principal, chosen);
+      else if (group.matchId && group.matchName)
+        target = { category: { id: group.matchId, name: group.matchName }, created: false };
+      else target = await findOrCreateCategory(principal, group.name);
+      const moved = await fileItems(principal, group.items, target.category);
+      changed ||= moved.length > 0 || target.created;
+      const missed = group.items.length - moved.length;
+      results.push(
+        `${target.created ? `I created "${plain(target.category.name)}" and` : "I"} filed ${moved.map((item) => `"${plain(item.title)}"`).join(", ") || "nothing"} there.${missed > 0 ? ` ${missed} item${missed === 1 ? "" : "s"} couldn't be moved; check your Inbox.` : ""}`,
+      );
+    }
+    return finish(
+      state,
+      userText,
+      { text: `Done. ${results.join(" ")}`, outcome: "completed", changed },
+      { pendingCategory: null },
+    );
+  }
+
+  function movedText(moved: unknown): string {
+    const count = Number(moved) || 0;
+    return count > 0 ? ` and moved its ${count} item${count === 1 ? "" : "s"} to your Inbox` : "";
+  }
+
   async function capture(
     principal: Principal,
     userText: string,
@@ -1348,7 +1550,8 @@ export function createAssistant(options: AssistantOptions) {
     sourceText: string = userText,
   ) {
     const categories = await services.categories.list(principal);
-    const byName = new Map(categories.map((category) => [category.name.toLowerCase(), category]));
+    const asks: { ask: Omit<PendingCategory["groups"][number], "items">; item: CategoryItem }[] =
+      [];
     const known = openTasks.map((task) => ({
       title: task.title,
       due: localDue(task, timezone),
@@ -1358,19 +1561,13 @@ export function createAssistant(options: AssistantOptions) {
 
     const savedTasks: { task: Task; category: string; flagged: string | null }[] = [];
     const savedNotes: { id: string; text: string; kind: "note" | "idea" }[] = [];
-    const remarks: string[] = [];
     const skipped: { title: string; existing: string }[] = [];
     const failed: string[] = [];
     const unverified: string[] = [];
 
     for (const item of items) {
-      const category = item.category ? byName.get(item.category.toLowerCase()) : undefined;
+      const { category, ask } = pickCategory(categories, item.category);
       const categoryName = category?.name ?? "Inbox";
-      if (item.category && !category) {
-        remarks.push(
-          `I don't have a "${item.category}" category, so "${item.title}" is in your Inbox.`,
-        );
-      }
 
       try {
         if (item.type === "task") {
@@ -1394,6 +1591,7 @@ export function createAssistant(options: AssistantOptions) {
             reviewNote: item.review ?? (!item.dueDate ? "no due date given" : undefined),
           });
           known.push({ title: task.title, due, details: task.details });
+          if (ask) asks.push({ ask, item: { kind: "task", id: task.id, title: task.title } });
           savedTasks.push({ task, category: categoryName, flagged: task.reviewNote });
         } else {
           const existing = knownNotes.find((title) => similarTitles(item.title, title));
@@ -1409,6 +1607,7 @@ export function createAssistant(options: AssistantOptions) {
             sourceRef,
           });
           knownNotes.push(noteTitle(note));
+          if (ask) asks.push({ ask, item: { kind: "note", id: note.id, title: noteTitle(note) } });
           savedNotes.push({ id: note.id, text: noteTitle(note), kind: note.kind });
         }
       } catch (error) {
@@ -1446,8 +1645,9 @@ export function createAssistant(options: AssistantOptions) {
         `**Needs review**\n${flagged.map(({ task }) => `• ${plain(task.title)} — ${plain(task.reviewNote ?? "missing details")}`).join("\n")}\nThese need a look. Tell me what's missing and I'll fix it.`,
       );
     }
-    if (remarks.length > 0) {
-      parts.push(`**Category notes**\n${remarks.map((remark) => `• ${plain(remark)}`).join("\n")}`);
+    const pendingCategory = categoryPending(principal, asks);
+    if (pendingCategory) {
+      parts.push(`**Category**\n${categoryQuestion(pendingCategory, "inbox")}`);
     }
     if (skipped.length > 0) {
       parts.push(
@@ -1505,6 +1705,7 @@ export function createAssistant(options: AssistantOptions) {
       {
         listed: savedTasks.slice(0, LIST_LINES).map(({ task }) => taskContext(task, timezone)),
         pending: null,
+        pendingCategory,
         activeIdea:
           savedNotes.filter((note) => note.kind === "idea").length === 1
             ? {
@@ -1527,15 +1728,51 @@ export function createAssistant(options: AssistantOptions) {
     const reply = (value: AssistantReply, patch?: Partial<ConversationState>) =>
       finish(state, userText, value, patch);
     const categories = await services.categories.list(principal);
-    const wanted = intent.category.trim().toLowerCase();
-    const category = categories.find((entry) => entry.name.toLowerCase() === wanted);
-    if (!category) {
-      return reply({
-        text: `I don't have a category called "${intent.category}". Your categories are ${categories.map((entry) => entry.name).join(", ")}. Which one should I use?`,
-        outcome: "clarification",
-        changed: false,
-      });
+    const choosing = livePendingCategory(principal, state);
+    if (choosing) {
+      // The owner is answering "which category?" for items Epi just saved.
+      const waiting = choosing.groups.flatMap((group) => group.items);
+      const reference = intent.reference.trim();
+      let chosen: CategoryItem[] | undefined =
+        !intent.targetId &&
+        (!reference ||
+          /^(?:it|that|this|them|those|these|all|both|everything|all of them|the (?:task|to-?do|note|idea|item)s?)$/i.test(
+            reference,
+          ))
+          ? waiting
+          : undefined;
+      if (!chosen) {
+        const found = resolveReference(
+          reference,
+          waiting.map(({ id, title }) => ({ id, title })),
+          intent.targetId ? { targetId: intent.targetId } : {},
+        );
+        const ids =
+          found.kind === "one"
+            ? [found.item.id]
+            : found.kind === "many"
+              ? found.items.map((item) => item.id)
+              : [];
+        if (ids.length) chosen = waiting.filter((item) => ids.includes(item.id));
+      }
+      if (chosen) {
+        return settleCategory(
+          principal,
+          userText,
+          state,
+          { ...choosing, groups: [{ name: intent.category, items: chosen }] },
+          intent.category,
+        );
+      }
     }
+    const { category, ask: suggestion } = pickCategory(categories, intent.category);
+    const askFirst = (item: CategoryItem) => {
+      const waiting = categoryPending(principal, [{ ask: suggestion!, item }])!;
+      return reply(
+        { text: categoryQuestion(waiting, "unchanged"), outcome: "clarification", changed: false },
+        { pendingCategory: waiting },
+      );
+    };
 
     const taskPool = openTasks.map((task) => ({ id: task.id, title: task.title }));
     const notePool = notes.map((note) => ({ id: note.id, title: noteTitle(note) }));
@@ -1569,6 +1806,7 @@ export function createAssistant(options: AssistantOptions) {
 
     if (foundTask.kind === "one") {
       const task = openTasks.find((entry) => entry.id === foundTask.item.id)!;
+      if (!category) return askFirst({ kind: "task", id: task.id, title: task.title });
       if (task.categoryId === category.id) {
         return reply({
           text: `"${task.title}" is already in ${category.name}, so I left it.`,
@@ -1601,6 +1839,7 @@ export function createAssistant(options: AssistantOptions) {
     }
     if (foundNote.kind === "one") {
       const note = notes.find((entry) => entry.id === foundNote.item.id)!;
+      if (!category) return askFirst({ kind: "note", id: note.id, title: noteTitle(note) });
       if (note.categoryId === category.id) {
         return reply({
           text: `"${noteTitle(note)}" is already in ${category.name}, so I left it.`,
@@ -1632,6 +1871,23 @@ export function createAssistant(options: AssistantOptions) {
     state: ConversationState,
     notes: Note[],
   ) {
+    if (intent.kind === "develop_idea" && state.focus?.kind === "note") {
+      return appendToNote(
+        principal,
+        userText,
+        {
+          kind: "append_note",
+          reference: intent.reference,
+          details: intent.points
+            .map((point) =>
+              /^#{1,4}\s/.test(point) ? point : `- ${point.replace(/^[-*•]\s+/, "")}`,
+            )
+            .join("\n"),
+        },
+        state,
+        notes,
+      );
+    }
     const ideas = notes.filter((note) => note.kind === "idea");
     const active =
       state.activeIdea?.ownerId === principal.ownerId
@@ -1682,7 +1938,6 @@ export function createAssistant(options: AssistantOptions) {
     const { body, additions } = appendIdeaPoints(
       idea.body,
       intent.points,
-      dateKeyOf(idea.createdAt, timezone),
       dateKeyOf(clock(), timezone),
     );
     const nextState = { activeIdea: { ownerId: principal.ownerId, noteId: idea.id } };
@@ -1708,9 +1963,10 @@ export function createAssistant(options: AssistantOptions) {
         state,
         userText,
         {
-          text: `I added these points to "${noteTitle(result.note)}":\n${additions.map((point) => `- ${point}`).join("\n")}${feedback || "\nWhat would you like to explore next?"}`,
+          text: `Added ${additions.length} point${additions.length === 1 ? "" : "s"} to "${noteTitle(result.note)}".${feedback}`,
           outcome: "created",
           changed: result.changed,
+          links: [savedItemLink(result.note.kind, result.note.id, noteTitle(result.note))],
         },
         nextState,
       );
@@ -1731,6 +1987,161 @@ export function createAssistant(options: AssistantOptions) {
         changed: false,
       });
     }
+  }
+
+  // The selected record stays the target unless the reference clearly names a different saved
+  // note or idea; a stray description ("organized by person") is not a different record.
+  async function noteTarget(
+    principal: Principal,
+    userText: string,
+    intent: { reference: string; targetId?: string },
+    state: ConversationState,
+    notes: Note[],
+  ): Promise<{ note: Note } | { done: ReturnType<typeof finish> }> {
+    const selected =
+      state.focus?.kind === "note" ? notes.find((note) => note.id === state.focus?.id) : undefined;
+    if (!selected && intent.targetId) {
+      try {
+        const target = await services.notes.get(principal, intent.targetId);
+        notes = [target, ...notes.filter((note) => note.id !== target.id)];
+      } catch {
+        return {
+          done: finish(state, userText, {
+            text: "That saved note or idea is unavailable. Nothing was changed.",
+            outcome: "not_found",
+            changed: false,
+          }),
+        };
+      }
+    }
+    if (selected) {
+      const reference = /^(?:(?:our|my|this|that|the)\s+)?(?:note|idea|topic|it|this|that)$/i.test(
+        intent.reference.trim(),
+      )
+        ? ""
+        : focusedReference(intent.reference, noteTitle(selected));
+      const asTitle = (note: Note) => ({ id: note.id, title: noteTitle(note) });
+      if (
+        reference.trim() &&
+        resolveReference(reference, [asTitle(selected)]).kind !== "one" &&
+        resolveReference(reference, notes.filter((note) => note.id !== selected.id).map(asTitle))
+          .kind === "one"
+      )
+        return {
+          done: finish(state, userText, {
+            text: `We are talking about "${noteTitle(selected)}". Open the other record with Ask Epi to update it instead. Nothing was changed.`,
+            outcome: "clarification",
+            changed: false,
+          }),
+        };
+      return { note: selected };
+    }
+    const found = resolveReference(
+      intent.reference,
+      notes.map((note) => ({ id: note.id, title: noteTitle(note) })),
+      intent.targetId ? { targetId: intent.targetId } : {},
+    );
+    if (found.kind !== "one")
+      return {
+        done: finish(state, userText, {
+          text:
+            found.kind === "many"
+              ? `Which saved note or idea?\n${numbered(found.items.slice(0, 5).map((item) => item.title))}`
+              : "Which saved note or idea should I update? Nothing was changed.",
+          outcome: "clarification",
+          changed: false,
+        }),
+      };
+    return { note: notes.find((row) => row.id === found.item.id)! };
+  }
+
+  async function saveNoteBody(
+    principal: Principal,
+    userText: string,
+    state: ConversationState,
+    note: Note,
+    body: string,
+  ) {
+    try {
+      const result = await services.notes.update(principal, note.id, {
+        body,
+        expectedVersion: note.version,
+      });
+      return finish(state, userText, {
+        text: `Updated ${note.kind} "${noteTitle(result.note)}".`,
+        outcome: "completed",
+        changed: result.changed,
+        links: [savedItemLink(note.kind, note.id, noteTitle(result.note))],
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      return finish(state, userText, {
+        text:
+          error instanceof VersionConflictError
+            ? "This record changed while we were talking. I didn't overwrite it. Send your changes again."
+            : "I couldn't verify whether the changes were saved. Open the record before retrying.",
+        outcome: error instanceof VersionConflictError ? "failed" : "uncertain",
+        changed: false,
+      });
+    }
+  }
+
+  async function reviseNote(
+    principal: Principal,
+    userText: string,
+    intent: Extract<Intent, { kind: "revise_note" }>,
+    state: ConversationState,
+    notes: Note[],
+  ) {
+    const target = await noteTarget(principal, userText, intent, state, notes);
+    if ("done" in target) return target.done;
+    const note = target.note;
+    // The dated log is always kept; a rewrite much shorter than the details it replaces has
+    // probably dropped content.
+    const { details } = splitRecordBody(note.body);
+    if (details.length > 200 && intent.details.trim().length < details.length * 0.4)
+      return finish(state, userText, {
+        text: `That rewrite would drop much of what's in "${noteTitle(note)}", so I didn't save it. Nothing was changed. Tell me what to remove, or ask me to add instead.`,
+        outcome: "failed",
+        changed: false,
+      });
+    const body = reviseRecordBody(
+      note.body,
+      intent.details,
+      intent.log ?? "Updated details",
+      dateKeyOf(clock(), timezone),
+    );
+    if (body === note.body)
+      return finish(state, userText, {
+        text: `"${noteTitle(note)}" already reads that way; nothing was changed.`,
+        outcome: "answered",
+        changed: false,
+      });
+    return saveNoteBody(principal, userText, state, note, body);
+  }
+
+  async function appendToNote(
+    principal: Principal,
+    userText: string,
+    intent: Extract<Intent, { kind: "append_note" }>,
+    state: ConversationState,
+    notes: Note[],
+  ) {
+    const target = await noteTarget(principal, userText, intent, state, notes);
+    if ("done" in target) return target.done;
+    const note = target.note;
+    const points = intent.details.split("\n").filter((line) => line.trim());
+    const addition =
+      note.kind === "idea"
+        ? appendIdeaPoints(note.body, points, dateKeyOf(clock(), timezone))
+        : { body: `${note.body.trimEnd()}\n\n${intent.details.trim()}`, additions: points };
+    if (!addition.additions.length)
+      return finish(state, userText, {
+        text: `Those points are already in "${noteTitle(note)}"; I didn't add duplicates.`,
+        outcome: "answered",
+        changed: false,
+      });
+    return saveNoteBody(principal, userText, state, note, addition.body);
   }
 
   async function dispatch(
@@ -1760,6 +2171,7 @@ export function createAssistant(options: AssistantOptions) {
         intent.kind === "create_event" ||
         intent.kind === "create_note" ||
         intent.kind === "append_note" ||
+        intent.kind === "revise_note" ||
         intent.kind === "develop_idea" ||
         intent.kind === "capture") &&
       asksNotToSave(userText)
@@ -1801,9 +2213,14 @@ export function createAssistant(options: AssistantOptions) {
     if (
       !state.focus &&
       notes.length >= POOL_LIMIT &&
-      ["create_note", "develop_idea", "resume_idea", "append_note", "delete_note"].includes(
-        intent.kind,
-      )
+      [
+        "create_note",
+        "develop_idea",
+        "resume_idea",
+        "append_note",
+        "revise_note",
+        "delete_note",
+      ].includes(intent.kind)
     ) {
       const result = await scan((offset) =>
         services.notes.list(principal, { limit: POOL_LIMIT, offset }),
@@ -2072,9 +2489,13 @@ export function createAssistant(options: AssistantOptions) {
           intent.estimatedMinutes || intent.taskType === "todo"
             ? null
             : await learnedEstimate(principal, intent.title);
+        const filing = intent.category
+          ? pickCategory(await services.categories.list(principal), intent.category)
+          : { category: undefined, ask: undefined };
         const task = await services.tasks.create(principal, {
           title: intent.title,
           taskType: intent.taskType,
+          categoryId: filing.category?.id,
           details: intent.details,
           sourceText: userText,
           sourceRef,
@@ -2097,15 +2518,28 @@ export function createAssistant(options: AssistantOptions) {
                 : !task.estimatedMinutes
                   ? " Do you know how long it might take? That's optional; you can leave it as-is or add an estimate later."
                   : "";
-        return reply({
-          text:
-            task.taskType === "todo"
-              ? `Got it, I added "${task.title}" as a to-do.${timingFollowUp}`
-              : `Got it, I added "${task.title}" to your list (${dueText(task, timezone)}${effort}).${why}${timingFollowUp}`,
-          outcome: "created",
-          changed: true,
-          links: [savedItemLink(task.taskType, task.id, task.title)],
-        });
+        const filedIn =
+          filing.category && filing.category.systemKey !== "inbox"
+            ? ` in ${filing.category.name}`
+            : "";
+        const taskCategory = filing.ask
+          ? categoryPending(principal, [
+              { ask: filing.ask, item: { kind: "task", id: task.id, title: task.title } },
+            ])
+          : null;
+        const categoryAsk = taskCategory ? `\n\n${categoryQuestion(taskCategory, "inbox")}` : "";
+        return reply(
+          {
+            text:
+              task.taskType === "todo"
+                ? `Got it, I added "${task.title}" as a to-do${filedIn}.${taskCategory ? "" : timingFollowUp}${categoryAsk}`
+                : `Got it, I added "${task.title}" to your list${filedIn} (${dueText(task, timezone)}${effort}).${why}${taskCategory ? "" : timingFollowUp}${categoryAsk}`,
+            outcome: "created",
+            changed: true,
+            links: [savedItemLink(task.taskType, task.id, task.title)],
+          },
+          { pendingCategory: taskCategory },
+        );
       }
 
       case "create_event": {
@@ -2169,7 +2603,7 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "create_note": {
-        if (state.focus?.kind === "note")
+        if (state.focus?.kind === "note" && !intent.separate)
           return reply({
             text: "Are you asking me to add to the selected note or idea, or create a separate one? Nothing was changed.",
             outcome: "clarification",
@@ -2198,25 +2632,42 @@ export function createAssistant(options: AssistantOptions) {
             });
           }
         }
+        const noteFiling = intent.category
+          ? pickCategory(await services.categories.list(principal), intent.category)
+          : { category: undefined, ask: undefined };
         const note = await services.notes.create(principal, {
           title: intent.title,
           body: intent.body,
           kind: intent.noteKind,
+          categoryId: noteFiling.category?.id,
           sourceRef,
         });
+        const noteIn =
+          noteFiling.category && noteFiling.category.systemKey !== "inbox"
+            ? ` in ${noteFiling.category.name}`
+            : "";
+        const noteCategory = noteFiling.ask
+          ? categoryPending(principal, [
+              { ask: noteFiling.ask, item: { kind: "note", id: note.id, title: noteTitle(note) } },
+            ])
+          : null;
+        const noteAsk = noteCategory ? `\n\n${categoryQuestion(noteCategory, "inbox")}` : "";
         return reply(
           {
             text:
               note.kind === "idea"
-                ? `Saved your idea "${noteTitle(note)}".\n\n${intent.feedback ? fitReply(intent.feedback) : "What's the main problem you want it to solve? We can build it out together."}`
-                : `Saved your ${note.kind} "${noteTitle(note)}". It's in your notes whenever you want it.`,
+                ? `Saved your idea "${noteTitle(note)}"${noteIn}.${intent.feedback && !noteCategory ? `\n\n${fitReply(intent.feedback)}` : ""}${noteAsk}`
+                : `Saved your ${note.kind} "${noteTitle(note)}"${noteIn}. It's in your notes whenever you want it.${noteAsk}`,
             outcome: "created",
             changed: true,
             links: [savedItemLink(note.kind, note.id, noteTitle(note))],
+            topic: { kind: "note", id: note.id, title: noteTitle(note), label: note.kind },
           },
           {
+            focus: { kind: "note", id: note.id },
             activeIdea:
               note.kind === "idea" ? { ownerId: principal.ownerId, noteId: note.id } : null,
+            pendingCategory: noteCategory,
           },
         );
       }
@@ -2226,42 +2677,11 @@ export function createAssistant(options: AssistantOptions) {
         return developIdea(principal, userText, intent, state, notes);
 
       case "append_note": {
-        const selected =
-          state.focus?.kind === "note"
-            ? notes.find((note) => note.id === state.focus?.id && note.kind === "note")
-            : undefined;
-        const found = resolveReference(
-          selected ? focusedReference(intent.reference, noteTitle(selected)) : intent.reference,
-          notes
-            .filter((note) => note.kind === "note")
-            .map((note) => ({ id: note.id, title: noteTitle(note) })),
-          {
-            listed:
-              state.focus?.kind === "note"
-                ? notes
-                    .filter((note) => note.id === state.focus?.id && note.kind === "note")
-                    .map((note) => ({ id: note.id, title: noteTitle(note) }))
-                : [],
-          },
-        );
-        if (found.kind === "many") return clarify(found.items);
-        if (found.kind === "none")
-          return reply({
-            text: "Which note should I add to? Nothing was changed.",
-            outcome: "clarification",
-            changed: false,
-          });
-        const note = notes.find((row) => row.id === found.item.id)!;
-        const result = await services.notes.update(principal, note.id, {
-          body: `${note.body}\n\n${intent.details}`,
-          expectedVersion: note.version,
-        });
-        return reply({
-          text: `I added your text to "${noteTitle(result.note)}".`,
-          outcome: "completed",
-          changed: result.changed,
-        });
+        return appendToNote(principal, userText, intent, state, notes);
       }
+
+      case "revise_note":
+        return reviseNote(principal, userText, intent, state, notes);
 
       case "capture": {
         if (state.focus)
@@ -2793,6 +3213,67 @@ export function createAssistant(options: AssistantOptions) {
       case "recategorize":
         return recategorize(principal, userText, intent, state, openTasks, notes);
 
+      case "create_category": {
+        const choosing = livePendingCategory(principal, state);
+        if (choosing) return settleCategory(principal, userText, state, choosing, intent.category);
+        const { category, created } = await findOrCreateCategory(principal, intent.category);
+        return reply(
+          created
+            ? {
+                text: `Done. I created the category "${plain(category.name)}". Tell me what belongs in it and I'll file it there.`,
+                outcome: "created",
+                changed: true,
+              }
+            : {
+                text: `You already have a category called "${plain(category.name)}", so I left it.`,
+                outcome: "answered",
+                changed: false,
+              },
+        );
+      }
+
+      case "delete_category": {
+        const categories = await services.categories.list(principal);
+        const found = matchCategory(intent.category, categories);
+        if (found.kind === "new") {
+          return reply({
+            text: `I couldn't find a category called "${plain(intent.category)}". Your categories are ${categories.map((entry) => plain(entry.name)).join(", ")}. Nothing was changed.`,
+            outcome: "not_found",
+            changed: false,
+          });
+        }
+        if (found.category.systemKey === "inbox") {
+          return reply({
+            text: "The Inbox is where uncategorized items live, so it can't be deleted. Nothing was changed.",
+            outcome: "failed",
+            changed: false,
+          });
+        }
+        const proposal = await services.confirmations.propose(principal, {
+          action: "category.delete",
+          payload: { categoryId: found.category.id },
+        });
+        const summary = String(proposal.preview.summary ?? "Delete this category");
+        const consequences = Array.isArray(proposal.preview.consequences)
+          ? proposal.preview.consequences.map(String).join(" ")
+          : "";
+        return reply(
+          {
+            text: `${summary}? ${consequences} Reply "yes" within 10 minutes to confirm, or "no" to cancel.`,
+            outcome: "confirmation_needed",
+            changed: false,
+          },
+          {
+            pending: {
+              confirmationId: proposal.confirmationId,
+              payloadHash: proposal.payloadHash,
+              summary: summary.slice(0, 400),
+              expiresAt: proposal.expiresAt.toISOString(),
+            },
+          },
+        );
+      }
+
       case "reschedule_event":
       case "move_work": {
         const today = dateKeyOf(clock(), timezone);
@@ -3291,6 +3772,10 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "confirm": {
+        const choosing = livePendingCategory(principal, state);
+        if (choosing && !state.pending) {
+          return settleCategory(principal, userText, state, choosing, null);
+        }
         if (state.pendingCapture) {
           const pending = state.pendingCapture;
           const cleared = { ...state, pendingCapture: null };
@@ -3378,7 +3863,9 @@ export function createAssistant(options: AssistantOptions) {
                     ? "Done. I've forgotten what I learned about how long things take. Estimates go back to what you set."
                     : gone.deleted === "preference"
                       ? "Done. I've forgotten that."
-                      : "Done. The note is deleted.",
+                      : gone.deleted === "category"
+                        ? `Done. I deleted the category "${plain(String(gone.name))}"${movedText(gone.moved)}.`
+                        : "Done. The note is deleted.",
             outcome: gone.canceled || gone.rescheduled ? "completed" : "deleted",
             changed: true,
           },
@@ -3387,6 +3874,16 @@ export function createAssistant(options: AssistantOptions) {
       }
 
       case "decline": {
+        if (state.pendingCategory && !state.pending) {
+          return reply(
+            {
+              text: "Okay, I left it where it is. Nothing else was changed.",
+              outcome: "declined",
+              changed: false,
+            },
+            { pendingCategory: null },
+          );
+        }
         if (state.pendingCapture) {
           return reply(
             {

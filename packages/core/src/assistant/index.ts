@@ -28,6 +28,13 @@ export { IntentError, intentJsonSchema, toIntent, type CaptureItem, type Intent 
 export { createOpenAiProvider, type OpenAiOptions, type OpenAiPricing } from "./openai";
 export { createDbUsageStore } from "./usage-store";
 export { parseConversationState } from "./state";
+export type {
+  ChatData,
+  ChatMessage,
+  ChatTopic,
+  ChatSession,
+  ChatSessionSummary,
+} from "./chat-session";
 export {
   ProviderOutputError,
   ProviderUnavailableError,
@@ -38,10 +45,21 @@ export {
 } from "./provider";
 export { resolveReference, ordinalIndex } from "./matching";
 export {
+  askedLearningQuestions,
   LEARNING_CHECK_IN_PREFIX,
   learningQuestionDue,
   nextLearningQuestion,
 } from "./learning-questions";
+export {
+  cleanWellBeingQuestion,
+  composeMorningGreeting,
+  composeWellBeingQuestion,
+  fallbackMorningGreeting,
+  morningGreetingInstruction,
+  parseMorningGreeting,
+  WELL_BEING_INSTRUCTION,
+  type MorningGreetingSetting,
+} from "./well-being";
 export {
   VOICE_ACTIONS,
   type VoiceAction,

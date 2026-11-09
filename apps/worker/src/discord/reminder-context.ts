@@ -38,6 +38,8 @@ export function withDeliveredReminders(
   state: ConversationState,
   reminders: Reminder[],
   now: Date,
+  // A question delivered with the reminder (the morning greeting) that the reply may answer.
+  greetingQuestion?: string,
 ): ConversationState {
   const reminder = reminders.length === 1 ? reminders[0] : undefined;
   const subjectType =
@@ -52,8 +54,8 @@ export function withDeliveredReminders(
       ...state.turns,
       {
         role: "assistant" as const,
-        text: reminders
-          .map((item) => item.message)
+        text: [greetingQuestion, ...reminders.map((item) => item.message)]
+          .filter(Boolean)
           .join("\n")
           .slice(0, 1000),
       },
@@ -80,7 +82,13 @@ export function withDeliveredReminders(
           question: reminder.message.slice(LEARNING_CHECK_IN_PREFIX.length),
           expiresAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
         }
-      : null,
+      : reminder && greetingQuestion
+        ? {
+            ownerId: reminder.ownerId,
+            question: greetingQuestion,
+            expiresAt: new Date(now.getTime() + 12 * 60 * 60_000).toISOString(),
+          }
+        : null,
     listed:
       subjectType === "task" && reminder?.subjectId
         ? [{ id: reminder.subjectId, title, due: null }]

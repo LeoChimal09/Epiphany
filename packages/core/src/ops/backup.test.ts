@@ -18,6 +18,23 @@ import {
 } from "./backup";
 
 describe.skipIf(!dbTestsEnabled)("backup, restore, and deletion-aware recovery", () => {
+  it("restores conversations without active execution leases or replaying interrupted turns", async () => {
+    const chat = await services.conversations.create(owner);
+    const claimed = await services.conversations.claim(owner, chat.id, "Check supplies");
+    const exported = await exportOwnerData(src.pool, ownerId);
+    expect(exported.tables.chat_sessions).toHaveLength(1);
+    expect(exported.tables.chat_sessions![0]).not.toHaveProperty("turn_token");
+    expect(exported.tables.chat_sessions![0]).not.toHaveProperty("busy_until");
+    expect(JSON.stringify(exported)).not.toContain(claimed.token);
+    await restoreOwnerData(dst.pool, exported);
+    expect(await verifyRestore(dst.pool, exported)).toEqual({ ok: true, mismatches: [] });
+    const copy = createServices(dst.db);
+    const restored = await copy.conversations.get(owner, chat.id);
+    expect(restored.busy).toBe(false);
+    expect(restored.data.messages.at(-1)).toMatchObject({ outcome: "uncertain" });
+    expect(restored.data.messages[0]?.text).toBe("Check supplies");
+    expect(await copy.notes.list(owner)).toEqual([]);
+  });
   let source: TestDatabase;
   let target: TestDatabase;
   let src: DatabaseHandle;

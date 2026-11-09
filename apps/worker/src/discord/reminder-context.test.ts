@@ -40,6 +40,19 @@ describe("Discord reminder conversation context", () => {
       expiresAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
     });
   });
+  it("treats a reply to the morning greeting as an answer to that question", () => {
+    const state = withDeliveredReminders(
+      emptyConversation(),
+      [{ ...reminder("task"), ownerId: "owner", kind: "briefing", subjectType: null } as Reminder],
+      now,
+      "Good morning, sir. How are we doing today?",
+    );
+    expect(state.learningQuestion).toMatchObject({
+      ownerId: "owner",
+      question: "Good morning, sir. How are we doing today?",
+    });
+    expect(state.turns.at(-1)?.text).toContain("Good morning, sir.");
+  });
   it("restores the exact event selection and pending action for a reply, not the latest channel topic", () => {
     let time = now;
     const contexts = createReplyContexts(() => time);

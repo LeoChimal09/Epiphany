@@ -42,6 +42,101 @@ const migrationsFolder = path.resolve(
 const TZ = "America/Chicago";
 
 describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
+  it.each(["note", "idea"] as const)(
+    "adds a whole organized list to the selected %s even when called our idea",
+    async (kind) => {
+      const note = await services.notes.create(assistantPrincipal, {
+        title: "Gift list",
+        body: "Original choices",
+        kind,
+      });
+      const other = await services.notes.create(assistantPrincipal, {
+        title: "Other",
+        body: "Do not touch",
+        kind,
+      });
+      const details = `### Supplies\n${Array.from({ length: 20 }, (_, index) => `- Choice ${index + 1}: ${index === 0 ? "detail ".repeat(100) : "one item"}`).join("\n")}`;
+      const { assistant } = build(() => ({
+        kind: "develop_idea",
+        reference: "our idea",
+        targetId: other.id,
+        points: details.split("\n"),
+      }));
+      const result = await say(assistant, `Add these:\n${details}`, {
+        ...emptyConversation(),
+        focus: { kind: "note", id: note.id },
+      });
+      expect(result.reply).toMatchObject({ changed: true, outcome: "completed" });
+      const saved = await services.notes.get(assistantPrincipal, note.id);
+      expect(saved.kind).toBe(kind);
+      expect(saved.body).toContain("Original choices");
+      expect(saved.body).toContain("### Supplies");
+      for (let index = 1; index <= 20; index++) expect(saved.body).toContain(`Choice ${index}:`);
+      expect(saved.body).toContain("detail ".repeat(100).trim());
+      expect(saved.body).not.toContain("Note: ###");
+      expect((await services.notes.get(assistantPrincipal, other.id)).body).toBe("Do not touch");
+      expect(await services.notes.list(assistantPrincipal)).toHaveLength(2);
+      expect(await taskRows()).toHaveLength(0);
+      expect(result.reply.text).not.toContain("?");
+    },
+  );
+
+  it("keeps a course-like list in a selected note rather than importing tasks", async () => {
+    const note = await services.notes.create(assistantPrincipal, {
+      title: "Reference list",
+      body: "Original",
+      kind: "note",
+    });
+    const { assistant, provider } = build(() => ({
+      kind: "append_note",
+      reference: "",
+      details: COURSE_LIST_PASTE,
+    }));
+    const result = await say(assistant, COURSE_LIST_PASTE, {
+      ...emptyConversation(),
+      focus: { kind: "note", id: note.id },
+    });
+    expect(result.reply.changed).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toContain(
+      COURSE_LIST_PASTE.trim(),
+    );
+    expect(await taskRows()).toHaveLength(0);
+  });
+
+  it("retains a long unsaved list for add-that follow-ups and respects no-save", async () => {
+    const note = await services.notes.create(assistantPrincipal, {
+      title: "List",
+      body: "Original",
+      kind: "note",
+    });
+    const details = Array.from(
+      { length: 30 },
+      (_, index) => `- Choice ${index + 1}: ${"context ".repeat(10)}`,
+    ).join("\n");
+    const { assistant, provider } = build((request) =>
+      request.message === "Add that now"
+        ? {
+            kind: "append_note",
+            reference: "this note",
+            details: request.history
+              .findLast((turn) => turn.role === "user")!
+              .text.replace("Don't save yet.\n", ""),
+          }
+        : { kind: "append_note", reference: "", details },
+    );
+    const preview = await say(assistant, `Don't save yet.\n${details}`, {
+      ...emptyConversation(),
+      focus: { kind: "note", id: note.id },
+    });
+    expect(preview.reply.changed).toBe(false);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toBe("Original");
+    expect(parseConversationState(preview.state)).not.toBeNull();
+    const saved = await say(assistant, "Add that now", preview.state);
+    expect(saved.reply.changed).toBe(true);
+    expect(provider.calls[1]?.history.some((turn) => turn.text.includes("Choice 30:"))).toBe(true);
+    expect((await services.notes.get(assistantPrincipal, note.id)).body).toContain(details.trim());
+  });
   let database: TestDatabase;
   let handle: DatabaseHandle;
   let services: Services;
@@ -357,6 +452,93 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       "Feature: herbs",
     );
     expect((await services.notes.get(assistantPrincipal, other.id)).body).toBe("Other");
+  });
+
+  describe("revising a selected record's kept details", () => {
+    const legacy =
+      "## 2026-11-06\n\nPlanning Black Friday gifts.\n\n- Add item: Fugglers for sister\n\n## 2026-11-09\n\n- Add item for Leo: OLED monitor";
+    const organized =
+      "### Leo\n- OLED monitor: estimate cost\n\n### Sister\n- Fugglers\n\n### General\n- Planning Black Friday gifts.";
+
+    it("reorganizes the details and keeps every dated log entry", async () => {
+      now = new Date("2026-11-09T19:00:00Z");
+      const idea = await services.notes.create(assistantPrincipal, {
+        title: "Black Friday Shopping Idea",
+        body: legacy,
+        kind: "idea",
+      });
+      const { assistant } = build(() => ({
+        kind: "revise_note",
+        reference: "this so its organized by sets like Leo",
+        details: organized,
+        log: "Organized gifts by person",
+      }));
+      const result = await say(assistant, "update this so its organized by sets like Leo", {
+        ...emptyConversation(),
+        focus: { kind: "note", id: idea.id },
+      });
+      expect(result.reply).toMatchObject({ outcome: "completed", changed: true });
+      const body = (await services.notes.get(assistantPrincipal, idea.id)).body;
+      expect(body.startsWith(organized)).toBe(true);
+      expect(body).toContain("## 2026-11-06\n\nPlanning Black Friday gifts.");
+      expect(body).toContain("- Add item for Leo: OLED monitor");
+      expect(body).toContain("- Update: Organized gifts by person");
+    });
+
+    it("adds to the selected record when the reference only describes the change", async () => {
+      const idea = await services.notes.create(assistantPrincipal, {
+        title: "Black Friday Shopping Idea",
+        body: "Gift plan",
+        kind: "idea",
+      });
+      await services.notes.create(assistantPrincipal, {
+        title: "Monitor research",
+        body: "Other",
+        kind: "note",
+      });
+      const { assistant } = build(() => ({
+        kind: "append_note",
+        reference: "Leo sets",
+        details: "Leo: OLED monitor",
+      }));
+      const result = await say(assistant, "add Leo, OLED monitor", {
+        ...emptyConversation(),
+        focus: { kind: "note", id: idea.id },
+      });
+      expect(result.reply).toMatchObject({ outcome: "completed", changed: true });
+      expect((await services.notes.get(assistantPrincipal, idea.id)).body).toContain(
+        "- Leo: OLED monitor",
+      );
+    });
+
+    it("refuses a rewrite that names a different saved record or drops content", async () => {
+      const details = Array.from({ length: 12 }, (_, i) => `- Gift ${i + 1}: details`).join("\n");
+      const idea = await services.notes.create(assistantPrincipal, {
+        title: "Black Friday Shopping Idea",
+        body: details,
+        kind: "idea",
+      });
+      await services.notes.create(assistantPrincipal, {
+        title: "Monitor research",
+        body: "Other",
+        kind: "note",
+      });
+      const state = { ...emptyConversation(), focus: { kind: "note" as const, id: idea.id } };
+      const other = await say(
+        build(() => ({ kind: "revise_note", reference: "Monitor research", details: "x" }))
+          .assistant,
+        "rewrite monitor research",
+        state,
+      );
+      expect(other.reply.text).toContain("Open the other record");
+      const shrunk = await say(
+        build(() => ({ kind: "revise_note", reference: "", details: "- Gift 1" })).assistant,
+        "organize this",
+        state,
+      );
+      expect(shrunk.reply).toMatchObject({ outcome: "failed", changed: false });
+      expect((await services.notes.get(assistantPrincipal, idea.id)).body).toBe(details);
+    });
   });
 
   it("moves the unique Godzilla event from today to Saturday at its saved time with no intake loop", async () => {
@@ -841,7 +1023,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
             JSON.stringify(body.tools).length) /
             4,
         );
-        expect(estimated).toBeLessThanOrEqual(8000);
+        expect(estimated).toBeLessThanOrEqual(9000);
         const action = sent.message.includes("workout")
           ? {
               name: "acknowledge_event",
@@ -876,7 +1058,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
           apiKey: "synthetic-fixture-key",
           model: "fixture",
           pricing: { inputPerMillion: 0, outputPerMillion: 0 },
-          maxInputTokens: 8000,
+          maxInputTokens: 9000,
           fetch: fetchImpl as unknown as typeof fetch,
         }),
       });
@@ -1089,8 +1271,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         created.state,
       );
       expect(result.reply).toMatchObject({ outcome: "clarification", changed: false });
-      expect(result.reply.text).toContain("may not match your latest request");
-      expect(result.reply.text).toContain("when should I remind you?");
+      expect(result.reply.text).toContain("selected note or idea");
       expect(result.reply.text).not.toContain("tomorrow");
       expect(result.reply.text).not.toContain("Saved");
       expect(result.state.activeIdea).toEqual(created.state.activeIdea);
@@ -1118,7 +1299,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       );
       const result = await say(stale.assistant, "also remind me to renew access", created.state);
       expect(result.reply).toMatchObject({ outcome: "clarification", changed: false });
-      expect(result.reply.text).toContain("proposed save repeats");
+      expect(result.reply.text).toContain("selected note or idea");
       expect(stale.provider.calls[0]?.activeIdea?.body).toBe(freshBody);
       expect(await services.notes.list(assistantPrincipal)).toHaveLength(1);
     });
@@ -1155,6 +1336,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         title: "Community garden",
         body: "Share a garden plot",
         noteKind: "idea",
+        separate: true,
       }));
       const result = await say(distinct.assistant, "save a separate garden idea", created.state);
       expect(result.reply).toMatchObject({ outcome: "created", changed: true });
@@ -1213,7 +1395,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       expect(rows[0]).toMatchObject({
         id: created.state.activeIdea?.noteId,
         kind: "idea",
-        body: `## ${dateKeyOf(now, TZ)}\n\n${original}\n\n- Note: Track return dates\n- Suggestion: offer optional reminders`,
+        body: `${original}\n\n## ${dateKeyOf(now, TZ)}\n\n- Note: Track return dates\n- Suggestion: offer optional reminders`,
       });
       expect(provider.calls).toHaveLength(2);
       expect(provider.calls[1]?.activeIdea).toMatchObject({
@@ -1221,7 +1403,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         body: original,
         truncated: false,
       });
-      expect(updated.reply.text).toContain("Should borrowing need approval?");
+      expect(updated.reply.text).toBe('Updated idea "Tool library".');
       const repeated = await say(assistant, "add those points again", updated.state);
       expect(repeated.reply.changed).toBe(false);
       expect(repeated.reply.text).toContain("didn't add duplicates");
@@ -1239,7 +1421,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       await say(assistant, "add a way to track returns", created.state);
       expect(provider.calls.at(-1)?.activeIdea?.body).toContain("Start with hand tools only");
       expect((await services.notes.get(assistantPrincipal, id)).body).toContain(
-        "- Start with hand tools only\n\n- Note: Track return dates",
+        `- Start with hand tools only\n\n## ${dateKeyOf(now, TZ)}\n\n- Note: Track return dates`,
       );
     });
 
@@ -1778,11 +1960,43 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         budget: budget(),
         timezone: TZ,
         clock: () => now,
+        retryDelayMs: 0,
       });
       const { reply } = await assistant.handle(assistantPrincipal, "finished the chem lab");
       expect(reply).toMatchObject({ outcome: "unavailable", changed: false });
       expect(reply.text).toContain("didn't do anything");
+      expect(provider.calls).toHaveLength(2);
       expect((await taskRows()).every((t) => t.status === "open")).toBe(true);
+    });
+
+    it("retries once after a transient provider failure", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        let attempts = 0;
+        const provider = createScriptedProvider(() => {
+          attempts += 1;
+          if (attempts === 1)
+            throw new ProviderUnavailableError("The AI service returned HTTP 503.");
+          return { kind: "respond", text: "Hi! What would you like help with?" };
+        });
+        const assistant = createAssistant({
+          services,
+          provider,
+          budget: budget(),
+          timezone: TZ,
+          clock: () => now,
+          retryDelayMs: 0,
+        });
+        const { reply } = await assistant.handle(
+          assistantPrincipal,
+          "how should I approach my essay?",
+        );
+        expect(reply).toMatchObject({ outcome: "answered" });
+        expect(reply.text).toContain("What would you like help with?");
+        expect(provider.calls).toHaveLength(2);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("logs why the provider failed, without the message or any secret", async () => {
@@ -2207,7 +2421,7 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
       expect(updated.reviewNote).toBeNull();
     });
 
-    it("sorts into an existing category, and falls back to the Inbox for an unknown one", async () => {
+    it("sorts into an existing category, and asks before creating an unknown one", async () => {
       const owner = await ownerPrincipal();
       const school = await services.categories.create(owner, "School");
       const { assistant } = build(() => ({
@@ -2217,14 +2431,61 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
           { type: "task", title: "Gym session", category: "Fitness" },
         ],
       }));
-      const { reply } = await reviewAndApprove(assistant, "chem lab due friday and gym later");
+      const { reply, state } = await reviewAndApprove(
+        assistant,
+        "chem lab due friday and gym later",
+      );
       const rows = await taskRows();
       expect(rows.find((t) => t.title === "Chem lab")?.categoryId).toBe(school.id);
       expect(await categoryName(rows.find((t) => t.title === "Gym session")!.categoryId)).toBe(
         "Inbox",
       );
-      expect(reply.text).toContain('I don\'t have a "Fitness" category');
+      expect(reply.text).toContain('"Gym session" could go in a new "Fitness" category');
       expect((await services.categories.list(owner)).map((c) => c.name)).not.toContain("Fitness");
+
+      const approved = await say(assistant, "yes", state);
+      expect(approved.reply).toMatchObject({ outcome: "completed", changed: true });
+      const fitness = (await services.categories.list(owner)).find((c) => c.name === "Fitness");
+      expect((await taskRows()).find((t) => t.title === "Gym session")?.categoryId).toBe(
+        fitness?.id,
+      );
+      expect(approved.state.pendingCategory).toBeNull();
+    });
+
+    it("files a single new item into a matching category and asks about a close one", async () => {
+      const owner = await ownerPrincipal();
+      const chemistry = await services.categories.create(owner, "Chemistry");
+      const { assistant } = build((request) =>
+        request.message.includes("lab")
+          ? { kind: "create_task", title: "Lab report", category: "chemistry" }
+          : {
+              kind: "create_note",
+              title: "Titration",
+              body: "notes",
+              noteKind: "note",
+              category: "Chem",
+            },
+      );
+      const filed = await say(assistant, "add lab report to chemistry");
+      expect(filed.reply.text).toContain("in Chemistry");
+      expect(filed.state.pendingCategory).toBeNull();
+      expect((await taskRows())[0]?.categoryId).toBe(chemistry.id);
+
+      const close = await say(assistant, "note about titration for chem");
+      expect(close.reply.text).toContain('looks like your "Chemistry" category');
+      expect(close.reply.text).toContain("in your Inbox");
+      expect(parseConversationState(close.state)?.pendingCategory?.groups[0]?.matchName).toBe(
+        "Chemistry",
+      );
+      expect(await categoryName((await noteRows())[0]!.categoryId)).toBe("Inbox");
+
+      const kept = await say(assistant, "no", close.state);
+      expect(kept.reply).toMatchObject({ outcome: "declined", changed: false });
+      expect(await categoryName((await noteRows())[0]!.categoryId)).toBe("Inbox");
+      expect((await services.categories.list(owner)).map((c) => c.name)).toEqual([
+        "Inbox",
+        "Chemistry",
+      ]);
     });
 
     it("does not save a duplicate of an open task, in storage or within the same message", async () => {
@@ -2337,9 +2598,20 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
           reference: "chem lab",
           category: "Fitness",
         }));
-        const refused = await say(unknown.assistant, "move chem lab to fitness");
-        expect(refused.reply).toMatchObject({ outcome: "clarification", changed: false });
-        expect(refused.reply.text).toContain("Inbox, School");
+        const asked = await say(unknown.assistant, "move chem lab to fitness");
+        expect(asked.reply).toMatchObject({ outcome: "clarification", changed: false });
+        expect(asked.reply.text).toContain('could go in a new "Fitness" category');
+        expect(asked.reply.text).toContain("I haven't moved anything yet");
+        expect((await taskRows())[0]?.categoryId).toBe(school.id);
+
+        const named = build(() => ({ kind: "recategorize", reference: "", category: "Health" }));
+        const answered = await say(named.assistant, "put it in health instead", asked.state);
+        expect(answered.reply.text).toContain('I created "Health" and filed "Chem lab" there');
+        expect(await categoryName((await taskRows())[0]!.categoryId)).toBe("Health");
+        await services.tasks.update(owner, (await taskRows())[0]!.id, {
+          categoryId: school.id,
+          expectedVersion: (await taskRows())[0]!.version,
+        });
 
         const same = build(() => ({
           kind: "recategorize",
@@ -2370,6 +2642,29 @@ describe.skipIf(!dbTestsEnabled)("assistant against SQLite", () => {
         const missing = await say(none.assistant, "zebra is school");
         expect(missing.reply).toMatchObject({ outcome: "not_found", changed: false });
       });
+    });
+
+    it("deletes a category after a yes, moving its items to the Inbox", async () => {
+      const owner = await ownerPrincipal();
+      const school = await services.categories.create(owner, "School");
+      await services.tasks.create(owner, { title: "Chem lab", categoryId: school.id });
+      const { assistant } = build((request) =>
+        request.message.includes("inbox")
+          ? { kind: "delete_category", category: "Inbox" }
+          : { kind: "delete_category", category: "school" },
+      );
+      const inbox = await say(assistant, "delete the inbox category");
+      expect(inbox.reply).toMatchObject({ outcome: "failed", changed: false });
+
+      const asked = await say(assistant, "remove the school category");
+      expect(asked.reply.outcome).toBe("confirmation_needed");
+      expect(asked.reply.text).toContain("1 task and 0 notes move to the Inbox");
+      const done = await say(assistant, "yes", asked.state);
+      expect(done.reply.text).toBe(
+        'Done. I deleted the category "School" and moved its 1 item to your Inbox.',
+      );
+      expect(await categoryName((await taskRows())[0]!.categoryId)).toBe("Inbox");
+      expect((await services.categories.list(owner)).map((c) => c.name)).toEqual(["Inbox"]);
     });
 
     it("refuses to capture or recategorize for a shared audience", async () => {
